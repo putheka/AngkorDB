@@ -26,7 +26,7 @@ export function AppShell() {
       {/* Overlay title bar: leave room for the macOS traffic lights */}
       <header
         data-tauri-drag-region
-        className="flex h-10 shrink-0 items-center border-b border-neutral-200 pl-20 text-xs font-medium text-neutral-500 dark:border-neutral-800"
+        className="flex h-10 shrink-0 items-center border-b pl-20 text-xs font-medium text-muted-foreground"
       >
         AngkorDB
       </header>
@@ -35,7 +35,7 @@ export function AppShell() {
         {!sidebarCollapsed && <Sidebar />}
         <main className="flex min-w-0 flex-1 flex-col">
           <TabBar />
-          <section className="flex flex-1 items-center justify-center text-sm text-neutral-400">
+          <section className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
             No connection open
           </section>
         </main>

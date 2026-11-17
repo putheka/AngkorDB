@@ -7,7 +7,7 @@ export function StatusBar() {
   const info = useQuery({ queryKey: ["app-info"], queryFn: ipc.appInfo });
 
   return (
-    <footer className="flex h-6 shrink-0 items-center justify-between border-t border-neutral-200 px-3 text-[11px] text-neutral-500 dark:border-neutral-800">
+    <footer className="flex h-6 shrink-0 items-center justify-between border-t px-3 text-[11px] text-muted-foreground">
       <span>Not connected</span>
       <span>
         {info.data ? `${info.data.name} v${info.data.version}` : info.isError ? "IPC error" : "…"}

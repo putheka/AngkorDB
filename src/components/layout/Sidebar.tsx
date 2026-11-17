@@ -6,7 +6,7 @@ export function Sidebar() {
   return (
     <aside
       style={{ width }}
-      className="shrink-0 border-r border-neutral-200 bg-neutral-50 p-3 text-sm text-neutral-500 dark:border-neutral-800 dark:bg-neutral-900"
+      className="shrink-0 border-r border-sidebar-border bg-sidebar p-3 text-sm text-sidebar-foreground/70"
     >
       Objects
     </aside>
