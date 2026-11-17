@@ -1,0 +1,240 @@
+//! Integration tests against the dev database (`npm run db:up`).
+//!
+//! When the database isn't reachable the tests print a note and pass, so `cargo test`
+//! works offline. Set `ANGKORDB_REQUIRE_DB=1` (CI) to make an unreachable DB a failure.
+
+use std::time::Duration;
+
+use angkordb_lib::db::session::Session;
+use angkordb_lib::error::AppError;
+use angkordb_lib::models::connection::{ColorTag, ConnectionConfig, SafeMode, SslMode};
+use serde_json::Value;
+
+/// Dev-only credentials from `compose.yaml`.
+const DEV_PASSWORD: &str = "angkor";
+
+fn dev_config() -> ConnectionConfig {
+    ConnectionConfig {
+        id: "integration-test".into(),
+        name: "Dev".into(),
+        host: std::env::var("ANGKORDB_TEST_HOST").unwrap_or_else(|_| "localhost".into()),
+        port: std::env::var("ANGKORDB_TEST_PORT")
+            .ok()
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(54329),
+        user: "angkor".into(),
+        database: "angkordb_dev".into(),
+        ssl_mode: SslMode::Prefer,
+        color: ColorTag::None,
+        group: None,
+        safe_mode: SafeMode::Off,
+    }
+}
+
+fn db_required() -> bool {
+    std::env::var("ANGKORDB_REQUIRE_DB").is_ok_and(|v| v == "1")
+}
+
+/// Open a session, or `None` (test skipped) when the dev DB isn't running.
+async fn open_or_skip() -> Option<Session> {
+    match Session::open(dev_config(), Some(DEV_PASSWORD)).await {
+        Ok(session) => Some(session),
+        Err(e) if e.is_connection_error() && !db_required() => {
+            eprintln!("SKIPPED: dev database not reachable ({e}). Run `npm run db:up`.");
+            None
+        }
+        Err(e) => panic!("could not open session: {e:?}"),
+    }
+}
+
+fn to_json(err: &AppError) -> Value {
+    serde_json::to_value(err).expect("AppError serializes")
+}
+
+#[tokio::test]
+async fn connects_and_selects_one() {
+    let Some(session) = open_or_skip().await else {
+        return;
+    };
+
+    let client = session.meta().await.unwrap();
+    let row = client
+        .query_one("SELECT 1::int4 AS one", &[])
+        .await
+        .unwrap();
+    assert_eq!(row.get::<_, i32>("one"), 1);
+
+    let app: String = client
+        .query_one("SELECT current_setting('application_name')", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(app, "AngkorDB");
+}
+
+#[tokio::test]
+async fn unique_violation_has_sqlstate_and_detail() {
+    let Some(session) = open_or_skip().await else {
+        return;
+    };
+    let client = session.meta().await.unwrap();
+
+    let err: AppError = client
+        .execute("INSERT INTO public.short_codes (code) VALUES ('KH')", &[])
+        .await
+        .unwrap_err()
+        .into();
+
+    let json = to_json(&err);
+    assert_eq!(json["code"], "POSTGRES");
+    assert_eq!(json["pgCode"], "23505");
+    assert!(
+        json["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("duplicate key value")
+    );
+    assert_eq!(json["detail"], "Key (code)=(KH) already exists.");
+}
+
+#[tokio::test]
+async fn unknown_function_has_hint() {
+    let Some(session) = open_or_skip().await else {
+        return;
+    };
+    let client = session.meta().await.unwrap();
+
+    let err: AppError = client
+        .simple_query("SELECT public.order_total('not-a-number'::text)")
+        .await
+        .unwrap_err()
+        .into();
+
+    let json = to_json(&err);
+    assert_eq!(json["pgCode"], "42883");
+    assert!(
+        json["hint"]
+            .as_str()
+            .is_some_and(|h| h.contains("explicit type casts")),
+        "missing hint: {json}"
+    );
+}
+
+#[tokio::test]
+async fn syntax_error_has_position() {
+    let Some(session) = open_or_skip().await else {
+        return;
+    };
+    let client = session.meta().await.unwrap();
+
+    let err: AppError = client
+        .simple_query("SELECT 1;\nSELEC 2")
+        .await
+        .unwrap_err()
+        .into();
+
+    let json = to_json(&err);
+    assert_eq!(json["pgCode"], "42601");
+    assert_eq!(json["position"], 11, "points at `SELEC`: {json}");
+}
+
+#[tokio::test]
+async fn tab_client_keeps_session_state_between_runs() {
+    let Some(session) = open_or_skip().await else {
+        return;
+    };
+
+    session
+        .tab_client("tab-1")
+        .await
+        .unwrap()
+        .batch_execute("SET application_name = 'angkordb-tab-test'")
+        .await
+        .unwrap();
+
+    // Same tab again → same connection → setting is still there.
+    let value: String = session
+        .tab_client("tab-1")
+        .await
+        .unwrap()
+        .query_one("SHOW application_name", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(value, "angkordb-tab-test");
+
+    // Another tab gets its own connection with default settings.
+    let other: String = session
+        .tab_client("tab-2")
+        .await
+        .unwrap()
+        .query_one("SHOW application_name", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(other, "AngkorDB");
+
+    session.close().await;
+}
+
+#[tokio::test]
+async fn cancel_stops_a_running_query() {
+    let Some(session) = open_or_skip().await else {
+        return;
+    };
+    let client = session.tab_client("slow").await.unwrap();
+
+    let running = tokio::spawn(async move { client.simple_query("SELECT pg_sleep(30)").await });
+
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(session.cancel_tab("slow").await.unwrap());
+
+    let result = tokio::time::timeout(Duration::from_secs(5), running)
+        .await
+        .expect("query was not cancelled within 5 s")
+        .unwrap();
+    let err: AppError = result.unwrap_err().into();
+    assert_eq!(err.pg_code(), Some("57014"), "query_canceled");
+
+    // The tab connection is still usable after a cancel.
+    let ok = session
+        .tab_client("slow")
+        .await
+        .unwrap()
+        .simple_query("SELECT 1")
+        .await;
+    assert!(ok.is_ok());
+}
+
+#[tokio::test]
+async fn wrong_password_is_reported() {
+    // Only meaningful when the DB is up.
+    if open_or_skip().await.is_none() {
+        return;
+    }
+
+    let err = match Session::open(dev_config(), Some("wrong-password")).await {
+        Ok(_) => panic!("opened a session with a wrong password"),
+        Err(e) => e,
+    };
+    assert_eq!(err.pg_code(), Some("28P01"), "invalid_password: {err:?}");
+    assert!(!err.is_connection_error());
+}
+
+#[tokio::test]
+async fn unreachable_server_is_a_connection_error() {
+    let mut config = dev_config();
+    config.port = 1; // nothing listens here
+
+    let err = match Session::open(config, Some(DEV_PASSWORD)).await {
+        Ok(_) => panic!("connected to port 1"),
+        Err(e) => e,
+    };
+    assert!(err.is_connection_error(), "{err:?}");
+    let json = to_json(&err);
+    assert_eq!(json["code"], "CONNECTION");
+    assert!(
+        json["message"].as_str().unwrap().contains("refused"),
+        "message should include the cause: {json}"
+    );
+}

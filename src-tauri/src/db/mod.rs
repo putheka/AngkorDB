@@ -1,8 +1,11 @@
-//! PostgreSQL layer (tokio-postgres + deadpool-postgres).
+//! PostgreSQL layer (tokio-postgres + deadpool-postgres). Design: ANG-8.
 //!
-//! Planned modules:
-//! - `session`    — pool + dedicated client per query tab + `CancelToken`s (ANG-9)
-//! - `transport`  — `Direct | SshTunnel` connection transport (ANG-8, ANG-43)
-//! - `introspect` — schemas, tables, columns via `pg_catalog` (ANG-15)
-//! - `rows`       — paged/sorted/filtered `fetch_rows` (ANG-16)
-//! - `changes`    — pending-changes → transactional apply (ANG-23)
+//! - `config`  — saved connection settings → `tokio_postgres::Config`
+//! - `tls`     — rustls connector using macOS system root certificates
+//! - `session` — one open connection: metadata pool + dedicated client per query tab
+//!
+//! Planned: `introspect` (ANG-15), `rows` (ANG-16), `query` (ANG-20), `changes` (ANG-23).
+
+pub mod config;
+pub mod session;
+pub mod tls;
