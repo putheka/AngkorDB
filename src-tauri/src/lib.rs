@@ -5,7 +5,7 @@
 //! - `db`       — Postgres layer: pools, per-tab clients, introspection, row fetching
 //! - `models`   — serializable types shared with the frontend
 //! - `state`    — global `AppState` managed by Tauri
-//! - `error`    — `AppError`, serialized to `{ code, message }` for the UI
+//! - `error`    — `AppError`, serialized to `{ code, message, ... }` for the UI
 
 pub mod commands;
 pub mod db;
@@ -13,14 +13,45 @@ pub mod error;
 pub mod models;
 pub mod state;
 
+use std::path::Path;
+
+use specta_typescript::Typescript;
 use state::AppState;
+use tauri_specta::{Builder, collect_commands};
+
+/// Where the generated TypeScript bindings live, relative to `src-tauri/`.
+pub const BINDINGS_PATH: &str = "../src/bindings.ts";
+
+const BINDINGS_HEADER: &str =
+    "// Regenerate with `npm run bindings` (also runs on every `npm run tauri dev`).";
+
+/// Every command and shared type the UI can use. Add new commands here.
+pub fn specta_builder() -> Builder<tauri::Wry> {
+    Builder::<tauri::Wry>::new()
+        // Our types have the same shape in both directions → one TS type each, no _Serialize split.
+        .disable_serde_phases()
+        .commands(collect_commands![commands::app::app_info])
+        .typ::<error::AppErrorPayload>()
+        .typ::<models::connection::ConnectionConfig>()
+}
+
+/// Write `src/bindings.ts`. Runs on every debug start and from `npm run bindings`.
+pub fn export_bindings(path: impl AsRef<Path>) -> Result<(), String> {
+    specta_builder()
+        .export(Typescript::default().header(BINDINGS_HEADER), path)
+        .map_err(|e| e.to_string())
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(debug_assertions)]
+    export_bindings(BINDINGS_PATH).expect("failed to export TypeScript bindings");
+
+    let specta = specta_builder();
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(AppState::default())
-        .invoke_handler(tauri::generate_handler![commands::app::app_info])
+        .invoke_handler(specta.invoke_handler())
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

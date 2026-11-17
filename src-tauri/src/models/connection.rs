@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Saved connection settings. The password is NOT stored here — it lives in the macOS Keychain.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectionConfig {
     pub id: String,
@@ -16,7 +16,7 @@ pub struct ConnectionConfig {
     pub safe_mode: SafeMode,
 }
 
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, specta::Type)]
 #[serde(rename_all = "kebab-case")]
 pub enum SslMode {
     Disable,
@@ -27,7 +27,7 @@ pub enum SslMode {
     VerifyFull,
 }
 
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, specta::Type)]
 #[serde(rename_all = "lowercase")]
 pub enum ColorTag {
     #[default]
@@ -37,7 +37,7 @@ pub enum ColorTag {
     Red,
 }
 
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, specta::Type)]
 #[serde(rename_all = "kebab-case")]
 pub enum SafeMode {
     #[default]

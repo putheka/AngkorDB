@@ -85,7 +85,7 @@ src/                      React UI
   features/               One folder per feature (connections, grid, query, ...)
   lib/                    IPC wrappers, helpers
   stores/                 Zustand state
-  types/                  Types shared with Rust
+  bindings.ts             Generated Rust command + type bindings (`npm run bindings`)
 src-tauri/                Rust backend
   src/commands/           Tauri commands called from the UI
   src/db/                 PostgreSQL layer

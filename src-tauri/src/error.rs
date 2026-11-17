@@ -81,37 +81,47 @@ impl From<deadpool_postgres::PoolError> for AppError {
     }
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ErrorPayload<'a> {
-    code: &'a str,
-    message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pg_code: Option<&'a str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    detail: Option<&'a str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    hint: Option<&'a str>,
+/// What the UI receives when a command fails (ANG-8 D9). Absent details are `null`.
+#[derive(Debug, Serialize, specta::Type)]
+#[serde(rename = "AppError", rename_all = "camelCase")]
+pub struct AppErrorPayload {
+    pub code: String,
+    pub message: String,
+    /// SQLSTATE, e.g. `23505`.
+    pub pg_code: Option<String>,
+    pub detail: Option<String>,
+    pub hint: Option<String>,
     /// 1-based character offset into the submitted SQL.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    position: Option<u32>,
+    pub position: Option<u32>,
 }
 
-impl Serialize for AppError {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let db = self.db_error();
-        ErrorPayload {
-            code: self.code(),
-            message: self.message(),
-            pg_code: db.map(|d| d.code().code()),
-            detail: db.and_then(|d| d.detail()),
-            hint: db.and_then(|d| d.hint()),
+impl From<&AppError> for AppErrorPayload {
+    fn from(err: &AppError) -> Self {
+        let db = err.db_error();
+        Self {
+            code: err.code().to_owned(),
+            message: err.message(),
+            pg_code: db.map(|d| d.code().code().to_owned()),
+            detail: db.and_then(|d| d.detail()).map(str::to_owned),
+            hint: db.and_then(|d| d.hint()).map(str::to_owned),
             position: db.and_then(|d| match d.position() {
                 Some(ErrorPosition::Original(p)) => Some(*p),
                 _ => None,
             }),
         }
-        .serialize(serializer)
+    }
+}
+
+impl Serialize for AppError {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        AppErrorPayload::from(self).serialize(serializer)
+    }
+}
+
+/// Commands return `AppResult<T>`; the error side is described by [`AppErrorPayload`].
+impl specta::Type for AppError {
+    fn definition(types: &mut specta::Types) -> specta::datatype::DataType {
+        AppErrorPayload::definition(types)
     }
 }
 
@@ -126,7 +136,7 @@ mod tests {
         let json = serde_json::to_string(&AppError::ConnectionNotFound("abc".into())).unwrap();
         assert_eq!(
             json,
-            r#"{"code":"CONNECTION_NOT_FOUND","message":"connection not found: abc"}"#
+            r#"{"code":"CONNECTION_NOT_FOUND","message":"connection not found: abc","pgCode":null,"detail":null,"hint":null,"position":null}"#
         );
     }
 }

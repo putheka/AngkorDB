@@ -3,7 +3,7 @@ use tauri::AppHandle;
 
 use crate::error::AppResult;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AppInfo {
     pub name: String,
@@ -12,6 +12,7 @@ pub struct AppInfo {
 
 /// Smoke-test command: proves the React ⇄ Rust bridge works.
 #[tauri::command]
+#[specta::specta]
 pub fn app_info(app: AppHandle) -> AppResult<AppInfo> {
     let pkg = app.package_info();
     Ok(AppInfo {

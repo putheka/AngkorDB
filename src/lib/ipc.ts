@@ -1,14 +1,11 @@
-import { invoke } from "@tauri-apps/api/core";
-
-import type { AppError, AppInfo } from "@/types/ipc";
+import type { AppError } from "@/bindings";
 
 /**
- * Typed wrappers around Tauri commands.
- * Hand-written for now; replaced by generated tauri-specta bindings in ANG-10.
+ * Typed Rust commands come from the generated `@/bindings` (tauri-specta).
+ * Failed commands reject with an `AppError`; use `isAppError` to narrow a caught value.
  */
-export const ipc = {
-  appInfo: () => invoke<AppInfo>("app_info"),
-};
+export { commands } from "@/bindings";
+export type { AppError } from "@/bindings";
 
 export function isAppError(value: unknown): value is AppError {
   return (
