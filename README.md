@@ -30,6 +30,25 @@ npm run tauri dev    # opens the AngkorDB window with hot reload
 
 The first run compiles the Rust side and takes a minute or two. Later runs start in seconds.
 
+## Dev database
+
+A local Postgres 16 with test data, for development and integration tests. Needs Docker Desktop.
+
+```bash
+npm run db:up        # start (first start seeds automatically, ~30 s)
+```
+
+Connection URL: `postgres://angkor:angkor@localhost:54329/angkordb_dev`
+
+| Command            | What it does                      |
+| ------------------ | --------------------------------- |
+| `npm run db:seed`  | Drop and recreate all test data   |
+| `npm run db:psql`  | Open a `psql` shell               |
+| `npm run db:down`  | Stop (data kept)                  |
+| `npm run db:reset` | Delete everything and start fresh |
+
+The seed ([dev/seed.sql](dev/seed.sql)) covers every tricky type (`jsonb`, arrays, enum, `numeric`, `bytea`, ranges, Khmer text), tables without a primary key, a composite key, a cross-schema FK chain, a view, a materialized view, functions, a trigger and a 1M-row table.
+
 ## Checks
 
 ```bash

@@ -1,0 +1,29 @@
+# Local Postgres for development and integration tests.
+# URL: postgres://angkor:angkor@localhost:54329/angkordb_dev
+name: angkordb
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: angkordb-postgres
+    environment:
+      POSTGRES_USER: angkor
+      POSTGRES_PASSWORD: angkor
+      POSTGRES_DB: angkordb_dev
+    ports:
+      - "54329:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./dev:/seed:ro
+      # Runs only on first start (empty volume). Re-seed with `npm run db:seed`.
+      - ./dev/seed.sql:/docker-entrypoint-initdb.d/01-seed.sql:ro
+    healthcheck:
+      # TCP, not the socket: the init server (running the seed) only listens on the socket,
+      # so this stays unhealthy until seeding has finished.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U angkor -d angkordb_dev"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+
+volumes:
+  pgdata:
