@@ -349,6 +349,17 @@ fn schema_commands_need_an_open_connection() {
             "switch_database",
             json!({ "connectionId": "nope", "database": "postgres" }),
         ),
+        (
+            "fetch_rows",
+            json!({ "connectionId": "nope", "query": {
+                "schema": "public", "table": "t", "limit": 10, "offset": 0,
+                "sort": [], "filters": [], "rawWhere": null } }),
+        ),
+        (
+            "count_rows",
+            json!({ "connectionId": "nope", "schema": "public", "table": "t",
+                    "filters": [], "rawWhere": null, "exact": false }),
+        ),
     ] {
         let err = ipc.call(cmd, args).unwrap_err();
         assert_eq!(err["code"], "NOT_CONNECTED", "{cmd}: {err}");
@@ -472,4 +483,70 @@ fn browse_the_dev_database_through_ipc() {
         )
         .unwrap_err();
     assert_eq!(err["code"], "NOT_CONNECTED");
+}
+
+#[test]
+fn fetch_and_count_rows_through_ipc() {
+    if !dev_db_available() {
+        return;
+    }
+    let ipc = setup();
+    let mut form = config("Dev", "localhost", 54329);
+    form["user"] = json!("angkor");
+    form["database"] = json!("angkordb_dev");
+    let saved = ipc
+        .call(
+            "save_connection",
+            json!({ "config": form, "password": { "kind": "set", "value": "angkor" } }),
+        )
+        .unwrap();
+    let id = saved["id"].as_str().unwrap();
+    ipc.call("connect_connection", json!({ "id": id })).unwrap();
+
+    // Exactly what the grid will send: camelCase keys, operators as strings, `null` for none.
+    let page = ipc
+        .call(
+            "fetch_rows",
+            json!({ "connectionId": id, "query": {
+                "schema": "public", "table": "short_codes", "limit": 2, "offset": 0,
+                "sort": [{ "column": "code", "dir": "desc" }],
+                "filters": [{ "column": "label", "op": "iLike", "values": ["%a%"] }],
+                "rawWhere": null } }),
+        )
+        .unwrap();
+    assert_eq!(
+        page,
+        json!({
+            "columns": [
+                { "name": "code", "typeOid": 1043, "typeName": "character varying(3)" },
+                { "name": "label", "typeOid": 25, "typeName": "text" },
+            ],
+            "rows": [["USA", "United States"], ["TH", "Thailand"]],
+            "identity": { "kind": "primaryKey", "columns": ["code"] },
+            "ctids": [],
+            "hasMore": true,
+        })
+    );
+
+    let count = ipc
+        .call(
+            "count_rows",
+            json!({ "connectionId": id, "schema": "public", "table": "short_codes",
+                    "filters": [{ "column": "code", "op": "isNull", "values": [] }],
+                    "rawWhere": null, "exact": false }),
+        )
+        .unwrap();
+    assert_eq!(count, json!({ "count": 0.0, "exact": true }));
+
+    // Errors keep their shape.
+    let err = ipc
+        .call(
+            "fetch_rows",
+            json!({ "connectionId": id, "query": {
+                "schema": "public", "table": "short_codes", "limit": 10, "offset": 0,
+                "sort": [], "rawWhere": null,
+                "filters": [{ "column": "nope", "op": "eq", "values": ["1"] }] } }),
+        )
+        .unwrap_err();
+    assert_eq!(err["code"], "VALIDATION");
 }

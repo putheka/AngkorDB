@@ -2,4 +2,5 @@
 
 pub mod app;
 pub mod connections;
+pub mod rows;
 pub mod schema;

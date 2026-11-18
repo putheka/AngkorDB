@@ -11,6 +11,7 @@ import type {
   SslMode,
 } from "@/bindings";
 
+import { createRowHandlers } from "@/dev/mockRows";
 import { createSchemaHandlers } from "@/dev/mockSchema";
 import { appError, sleep, type Handler } from "@/dev/mockSupport";
 
@@ -113,6 +114,10 @@ function parseUrl(text: string): ParsedConnectionUrl {
   };
 }
 
+function requireOpen(id: string) {
+  if (!openConnections.has(id)) throw appError("NOT_CONNECTED", `not connected to ${id}`);
+}
+
 const handlers: Record<string, Handler> = {
   app_info: () => ({ name: "AngkorDB", version: "0.1.0 (browser mock)" }),
 
@@ -184,9 +189,8 @@ const handlers: Record<string, Handler> = {
     return null;
   },
 
-  ...createSchemaHandlers((id) => {
-    if (!openConnections.has(id)) throw appError("NOT_CONNECTED", `not connected to ${id}`);
-  }),
+  ...createSchemaHandlers(requireOpen),
+  ...createRowHandlers(requireOpen),
 };
 
 export function installMockBackend() {

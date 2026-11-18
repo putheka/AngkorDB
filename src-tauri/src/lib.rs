@@ -49,6 +49,8 @@ pub fn specta_builder<R: tauri::Runtime>() -> Builder<R> {
             commands::schema::list_schemas,
             commands::schema::list_objects,
             commands::schema::describe_table,
+            commands::rows::fetch_rows,
+            commands::rows::count_rows,
         ])
         .typ::<error::AppErrorPayload>()
         .typ::<models::connection::ConnectionConfig>()

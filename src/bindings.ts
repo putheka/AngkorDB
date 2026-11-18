@@ -38,6 +38,13 @@ export const commands = {
 	listObjects: (connectionId: string, schema: string, options?: InvokeOptions) => __TAURI_INVOKE<DbObject[]>("list_objects", { connectionId, schema }, options),
 	/**  Columns, keys and how rows are identified for a table, view or materialized view. */
 	describeTable: (connectionId: string, schema: string, table: string, options?: InvokeOptions) => __TAURI_INVOKE<TableDescription>("describe_table", { connectionId, schema, table }, options),
+	/**  One page of a table: paging, sorting and filtering happen on the server. */
+	fetchRows: (connectionId: string, query: RowQuery, options?: InvokeOptions) => __TAURI_INVOKE<RowPage>("fetch_rows", { connectionId, query }, options),
+	/**
+	 *  How many rows match. The planner's estimate when there are no filters and `exact` is
+	 *  false (instant); otherwise `count(*)`, which scans the table.
+	 */
+	countRows: (connectionId: string, schema: string, table: string, filters: Filter[], rawWhere: string | null, exact: boolean, options?: InvokeOptions) => __TAURI_INVOKE<RowCount>("count_rows", { connectionId, schema, table, filters, rawWhere, exact }, options),
 };
 
 /* Types */
@@ -136,6 +143,19 @@ export type DbObject = {
 	detail: string | null,
 };
 
+/**
+ *  One condition of the filter bar. `values` holds what the operator needs: none for
+ *  `isNull` / `isNotNull`, two for `between`, one or more for `in`, exactly one otherwise.
+ *  Values are always text; the server casts them to the column's type.
+ */
+export type Filter = {
+	column: string,
+	op: FilterOp,
+	values: string[],
+};
+
+export type FilterOp = "eq" | "ne" | "lt" | "gt" | "le" | "ge" | "like" | "iLike" | "in" | "isNull" | "isNotNull" | "between";
+
 /**  A column of this table that points at a column of another table. */
 export type ForeignKeyRef = {
 	constraint: string,
@@ -166,6 +186,19 @@ export type PasswordChange =
 /**  Remove the saved password. */
 { kind: "clear" };
 
+export type ResultColumn = {
+	name: string,
+	typeOid: number,
+	/**  As Postgres prints it: `numeric(20,6)`, `text[]`. */
+	typeName: string,
+};
+
+export type RowCount = {
+	count: number | null,
+	/**  `false`: the planner's estimate (`pg_class.reltuples`). Prefix it with `~`. */
+	exact: boolean,
+};
+
 /**  How rows of a table are told apart when editing (ANG-8 D2). */
 export type RowIdentity = { kind: "primaryKey"; columns: string[] } | 
 /**  A unique index whose columns are all NOT NULL. */
@@ -178,6 +211,35 @@ export type RowIdentity = { kind: "primaryKey"; columns: string[] } |
 /**  Rows can't be edited; `reason` is shown to the user. */
 { kind: "readOnly"; reason: string };
 
+export type RowPage = {
+	columns: ResultColumn[],
+	/**  Every cell as text, `None` for SQL `NULL`. One entry per column. */
+	rows: ((string | null)[])[],
+	/**  How rows of this table are told apart when editing. */
+	identity: RowIdentity,
+	/**  When `identity` is `ctid`: each row's `ctid`, in the same order as `rows`. Empty otherwise. */
+	ctids: string[],
+	/**  There are more rows after this page. */
+	hasMore: boolean,
+};
+
+/**  What to read from one table. */
+export type RowQuery = {
+	schema: string,
+	table: string,
+	/**  Clamped to `1..=10000`. */
+	limit: number,
+	offset: number,
+	/**  Without any sort the rows come in primary key / unique index order. */
+	sort: SortSpec[],
+	filters: Filter[],
+	/**
+	 *  A `WHERE` fragment typed by the user, combined with the filters by `AND`. It is SQL, not
+	 *  a value: it runs inside a read-only transaction so it can't change anything.
+	 */
+	rawWhere: string | null,
+};
+
 export type SafeMode = "off" | "confirm" | "touch-id" | "read-only";
 
 export type SchemaInfo = {
@@ -185,6 +247,13 @@ export type SchemaInfo = {
 	owner: string,
 	/**  `pg_*` and `information_schema`. */
 	isSystem: boolean,
+};
+
+export type SortDir = "asc" | "desc";
+
+export type SortSpec = {
+	column: string,
+	dir: SortDir,
 };
 
 export type SslMode = "disable" | "prefer" | "require" | "verify-ca" | "verify-full";

@@ -4,12 +4,14 @@
 //! - `tls`     — rustls connector using macOS system root certificates
 //! - `url`     — parse `postgres://` URLs into connection form fields
 //! - `introspect` — databases, schemas, objects, columns and row identity from `pg_catalog`
+//! - `rows`   — page, sort, filter and count the rows of a table
 //! - `session` — one open connection: metadata pool + dedicated client per query tab
 //!
-//! Planned: `rows` (ANG-16), `query` (ANG-20), `changes` (ANG-23).
+//! Planned: `query` (ANG-20), `changes` (ANG-23).
 
 pub mod config;
 pub mod introspect;
+pub mod rows;
 pub mod session;
 pub mod tls;
 pub mod url;

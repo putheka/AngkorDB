@@ -152,6 +152,32 @@ function buildColumns(schema: string, spec: TableSpec): ColumnInfo[] {
   }));
 }
 
+/** `describe_table` without the connection check; the mock rows are built from it too. */
+export function mockDescribeTable(schema: string, table: string): TableDescription {
+  const listed = OBJECTS[schema]?.find(
+    (o) => o.name === table && ["table", "view", "materializedView"].includes(o.kind),
+  );
+  if (!listed) throw appError("NOT_FOUND", `table or view ${schema}.${table} not found`);
+
+  const spec = TABLES[`${schema}.${table}`] ?? { ...FALLBACK, kind: listed.kind };
+  return {
+    schema,
+    name: table,
+    kind: spec.kind,
+    comment: spec.comment ?? null,
+    columns: buildColumns(schema, spec),
+    identity:
+      listed.kind === "materializedView"
+        ? { kind: "readOnly", reason: "Materialized views can't be edited." }
+        : spec.identity,
+  };
+}
+
+/** The `rowEstimate` the sidebar shows for a table, if it is listed. */
+export function mockRowEstimate(schema: string, table: string): number | null {
+  return OBJECTS[schema]?.find((o) => o.name === table)?.rowEstimate ?? null;
+}
+
 /** Handlers for the schema commands. `requireOpen` throws when the connection isn't open. */
 export function createSchemaHandlers(requireOpen: (id: string) => void): Record<string, Handler> {
   const currentDatabase = new Map<string, string>();
@@ -201,25 +227,7 @@ export function createSchemaHandlers(requireOpen: (id: string) => void): Record<
 
     describe_table: (args): TableDescription => {
       requireOpen(String(args["connectionId"]));
-      const schema = String(args["schema"]);
-      const table = String(args["table"]);
-      const listed = OBJECTS[schema]?.find(
-        (o) => o.name === table && ["table", "view", "materializedView"].includes(o.kind),
-      );
-      if (!listed) throw appError("NOT_FOUND", `table or view ${schema}.${table} not found`);
-
-      const spec = TABLES[`${schema}.${table}`] ?? { ...FALLBACK, kind: listed.kind };
-      return {
-        schema,
-        name: table,
-        kind: spec.kind,
-        comment: spec.comment ?? null,
-        columns: buildColumns(schema, spec),
-        identity:
-          listed.kind === "materializedView"
-            ? { kind: "readOnly", reason: "Materialized views can't be edited." }
-            : spec.identity,
-      };
+      return mockDescribeTable(String(args["schema"]), String(args["table"]));
     },
   };
 }
