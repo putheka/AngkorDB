@@ -30,6 +30,19 @@ npm run tauri dev    # opens the AngkorDB window with hot reload
 
 The first run compiles the Rust side and takes a minute or two. Later runs start in seconds.
 
+### UI work without the native app
+
+`npm run dev` serves the UI at <http://localhost:1420> for a normal browser. Without the Tauri window there is no Rust backend, so a small in-memory mock ([src/dev/mockBackend.ts](src/dev/mockBackend.ts)) stands in for it, with sample connections. Its data resets on reload.
+
+## Where your data lives
+
+| What                             | Where                                                                     |
+| -------------------------------- | ------------------------------------------------------------------------- |
+| Saved connections (no passwords) | `~/Library/Application Support/com.angkordb.app/connections.json`         |
+| Passwords                        | macOS login Keychain, service `com.angkordb.app`, one item per connection |
+
+Deleting a connection removes its Keychain item too. In development, macOS may ask for permission to use a Keychain item after a rebuild; choose "Always Allow".
+
 ## Dev database
 
 A local Postgres 16 with test data, for development and integration tests. Needs Docker Desktop.

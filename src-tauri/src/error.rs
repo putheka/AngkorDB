@@ -20,6 +20,16 @@ pub enum AppError {
     #[error("TLS setup failed: {0}")]
     Tls(String),
 
+    /// The user's input is invalid (empty host, bad URL, ...). The message is shown as-is.
+    #[error("{0}")]
+    Validation(String),
+
+    #[error("could not read or write settings: {0}")]
+    Storage(String),
+
+    #[error("Keychain error: {0}")]
+    Keychain(String),
+
     #[error("{0}")]
     Internal(String),
 }
@@ -33,6 +43,9 @@ impl AppError {
             Self::Pool(_) => "POOL",
             Self::Timeout(_) => "TIMEOUT",
             Self::Tls(_) => "TLS",
+            Self::Validation(_) => "VALIDATION",
+            Self::Storage(_) => "STORAGE",
+            Self::Keychain(_) => "KEYCHAIN",
             Self::Internal(_) => "INTERNAL",
         }
     }

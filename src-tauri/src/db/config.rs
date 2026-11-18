@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use tokio_postgres::config::{Config, SslMode as PgSslMode};
 
-use crate::models::connection::{ConnectionConfig, SslMode};
+use crate::models::connection::{ConnectionConfig, SafeMode, SslMode};
 
 /// Shown in `pg_stat_activity.application_name`.
 pub const APPLICATION_NAME: &str = "AngkorDB";
@@ -34,5 +34,14 @@ fn pg_ssl_mode(mode: SslMode) -> PgSslMode {
         SslMode::Disable => PgSslMode::Disable,
         SslMode::Prefer => PgSslMode::Prefer,
         SslMode::Require | SslMode::VerifyCa | SslMode::VerifyFull => PgSslMode::Require,
+    }
+}
+
+/// SQL run on every new connection of a session (pooled and per-tab alike).
+/// Read-only mode makes the server refuse writes (SQLSTATE 25006), not just the UI.
+pub fn init_sql(conn: &ConnectionConfig) -> Option<&'static str> {
+    match conn.safe_mode {
+        SafeMode::ReadOnly => Some("SET default_transaction_read_only = on"),
+        SafeMode::Off | SafeMode::Confirm | SafeMode::TouchId => None,
     }
 }

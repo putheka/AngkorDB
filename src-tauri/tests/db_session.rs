@@ -5,7 +5,7 @@
 
 use std::time::Duration;
 
-use angkordb_lib::db::session::Session;
+use angkordb_lib::db::session::{Session, test_connection};
 use angkordb_lib::error::AppError;
 use angkordb_lib::models::connection::{ColorTag, ConnectionConfig, SafeMode, SslMode};
 use serde_json::Value;
@@ -28,6 +28,7 @@ fn dev_config() -> ConnectionConfig {
         color: ColorTag::None,
         group: None,
         safe_mode: SafeMode::Off,
+        has_password: false,
     }
 }
 
@@ -237,4 +238,146 @@ async fn unreachable_server_is_a_connection_error() {
         json["message"].as_str().unwrap().contains("refused"),
         "message should include the cause: {json}"
     );
+}
+
+#[tokio::test]
+async fn session_reports_the_server_version() {
+    let Some(session) = open_or_skip().await else {
+        return;
+    };
+    let info = session.info();
+    assert!(
+        info.server_version
+            .starts_with(|c: char| c.is_ascii_digit()),
+        "server_version: {}",
+        info.server_version
+    );
+}
+
+#[tokio::test]
+async fn test_connection_succeeds_and_reports_version_and_latency() {
+    if open_or_skip().await.is_none() {
+        return;
+    }
+    let info = test_connection(&dev_config(), Some(DEV_PASSWORD))
+        .await
+        .unwrap();
+    assert!(
+        info.server_version.starts_with("16"),
+        "{}",
+        info.server_version
+    );
+    assert!(info.latency_ms < 5_000);
+}
+
+#[tokio::test]
+async fn test_connection_reports_a_wrong_password() {
+    if open_or_skip().await.is_none() {
+        return;
+    }
+    let err = test_connection(&dev_config(), Some("nope"))
+        .await
+        .unwrap_err();
+    assert_eq!(err.pg_code(), Some("28P01"), "{err:?}");
+    assert!(!err.is_connection_error());
+}
+
+#[tokio::test]
+async fn test_connection_reports_an_unreachable_server() {
+    let mut config = dev_config();
+    config.port = 1;
+    let err = test_connection(&config, Some(DEV_PASSWORD))
+        .await
+        .unwrap_err();
+    assert!(err.is_connection_error(), "{err:?}");
+}
+
+#[tokio::test]
+async fn test_connection_gives_up_on_a_server_that_never_answers() {
+    // A listener that accepts connections but never speaks: the driver's connect timeout
+    // does not cover this, our overall timeout must.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        let mut held = Vec::new();
+        while let Ok((socket, _)) = listener.accept().await {
+            held.push(socket);
+        }
+    });
+
+    let mut config = dev_config();
+    config.host = "127.0.0.1".into();
+    config.port = port;
+
+    let started = std::time::Instant::now();
+    let err = test_connection(&config, Some(DEV_PASSWORD))
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), "TIMEOUT", "{err:?}");
+    assert!(
+        started.elapsed() < Duration::from_secs(8),
+        "took {:?}",
+        started.elapsed()
+    );
+}
+
+#[tokio::test]
+async fn read_only_mode_blocks_writes_on_the_server() {
+    if open_or_skip().await.is_none() {
+        return;
+    }
+    let mut config = dev_config();
+    config.safe_mode = SafeMode::ReadOnly;
+    let session = Session::open(config, Some(DEV_PASSWORD)).await.unwrap();
+
+    let write = "INSERT INTO public.short_codes (code, label) VALUES ('ZZ', 'blocked')";
+
+    // Pooled connection...
+    let err: AppError = session
+        .meta()
+        .await
+        .unwrap()
+        .execute(write, &[])
+        .await
+        .unwrap_err()
+        .into();
+    assert_eq!(
+        err.pg_code(),
+        Some("25006"),
+        "read_only_sql_transaction: {err:?}"
+    );
+
+    // ...and a query tab's own connection.
+    let err: AppError = session
+        .tab_client("t")
+        .await
+        .unwrap()
+        .simple_query(write)
+        .await
+        .unwrap_err()
+        .into();
+    assert_eq!(err.pg_code(), Some("25006"), "{err:?}");
+
+    // Reads still work.
+    let rows = session
+        .meta()
+        .await
+        .unwrap()
+        .query("SELECT code FROM public.short_codes", &[])
+        .await
+        .unwrap();
+    assert!(!rows.is_empty());
+}
+
+#[tokio::test]
+async fn writes_work_when_safe_mode_is_off() {
+    let Some(session) = open_or_skip().await else {
+        return;
+    };
+    let client = session.meta().await.unwrap();
+    // Rolled back: the seed data stays untouched.
+    client
+        .batch_execute("BEGIN; CREATE TEMP TABLE t (x int); INSERT INTO t VALUES (1); ROLLBACK;")
+        .await
+        .unwrap();
 }

@@ -5,14 +5,28 @@ use tokio::sync::RwLock;
 
 use crate::db::session::Session;
 use crate::error::{AppError, AppResult};
+use crate::storage::ConnectionManager;
 
-/// Global state shared by all commands (`tauri::State<AppState>`), keyed by connection id.
-#[derive(Default)]
+/// Global state shared by all commands (`tauri::State<AppState>`).
 pub struct AppState {
+    connections: ConnectionManager,
+    /// Open database sessions, keyed by connection id.
     sessions: RwLock<HashMap<String, Arc<Session>>>,
 }
 
 impl AppState {
+    pub fn new(connections: ConnectionManager) -> Self {
+        Self {
+            connections,
+            sessions: RwLock::new(HashMap::new()),
+        }
+    }
+
+    /// Saved connections and their passwords.
+    pub fn connections(&self) -> &ConnectionManager {
+        &self.connections
+    }
+
     pub async fn session(&self, connection_id: &str) -> AppResult<Arc<Session>> {
         self.sessions
             .read()

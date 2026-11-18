@@ -6,8 +6,26 @@ import type { InvokeOptions } from "@tauri-apps/api/core";
 
 /** Commands */
 export const commands = {
-	/**  Smoke-test command: proves the React ⇄ Rust bridge works. */
+	/**
+	 *  Smoke-test command: proves the React ⇄ Rust bridge works.
+	 * 
+	 *  Reads compile-time constants rather than an `AppHandle`, so the command is not tied to
+	 *  one Tauri runtime (tests call it through the mock runtime).
+	 */
 	appInfo: (options?: InvokeOptions) => __TAURI_INVOKE<AppInfo>("app_info", undefined, options),
+	listConnections: (options?: InvokeOptions) => __TAURI_INVOKE<ConnectionConfig[]>("list_connections", undefined, options),
+	/**  Create (empty `config.id`) or update a connection. Returns the saved connection. */
+	saveConnection: (config: ConnectionConfig, password: PasswordChange, options?: InvokeOptions) => __TAURI_INVOKE<ConnectionConfig>("save_connection", { config, password }, options),
+	/**  Delete a connection and its saved password; closes it first if it is open. */
+	deleteConnection: (id: string, options?: InvokeOptions) => __TAURI_INVOKE<null>("delete_connection", { id }, options),
+	duplicateConnection: (id: string, options?: InvokeOptions) => __TAURI_INVOKE<ConnectionConfig>("duplicate_connection", { id }, options),
+	/**  Try to connect with the form values, without saving. Fails after 6 seconds at the latest. */
+	testConnection: (config: ConnectionConfig, password: PasswordChange, options?: InvokeOptions) => __TAURI_INVOKE<ConnectionInfo>("test_connection", { config, password }, options),
+	/**  Fill the connection form from a `postgres://` URL. */
+	parseConnectionUrl: (url: string, options?: InvokeOptions) => __TAURI_INVOKE<ParsedConnectionUrl>("parse_connection_url", { url }, options),
+	/**  Open a saved connection (replaces an already open session of the same connection). */
+	connectConnection: (id: string, options?: InvokeOptions) => __TAURI_INVOKE<ConnectionInfo>("connect_connection", { id }, options),
+	disconnectConnection: (id: string, options?: InvokeOptions) => __TAURI_INVOKE<null>("disconnect_connection", { id }, options),
 };
 
 /* Types */
@@ -32,6 +50,7 @@ export type ColorTag = "none" | "green" | "yellow" | "red";
 
 /**  Saved connection settings. The password is NOT stored here — it lives in the macOS Keychain. */
 export type ConnectionConfig = {
+	/**  Empty when creating a connection; the backend assigns an id. */
 	id: string,
 	name: string,
 	host: string,
@@ -42,7 +61,40 @@ export type ConnectionConfig = {
 	color: ColorTag,
 	group: string | null,
 	safeMode: SafeMode,
+	/**
+	 *  True when a password is saved in the Keychain. Maintained by the backend, ignored on input.
+	 *  Kept here so listing connections never has to touch the Keychain.
+	 */
+	hasPassword: boolean,
 };
+
+/**  Result of a successful connect or connection test. */
+export type ConnectionInfo = {
+	/**  e.g. `16.4` */
+	serverVersion: string,
+	/**  Time to connect and run the first query. */
+	latencyMs: number,
+};
+
+/**  Fields extracted from a `postgres://` URL, used to fill the connection form. */
+export type ParsedConnectionUrl = {
+	name: string,
+	host: string,
+	port: number,
+	user: string,
+	password: string | null,
+	database: string,
+	sslMode: SslMode,
+};
+
+/**  What to do with the saved password when saving or testing a connection. */
+export type PasswordChange = 
+/**  Leave the saved password as it is. */
+{ kind: "keep" } | 
+/**  Save this password in the Keychain. */
+{ kind: "set"; value: string } | 
+/**  Remove the saved password. */
+{ kind: "clear" };
 
 export type SafeMode = "off" | "confirm" | "touch-id" | "read-only";
 

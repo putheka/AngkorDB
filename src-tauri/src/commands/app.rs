@@ -1,7 +1,4 @@
 use serde::Serialize;
-use tauri::AppHandle;
-
-use crate::error::AppResult;
 
 #[derive(Debug, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -11,12 +8,14 @@ pub struct AppInfo {
 }
 
 /// Smoke-test command: proves the React ⇄ Rust bridge works.
+///
+/// Reads compile-time constants rather than an `AppHandle`, so the command is not tied to
+/// one Tauri runtime (tests call it through the mock runtime).
 #[tauri::command]
 #[specta::specta]
-pub fn app_info(app: AppHandle) -> AppResult<AppInfo> {
-    let pkg = app.package_info();
-    Ok(AppInfo {
-        name: pkg.name.clone(),
-        version: pkg.version.to_string(),
-    })
+pub fn app_info() -> AppInfo {
+    AppInfo {
+        name: env!("CARGO_PKG_NAME").to_owned(),
+        version: env!("CARGO_PKG_VERSION").to_owned(),
+    }
 }

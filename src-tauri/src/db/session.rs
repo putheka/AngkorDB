@@ -1,15 +1,17 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use deadpool_postgres::{Manager, ManagerConfig, Object, Pool, RecyclingMethod, Runtime};
+use deadpool_postgres::{
+    Hook, HookError, Manager, ManagerConfig, Object, Pool, RecyclingMethod, Runtime,
+};
 use tokio::sync::Mutex;
 use tokio_postgres::{Client, Config};
 use tokio_postgres_rustls::MakeRustlsConnect;
 
 use crate::db::{config, tls};
 use crate::error::{AppError, AppResult};
-use crate::models::connection::ConnectionConfig;
+use crate::models::connection::{ConnectionConfig, ConnectionInfo};
 
 /// Pooled connections for introspection, grid fetches and `apply_changes` (ANG-8 D3).
 const META_POOL_SIZE: usize = 3;
@@ -22,6 +24,7 @@ const POOL_WAIT_TIMEOUT: Duration = Duration::from_secs(10);
 ///   (`SET`, temp tables, `BEGIN` … `COMMIT` across runs) survives between runs.
 pub struct Session {
     config: ConnectionConfig,
+    info: ConnectionInfo,
     pg_config: Config,
     tls: MakeRustlsConnect,
     meta_pool: Pool,
@@ -29,8 +32,9 @@ pub struct Session {
 }
 
 impl Session {
-    /// Connect and verify with `SELECT 1`. Fails fast on bad host, credentials or TLS.
+    /// Connect and read the server version. Fails fast on bad host, credentials or TLS.
     pub async fn open(config: ConnectionConfig, password: Option<&str>) -> AppResult<Self> {
+        let started = Instant::now();
         let pg_config = config::pg_config(&config, password);
         let tls = tls::make_tls()?;
 
@@ -41,18 +45,27 @@ impl Session {
                 recycling_method: RecyclingMethod::Fast,
             },
         );
-        let meta_pool = Pool::builder(manager)
+        let mut pool = Pool::builder(manager)
             .max_size(META_POOL_SIZE)
             .runtime(Runtime::Tokio1)
             .wait_timeout(Some(POOL_WAIT_TIMEOUT))
-            .create_timeout(Some(config::CONNECT_TIMEOUT))
-            .build()
-            .map_err(|e| AppError::Pool(e.to_string()))?;
+            .create_timeout(Some(config::CONNECT_TIMEOUT));
+        if let Some(sql) = config::init_sql(&config) {
+            pool = pool.post_create(Hook::async_fn(move |client, _| {
+                Box::pin(async move { client.batch_execute(sql).await.map_err(HookError::Backend) })
+            }));
+        }
+        let meta_pool = pool.build().map_err(|e| AppError::Pool(e.to_string()))?;
 
-        meta_pool.get().await?.simple_query("SELECT 1").await?;
+        let server_version = server_version(&*meta_pool.get().await?).await?;
+        let info = ConnectionInfo {
+            server_version,
+            latency_ms: elapsed_ms(started),
+        };
 
         Ok(Self {
             config,
+            info,
             pg_config,
             tls,
             meta_pool,
@@ -62,6 +75,10 @@ impl Session {
 
     pub fn config(&self) -> &ConnectionConfig {
         &self.config
+    }
+
+    pub fn info(&self) -> &ConnectionInfo {
+        &self.info
     }
 
     /// A pooled client for short metadata / grid work. Returned to the pool on drop.
@@ -84,6 +101,9 @@ impl Session {
             // Ends when the client is dropped or the server closes the socket.
             let _ = connection.await;
         });
+        if let Some(sql) = config::init_sql(&self.config) {
+            client.batch_execute(sql).await?;
+        }
 
         let client = Arc::new(client);
         self.tabs
@@ -113,4 +133,55 @@ impl Session {
         self.tabs.lock().await.clear();
         self.meta_pool.close();
     }
+}
+
+async fn server_version(client: &Client) -> AppResult<String> {
+    let row = client
+        .query_one("SELECT current_setting('server_version')", &[])
+        .await?;
+    Ok(row.get(0))
+}
+
+fn elapsed_ms(since: Instant) -> u32 {
+    u32::try_from(since.elapsed().as_millis()).unwrap_or(u32::MAX)
+}
+
+/// Hard limit for a connection test. The driver's own connect timeout only covers the TCP
+/// connect, not TLS or authentication, so a half-open server could otherwise hang the form.
+const TEST_TIMEOUT: Duration = Duration::from_secs(6);
+
+/// Connect once with the given (possibly unsaved) settings and report the server version.
+/// Uses no pool and keeps nothing open afterwards.
+pub async fn test_connection(
+    config: &ConnectionConfig,
+    password: Option<&str>,
+) -> AppResult<ConnectionInfo> {
+    let started = Instant::now();
+    let pg_config = config::pg_config(config, password);
+    let tls = tls::make_tls()?;
+
+    let attempt = async {
+        let (client, connection) = pg_config.connect(tls).await?;
+        let driver = tokio::spawn(connection);
+        let version = server_version(&client).await;
+        drop(client);
+        driver.abort();
+        version
+    };
+
+    let server_version = tokio::time::timeout(TEST_TIMEOUT, attempt)
+        .await
+        .map_err(|_| {
+            AppError::Timeout(format!(
+                "no response from {}:{} after {} seconds",
+                config.host,
+                config.port,
+                TEST_TIMEOUT.as_secs()
+            ))
+        })??;
+
+    Ok(ConnectionInfo {
+        server_version,
+        latency_ms: elapsed_ms(started),
+    })
 }

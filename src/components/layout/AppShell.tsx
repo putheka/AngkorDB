@@ -3,10 +3,14 @@ import { useEffect } from "react";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { StatusBar } from "@/components/layout/StatusBar";
 import { TabBar } from "@/components/layout/TabBar";
+import { ConnectedView } from "@/features/connections/ConnectedView";
+import { WelcomeScreen } from "@/features/connections/WelcomeScreen";
 import { useLayoutStore } from "@/stores/layout";
+import { useSessionStore } from "@/stores/session";
 
-/** Window layout: title bar · sidebar | (tab bar / main pane) · status bar. Filled in by ANG-12. */
+/** Window layout: title bar · (welcome screen | sidebar + tabs) · status bar. */
 export function AppShell() {
+  const connected = useSessionStore((s) => s.activeConnectionId !== null);
   const sidebarCollapsed = useLayoutStore((s) => s.sidebarCollapsed);
   const toggleSidebar = useLayoutStore((s) => s.toggleSidebar);
 
@@ -32,13 +36,19 @@ export function AppShell() {
       </header>
 
       <div className="flex min-h-0 flex-1">
-        {!sidebarCollapsed && <Sidebar />}
-        <main className="flex min-w-0 flex-1 flex-col">
-          <TabBar />
-          <section className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
-            No connection open
-          </section>
-        </main>
+        {connected ? (
+          <>
+            {!sidebarCollapsed && <Sidebar />}
+            <main className="flex min-w-0 flex-1 flex-col">
+              <TabBar />
+              <ConnectedView />
+            </main>
+          </>
+        ) : (
+          <main className="min-w-0 flex-1">
+            <WelcomeScreen />
+          </main>
+        )}
       </div>
 
       <StatusBar />

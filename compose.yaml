@@ -6,6 +6,8 @@ services:
   postgres:
     image: postgres:16-alpine
     container_name: angkordb-postgres
+    # Come back after Docker Desktop or the Mac restarts.
+    restart: unless-stopped
     environment:
       POSTGRES_USER: angkor
       POSTGRES_PASSWORD: angkor
