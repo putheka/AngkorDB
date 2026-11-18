@@ -6,6 +6,7 @@ import { StatusBar } from "@/components/layout/StatusBar";
 import { TabBar } from "@/components/layout/TabBar";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { refreshSchema } from "@/features/sidebar/useSchema";
 import { ConnectedView } from "@/features/connections/ConnectedView";
 import { WelcomeScreen } from "@/features/connections/WelcomeScreen";
 import { useLayoutStore } from "@/stores/layout";
@@ -13,20 +14,26 @@ import { useSessionStore } from "@/stores/session";
 
 /** Window layout: title bar · (welcome screen | sidebar + tabs) · status bar. */
 export function AppShell() {
-  const connected = useSessionStore((s) => s.activeConnectionId !== null);
+  const activeId = useSessionStore((s) => s.activeConnectionId);
+  const connected = activeId !== null;
   const sidebarCollapsed = useLayoutStore((s) => s.sidebarCollapsed);
   const toggleSidebar = useLayoutStore((s) => s.toggleSidebar);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (connected && e.metaKey && e.key === "0") {
+      if (!connected || !e.metaKey) return;
+      if (e.key === "0") {
         e.preventDefault();
         toggleSidebar();
+      } else if (e.key === "r" && activeId) {
+        // Also stops the webview from reloading the whole app.
+        e.preventDefault();
+        void refreshSchema(activeId);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [connected, toggleSidebar]);
+  }, [connected, activeId, toggleSidebar]);
 
   return (
     <div className="flex h-full flex-col">

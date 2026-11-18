@@ -18,3 +18,8 @@ export function formatDuration(ms: number): string {
   const seconds = Math.round(ms / 1000);
   return `${Math.floor(seconds / 60)} min ${seconds % 60} s`;
 }
+
+/** `205`, `12K`, `1.2M`: a size to put next to a name. */
+export function formatCompact(count: number): string {
+  return compactFormat.format(Math.round(count));
+}

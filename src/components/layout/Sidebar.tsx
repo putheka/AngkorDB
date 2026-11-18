@@ -4,11 +4,12 @@ import { SidebarResizer } from "@/components/layout/SidebarResizer";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ColorDot } from "@/features/connections/ColorDot";
+import { ObjectTree } from "@/features/sidebar/ObjectTree";
 import { useConnections } from "@/features/connections/useConnections";
 import { useLayoutStore } from "@/stores/layout";
 import { useSessionStore } from "@/stores/session";
 
-/** Open connection on top, then the connection → schema → objects tree (filled in by ANG-17). */
+/** The open connection on top, then its databases, schemas and objects. */
 export function Sidebar() {
   const width = useLayoutStore((s) => s.sidebarWidth);
   const activeId = useSessionStore((s) => s.activeConnectionId);
@@ -39,9 +40,7 @@ export function Sidebar() {
         </Tooltip>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-3 text-sm text-sidebar-foreground/60">
-        Schemas and tables will appear here.
-      </div>
+      {activeId && <ObjectTree key={activeId} connectionId={activeId} />}
 
       <SidebarResizer />
     </aside>

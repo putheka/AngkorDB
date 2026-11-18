@@ -1,7 +1,21 @@
 import { TableIcon } from "lucide-react";
 
-/** The pane when no tab is open. Tabs (ANG-13) replace this when there is one. */
+import { useTabsStore } from "@/stores/tabs";
+
+/** The main pane. Shows the table in front; the data grid replaces this text (ANG-18). */
 export function ConnectedView() {
+  const tab = useTabsStore((s) => s.tabs.find((t) => t.id === s.activeId));
+
+  if (tab) {
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center gap-1 text-center text-muted-foreground">
+        <p className="text-sm font-medium text-foreground">
+          {tab.schema}.{tab.name}
+        </p>
+        <p className="text-xs">Rows will appear here.</p>
+      </div>
+    );
+  }
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-2 text-center text-muted-foreground">
       <TableIcon className="size-8 opacity-40" />

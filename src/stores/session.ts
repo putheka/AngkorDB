@@ -3,7 +3,10 @@ import { create } from "zustand";
 import type { ConnectionConfig } from "@/bindings";
 import { errorMessage } from "@/lib/errors";
 import { commands } from "@/lib/ipc";
+import { queryClient } from "@/lib/queryClient";
+import { useBrowserStore } from "@/stores/browser";
 import { useStatusStore } from "@/stores/status";
+import { useTabsStore } from "@/stores/tabs";
 
 interface SessionState {
   /** The connection currently open, if any. */
@@ -47,6 +50,9 @@ export const useSessionStore = create<SessionState>()((set, get) => ({
     // Leave the screen first; closing the server side can't fail in a way the user can act on.
     set({ activeConnectionId: null, serverVersion: null });
     useStatusStore.getState().clear();
+    useTabsStore.getState().closeAll();
+    useBrowserStore.getState().setSchema(null);
+    if (id) queryClient.removeQueries({ queryKey: ["schema", id] });
     if (id) await commands.disconnectConnection(id).catch(() => undefined);
   },
 

@@ -46,6 +46,15 @@ const OBJECTS: Record<string, DbObject[]> = {
   ],
 };
 
+/** Browser dev only: a schema with 1,200 tables and a few other objects, to try the sidebar at scale. */
+const stress: DbObject[] = [
+  ...Array.from({ length: 1200 }, (_, i) =>
+    object("stress", `table_${String(i + 1).padStart(4, "0")}`, "table", (i + 1) * 37),
+  ),
+  ...Array.from({ length: 40 }, (_, i) => object("stress", `report_view_${i + 1}`, "view")),
+];
+OBJECTS["stress"] = stress;
+
 interface ColumnSpec {
   type: string;
   base?: string;
