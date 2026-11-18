@@ -33,7 +33,7 @@ impl AppState {
             .await
             .get(connection_id)
             .cloned()
-            .ok_or_else(|| AppError::ConnectionNotFound(connection_id.to_owned()))
+            .ok_or_else(|| AppError::NotConnected(connection_id.to_owned()))
     }
 
     /// Register an opened session, closing any previous one for the same connection.

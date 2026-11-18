@@ -34,8 +34,22 @@ pub struct Session {
 impl Session {
     /// Connect and read the server version. Fails fast on bad host, credentials or TLS.
     pub async fn open(config: ConnectionConfig, password: Option<&str>) -> AppResult<Self> {
-        let started = Instant::now();
         let pg_config = config::pg_config(&config, password);
+        Self::connect(config, pg_config).await
+    }
+
+    /// Open another database on the same server with the same credentials: a new session
+    /// with its own pool (ANG-8 D3). This session stays open and usable if that fails.
+    pub async fn switch_database(&self, database: &str) -> AppResult<Self> {
+        let mut config = self.config.clone();
+        config.database = database.to_owned();
+        let mut pg_config = self.pg_config.clone();
+        pg_config.dbname(database);
+        Self::connect(config, pg_config).await
+    }
+
+    async fn connect(config: ConnectionConfig, pg_config: Config) -> AppResult<Self> {
+        let started = Instant::now();
         let tls = tls::make_tls()?;
 
         let manager = Manager::from_config(

@@ -1,52 +1,14 @@
-//! Integration tests against the dev database (`npm run db:up`).
-//!
-//! When the database isn't reachable the tests print a note and pass, so `cargo test`
-//! works offline. Set `ANGKORDB_REQUIRE_DB=1` (CI) to make an unreachable DB a failure.
+//! Sessions, errors, cancel and read-only mode against the dev database (see `common`).
+
+mod common;
 
 use std::time::Duration;
 
 use angkordb_lib::db::session::{Session, test_connection};
 use angkordb_lib::error::AppError;
-use angkordb_lib::models::connection::{ColorTag, ConnectionConfig, SafeMode, SslMode};
+use angkordb_lib::models::connection::SafeMode;
+use common::{DEV_PASSWORD, dev_config, open_or_skip};
 use serde_json::Value;
-
-/// Dev-only credentials from `compose.yaml`.
-const DEV_PASSWORD: &str = "angkor";
-
-fn dev_config() -> ConnectionConfig {
-    ConnectionConfig {
-        id: "integration-test".into(),
-        name: "Dev".into(),
-        host: std::env::var("ANGKORDB_TEST_HOST").unwrap_or_else(|_| "localhost".into()),
-        port: std::env::var("ANGKORDB_TEST_PORT")
-            .ok()
-            .and_then(|p| p.parse().ok())
-            .unwrap_or(54329),
-        user: "angkor".into(),
-        database: "angkordb_dev".into(),
-        ssl_mode: SslMode::Prefer,
-        color: ColorTag::None,
-        group: None,
-        safe_mode: SafeMode::Off,
-        has_password: false,
-    }
-}
-
-fn db_required() -> bool {
-    std::env::var("ANGKORDB_REQUIRE_DB").is_ok_and(|v| v == "1")
-}
-
-/// Open a session, or `None` (test skipped) when the dev DB isn't running.
-async fn open_or_skip() -> Option<Session> {
-    match Session::open(dev_config(), Some(DEV_PASSWORD)).await {
-        Ok(session) => Some(session),
-        Err(e) if e.is_connection_error() && !db_required() => {
-            eprintln!("SKIPPED: dev database not reachable ({e}). Run `npm run db:up`.");
-            None
-        }
-        Err(e) => panic!("could not open session: {e:?}"),
-    }
-}
 
 fn to_json(err: &AppError) -> Value {
     serde_json::to_value(err).expect("AppError serializes")

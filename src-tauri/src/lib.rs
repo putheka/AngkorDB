@@ -44,6 +44,11 @@ pub fn specta_builder<R: tauri::Runtime>() -> Builder<R> {
             commands::connections::parse_connection_url,
             commands::connections::connect_connection,
             commands::connections::disconnect_connection,
+            commands::schema::list_databases,
+            commands::schema::switch_database,
+            commands::schema::list_schemas,
+            commands::schema::list_objects,
+            commands::schema::describe_table,
         ])
         .typ::<error::AppErrorPayload>()
         .typ::<models::connection::ConnectionConfig>()

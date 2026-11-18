@@ -4,7 +4,6 @@
  * built and checked without the native app. State lives in memory and resets on reload.
  */
 import type {
-  AppError,
   ConnectionConfig,
   ConnectionInfo,
   ParsedConnectionUrl,
@@ -12,13 +11,11 @@ import type {
   SslMode,
 } from "@/bindings";
 
-type Handler = (args: Record<string, unknown>) => unknown;
+import { createSchemaHandlers } from "@/dev/mockSchema";
+import { appError, sleep, type Handler } from "@/dev/mockSupport";
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-function appError(code: string, message: string, extra: Partial<AppError> = {}): AppError {
-  return { code, message, pgCode: null, detail: null, hint: null, position: null, ...extra };
-}
+/** Connections opened with `connect_connection`; schema commands need one. */
+const openConnections = new Set<string>();
 
 const base: Omit<ConnectionConfig, "id" | "name" | "host" | "port" | "user" | "database"> = {
   sslMode: "prefer",
@@ -178,10 +175,18 @@ const handlers: Record<string, Handler> = {
     if (target?.host.includes("example.com")) {
       throw appError("CONNECTION", "error connecting to server: Connection timed out");
     }
+    openConnections.add(String(args["id"]));
     return { serverVersion: "16.4", latencyMs: 8 };
   },
 
-  disconnect_connection: () => null,
+  disconnect_connection: (args) => {
+    openConnections.delete(String(args["id"]));
+    return null;
+  },
+
+  ...createSchemaHandlers((id) => {
+    if (!openConnections.has(id)) throw appError("NOT_CONNECTED", `not connected to ${id}`);
+  }),
 };
 
 export function installMockBackend() {

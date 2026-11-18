@@ -8,6 +8,14 @@ pub enum AppError {
     #[error("connection not found: {0}")]
     ConnectionNotFound(String),
 
+    /// The connection exists but no session is open for it.
+    #[error("not connected to {0}")]
+    NotConnected(String),
+
+    /// A table, view or other database object that doesn't exist.
+    #[error("{0} not found")]
+    NotFound(String),
+
     #[error(transparent)]
     Postgres(#[from] tokio_postgres::Error),
 
@@ -38,6 +46,8 @@ impl AppError {
     pub fn code(&self) -> &'static str {
         match self {
             Self::ConnectionNotFound(_) => "CONNECTION_NOT_FOUND",
+            Self::NotConnected(_) => "NOT_CONNECTED",
+            Self::NotFound(_) => "NOT_FOUND",
             Self::Postgres(e) if e.as_db_error().is_some() => "POSTGRES",
             Self::Postgres(_) => "CONNECTION",
             Self::Pool(_) => "POOL",

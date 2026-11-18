@@ -327,3 +327,149 @@ fn tauri_conf_and_cargo_versions_match() {
         "bump both together"
     );
 }
+
+#[test]
+fn schema_commands_need_an_open_connection() {
+    let ipc = setup();
+    for (cmd, args) in [
+        ("list_databases", json!({ "connectionId": "nope" })),
+        (
+            "list_schemas",
+            json!({ "connectionId": "nope", "includeSystem": false }),
+        ),
+        (
+            "list_objects",
+            json!({ "connectionId": "nope", "schema": "public" }),
+        ),
+        (
+            "describe_table",
+            json!({ "connectionId": "nope", "schema": "public", "table": "t" }),
+        ),
+        (
+            "switch_database",
+            json!({ "connectionId": "nope", "database": "postgres" }),
+        ),
+    ] {
+        let err = ipc.call(cmd, args).unwrap_err();
+        assert_eq!(err["code"], "NOT_CONNECTED", "{cmd}: {err}");
+        assert_eq!(err["message"], "not connected to nope");
+    }
+}
+
+#[test]
+fn browse_the_dev_database_through_ipc() {
+    if !dev_db_available() {
+        return;
+    }
+    let ipc = setup();
+    let mut form = config("Dev", "localhost", 54329);
+    form["user"] = json!("angkor");
+    form["database"] = json!("angkordb_dev");
+    let saved = ipc
+        .call(
+            "save_connection",
+            json!({ "config": form, "password": { "kind": "set", "value": "angkor" } }),
+        )
+        .unwrap();
+    let id = saved["id"].as_str().unwrap();
+    ipc.call("connect_connection", json!({ "id": id })).unwrap();
+
+    let schemas = ipc
+        .call(
+            "list_schemas",
+            json!({ "connectionId": id, "includeSystem": false }),
+        )
+        .unwrap();
+    assert_eq!(
+        schemas[0],
+        json!({ "name": "public", "owner": "angkor", "isSystem": false })
+    );
+
+    let objects = ipc
+        .call(
+            "list_objects",
+            json!({ "connectionId": id, "schema": "public" }),
+        )
+        .unwrap();
+    let users = objects
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|o| o["name"] == "users")
+        .expect("users is listed");
+    assert_eq!(users["kind"], "table");
+    assert_eq!(users["schema"], "public");
+    assert_eq!(users["rowEstimate"], 205.0);
+    assert!(users["oid"].is_u64());
+    assert!(users["detail"].is_null());
+
+    let table = ipc
+        .call(
+            "describe_table",
+            json!({ "connectionId": id, "schema": "public", "table": "orders" }),
+        )
+        .unwrap();
+    assert_eq!(
+        table["identity"],
+        json!({ "kind": "primaryKey", "columns": ["id"] })
+    );
+    let user_id = table["columns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == "user_id")
+        .unwrap();
+    assert_eq!(user_id["typeName"], "bigint");
+    assert_eq!(user_id["isPrimaryKey"], false);
+    assert_eq!(user_id["nullable"], false);
+    assert_eq!(user_id["foreignKeys"][0]["table"], "users");
+
+    let err = ipc
+        .call(
+            "describe_table",
+            json!({ "connectionId": id, "schema": "public", "table": "nope" }),
+        )
+        .unwrap_err();
+    assert_eq!(err["code"], "NOT_FOUND");
+
+    // Switching database replaces the session: later calls run against the new database.
+    let databases = ipc
+        .call("list_databases", json!({ "connectionId": id }))
+        .unwrap();
+    assert!(
+        databases
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d["name"] == "postgres")
+    );
+    let switched = ipc
+        .call(
+            "switch_database",
+            json!({ "connectionId": id, "database": "postgres" }),
+        )
+        .unwrap();
+    assert!(switched["serverVersion"].is_string());
+    let current = ipc
+        .call("list_databases", json!({ "connectionId": id }))
+        .unwrap();
+    let current: Vec<_> = current
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|d| d["isCurrent"] == true)
+        .map(|d| d["name"].clone())
+        .collect();
+    assert_eq!(current, [json!("postgres")]);
+
+    // Disconnecting closes it: schema commands report "not connected" again.
+    ipc.call("disconnect_connection", json!({ "id": id }))
+        .unwrap();
+    let err = ipc
+        .call(
+            "list_schemas",
+            json!({ "connectionId": id, "includeSystem": false }),
+        )
+        .unwrap_err();
+    assert_eq!(err["code"], "NOT_CONNECTED");
+}
