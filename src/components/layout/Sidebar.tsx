@@ -1,14 +1,49 @@
-import { useLayoutStore } from "@/stores/layout";
+import { PlugZapIcon } from "lucide-react";
 
-/** Connection → schema → objects tree. Filled in by ANG-17. */
+import { SidebarResizer } from "@/components/layout/SidebarResizer";
+import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { ColorDot } from "@/features/connections/ColorDot";
+import { useConnections } from "@/features/connections/useConnections";
+import { useLayoutStore } from "@/stores/layout";
+import { useSessionStore } from "@/stores/session";
+
+/** Open connection on top, then the connection → schema → objects tree (filled in by ANG-17). */
 export function Sidebar() {
   const width = useLayoutStore((s) => s.sidebarWidth);
+  const activeId = useSessionStore((s) => s.activeConnectionId);
+  const disconnect = useSessionStore((s) => s.disconnect);
+  const { data: connections = [] } = useConnections();
+  const active = connections.find((c) => c.id === activeId);
+
   return (
     <aside
       style={{ width }}
-      className="shrink-0 border-r border-sidebar-border bg-sidebar p-3 text-sm text-sidebar-foreground/70"
+      className="relative flex shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground"
     >
-      Objects
+      <div className="flex h-9 shrink-0 items-center gap-2 border-b border-sidebar-border pr-1 pl-3">
+        {active && <ColorDot color={active.color} />}
+        <span className="min-w-0 flex-1 truncate text-sm font-medium">{active?.name}</span>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Disconnect"
+              onClick={() => void disconnect()}
+            >
+              <PlugZapIcon />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Disconnect</TooltipContent>
+        </Tooltip>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto p-3 text-sm text-sidebar-foreground/60">
+        Schemas and tables will appear here.
+      </div>
+
+      <SidebarResizer />
     </aside>
   );
 }

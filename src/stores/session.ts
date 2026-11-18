@@ -3,6 +3,7 @@ import { create } from "zustand";
 import type { ConnectionConfig } from "@/bindings";
 import { errorMessage } from "@/lib/errors";
 import { commands } from "@/lib/ipc";
+import { useStatusStore } from "@/stores/status";
 
 interface SessionState {
   /** The connection currently open, if any. */
@@ -45,6 +46,7 @@ export const useSessionStore = create<SessionState>()((set, get) => ({
     const id = get().activeConnectionId;
     // Leave the screen first; closing the server side can't fail in a way the user can act on.
     set({ activeConnectionId: null, serverVersion: null });
+    useStatusStore.getState().clear();
     if (id) await commands.disconnectConnection(id).catch(() => undefined);
   },
 
