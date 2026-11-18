@@ -1,0 +1,112 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A newer push to the same branch cancels the run still in progress.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Frontend: same scripts as `npm run check` locally. Fast and cheap.
+  web:
+    name: Web (typecheck, lint, format)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run format:check
+
+  # Rust: fmt, clippy, unit tests, bindings drift test and Postgres integration tests.
+  # Linux because service containers need it, and Linux minutes are 10x cheaper than macOS.
+  rust:
+    name: Rust (fmt, clippy, tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: angkor
+          POSTGRES_PASSWORD: angkor
+          POSTGRES_DB: angkordb_dev
+        ports:
+          - 54329:5432
+        options: >-
+          --health-cmd "pg_isready -U angkor -d angkordb_dev"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      # An unreachable database fails the tests instead of skipping them.
+      ANGKORDB_REQUIRE_DB: "1"
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Tauri system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config postgresql-client \
+            libwebkit2gtk-4.1-dev libxdo-dev libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      # `tauri::generate_context!()` needs the built frontend (`dist/`) to compile.
+      - run: npm ci
+      - run: npx vite build
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          cache-on-failure: true
+
+      - name: Load dev seed data
+        run: >-
+          psql "postgres://angkor:angkor@localhost:54329/angkordb_dev"
+          -v ON_ERROR_STOP=1 -q -f dev/seed.sql
+
+      - run: npm run rust:check
+
+  # Full macOS app build. Manual only: macOS minutes cost 10x on private repos.
+  # Run it from the Actions tab ("Run workflow"); tagged releases come with ANG-58.
+  build-macos:
+    name: macOS app build (manual)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - run: npm run tauri build -- --debug --bundles app

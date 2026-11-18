@@ -62,6 +62,14 @@ npm run check        # everything below in one go
 | `npm run format:check` | Prettier (`npm run format` to fix)                    |
 | `npm run rust:check`   | `cargo fmt`, `cargo clippy -D warnings`, `cargo test` |
 
+### CI
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs these same scripts on every push to `main` and every pull request:
+
+- **Web**: typecheck, lint, format.
+- **Rust**: fmt, clippy, tests. This includes the bindings drift test and the database tests, against a Postgres 16 service seeded from `dev/seed.sql`. In CI a missing database fails the tests (`ANGKORDB_REQUIRE_DB=1`); locally they skip.
+- **macOS app build**: manual only (Actions tab → Run workflow), because macOS minutes cost 10× on private repos.
+
 ## Build the app
 
 ```bash
