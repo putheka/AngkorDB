@@ -61,6 +61,8 @@ export interface DataGridProps {
   onLayoutChange: (layout: ColumnLayout) => void;
   sort: SortSpec[];
   onSortChange: (sort: SortSpec[]) => void;
+  /** "Filter by this value" in the cell menu. `null` means the cell is NULL. Left out: no item. */
+  onFilterByValue?: (column: string, value: string | null) => void;
 }
 
 /**
@@ -77,6 +79,7 @@ export function DataGrid({
   onLayoutChange,
   sort,
   onSortChange,
+  onFilterByValue,
 }: DataGridProps) {
   const theme = useGridTheme();
   const visible = useMemo(() => visibleColumns(columns, layout), [columns, layout]);
@@ -226,6 +229,18 @@ export function DataGrid({
         )}
         {menu?.kind === "cell" && menuColumn && menuRow && (
           <>
+            {onFilterByValue && (
+              <>
+                <ContextMenuItem
+                  onSelect={() =>
+                    onFilterByValue(menuColumn.column.name, menuRow[menuColumn.index] ?? null)
+                  }
+                >
+                  Filter by this value
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+              </>
+            )}
             <ContextMenuItem
               onSelect={() => copyToClipboard(copyText(menuRow[menuColumn.index] ?? null))}
             >

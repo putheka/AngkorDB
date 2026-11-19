@@ -3,17 +3,19 @@ import { create } from "zustand";
 
 import type { SortSpec } from "@/bindings";
 import { EMPTY_LAYOUT, type ColumnLayout } from "@/features/grid/columns";
+import { EMPTY_FILTER, type FilterState } from "@/features/grid/filters";
 import { useTabsStore } from "@/stores/tabs";
 
 export const PAGE_SIZES = [100, 500, 1000] as const;
 
-/** What the user has done to one table tab: how it is sorted, paged and laid out. */
+/** What the user has done to one table tab: how it is filtered, sorted, paged and laid out. */
 export interface TableView {
   sort: SortSpec[];
   /** 0-based. */
   page: number;
   pageSize: number;
   layout: ColumnLayout;
+  filter: FilterState;
 }
 
 export const DEFAULT_VIEW: TableView = {
@@ -21,6 +23,7 @@ export const DEFAULT_VIEW: TableView = {
   page: 0,
   pageSize: 500,
   layout: EMPTY_LAYOUT,
+  filter: EMPTY_FILTER,
 };
 
 interface TableViewsState {

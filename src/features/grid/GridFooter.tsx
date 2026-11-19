@@ -1,4 +1,10 @@
-import { ChevronLeftIcon, ChevronRightIcon, Columns3Icon, RefreshCwIcon } from "lucide-react";
+import {
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  Columns3Icon,
+  ListFilterIcon,
+  RefreshCwIcon,
+} from "lucide-react";
 
 import type { ResultColumn } from "@/bindings";
 import { Button } from "@/components/ui/button";
@@ -39,8 +45,12 @@ export interface GridFooterProps {
   onPageSize: (size: number) => void;
   onLayoutChange: (layout: ColumnLayout) => void;
   onRefresh: () => void;
-  /** Ask for the real count; shown next to an estimate. */
+  /** Ask for the real count; shown next to an estimate, or when a filter makes it unknown. */
   onCountExactly: () => void;
+  /** Conditions in force (filters, plus the raw WHERE). */
+  filterCount: number;
+  filterOpen: boolean;
+  onToggleFilter: () => void;
 }
 
 /** `‹ 1–500 of ~1.2M ›`, page size, column visibility and refresh. */
@@ -51,7 +61,7 @@ export function GridFooter(props: GridFooterProps) {
     rowCount === 0 ? "No rows" : `${number.format(first)}–${number.format(first + rowCount - 1)}`;
   const totalText = total
     ? `${total.exact ? "" : "~"}${total.exact ? number.format(total.count) : formatCompact(total.count)}`
-    : "…";
+    : "";
   const hiddenCount = layout.hidden.length;
 
   return (
@@ -68,7 +78,7 @@ export function GridFooter(props: GridFooterProps) {
         </Button>
         <span className="min-w-28 text-center tabular-nums">
           {range}
-          {rowCount > 0 && total !== undefined && <> of {totalText}</>}
+          {rowCount > 0 && totalText !== "" && <> of {totalText}</>}
         </span>
         <Button
           variant="ghost"
@@ -79,9 +89,10 @@ export function GridFooter(props: GridFooterProps) {
         >
           <ChevronRightIcon />
         </Button>
-        {total && !total.exact && (
+        {/* A guess can be made exact; with a filter there is no guess until someone counts. */}
+        {((total && !total.exact) || (!total && hasMore)) && (
           <Button variant="ghost" size="xs" onClick={props.onCountExactly}>
-            Count exactly
+            {total ? "Count exactly" : "Count rows"}
           </Button>
         )}
       </div>
@@ -99,6 +110,17 @@ export function GridFooter(props: GridFooterProps) {
             ))}
           </SelectContent>
         </Select>
+
+        <Button
+          variant={props.filterCount > 0 || props.filterOpen ? "secondary" : "ghost"}
+          size="xs"
+          aria-pressed={props.filterOpen}
+          aria-label="Filter rows"
+          onClick={props.onToggleFilter}
+        >
+          <ListFilterIcon />
+          Filter{props.filterCount > 0 && ` (${props.filterCount})`}
+        </Button>
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>

@@ -116,8 +116,43 @@ function matches(desc: TableDescription, row: Row, filter: Filter): boolean {
   }
 }
 
-function filtered(desc: TableDescription, filters: Filter[]): Row[] {
-  return tableRows(desc).filter((row) => filters.every((f) => matches(desc, row, f)));
+const RAW_COMPARISON = /^(\w+)\s*(=|<>|!=|<=|>=|<|>)\s*(?:'([^']*)'|(-?\d+(?:\.\d+)?))$/;
+const RAW_OPS = {
+  "=": "eq",
+  "<>": "ne",
+  "!=": "ne",
+  "<=": "le",
+  ">=": "ge",
+  "<": "lt",
+  ">": "gt",
+} as const;
+
+/**
+ * Stands in for the server evaluating a raw WHERE: only `column <op> value` and `column IS [NOT]
+ * NULL` are understood; anything else fails like a syntax error would.
+ */
+function rawFilter(raw: string): Filter {
+  const text = raw
+    .trim()
+    .replace(/^where\s+/i, "")
+    .replace(/;$/, "")
+    .trim();
+  const nulls = /^(\w+)\s+IS\s+(NOT\s+)?NULL$/i.exec(text);
+  if (nulls?.[1]) return { column: nulls[1], op: nulls[2] ? "isNotNull" : "isNull", values: [] };
+  const cmp = RAW_COMPARISON.exec(text);
+  if (cmp?.[1] && cmp[2]) {
+    const op = RAW_OPS[cmp[2] as keyof typeof RAW_OPS];
+    return { column: cmp[1], op, values: [cmp[3] ?? cmp[4] ?? ""] };
+  }
+  throw appError("POSTGRES", `syntax error at or near "${text.split(/\s+/)[0] ?? ""}"`, {
+    pgCode: "42601",
+    hint: "The browser mock only understands `column = value` style conditions.",
+  });
+}
+
+function filtered(desc: TableDescription, filters: Filter[], rawWhere: string | null): Row[] {
+  const all = rawWhere && rawWhere.trim() ? [...filters, rawFilter(rawWhere)] : filters;
+  return tableRows(desc).filter((row) => all.every((f) => matches(desc, row, f)));
 }
 
 function sorted(desc: TableDescription, rows: Row[], sort: SortSpec[]): Row[] {
@@ -146,7 +181,7 @@ export function createRowHandlers(requireOpen: (id: string) => void): Record<str
       const query = args["query"] as RowQuery;
       const desc = mockDescribeTable(query.schema, query.table);
       const limit = Math.min(Math.max(query.limit, 1), MAX_LIMIT);
-      const all = sorted(desc, filtered(desc, query.filters), query.sort);
+      const all = sorted(desc, filtered(desc, query.filters, query.rawWhere), query.sort);
       const rows = all.slice(query.offset, query.offset + limit);
       return {
         columns: desc.columns.map((c) => ({
@@ -166,16 +201,18 @@ export function createRowHandlers(requireOpen: (id: string) => void): Record<str
       requireOpen(String(args["connectionId"]));
       const desc = mockDescribeTable(String(args["schema"]), String(args["table"]));
       const filters = args["filters"] as Filter[];
+      const rawWhere = (args["rawWhere"] as string | null) ?? null;
       const estimate = mockRowEstimate(desc.schema, desc.name);
       if (
         filters.length === 0 &&
+        !rawWhere &&
         args["exact"] !== true &&
         estimate !== null &&
         desc.kind === "table"
       ) {
         return { count: estimate, exact: false };
       }
-      return { count: filtered(desc, filters).length, exact: true };
+      return { count: filtered(desc, filters, rawWhere).length, exact: true };
     },
   };
 }

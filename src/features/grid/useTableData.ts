@@ -2,6 +2,7 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 
 import type { RowQuery } from "@/bindings";
+import type { FilterState } from "@/features/grid/filters";
 import type { TableView } from "@/features/grid/tableViews";
 import { commands } from "@/lib/ipc";
 import { queryClient } from "@/lib/queryClient";
@@ -24,10 +25,10 @@ export function useTableRows(connectionId: string, tab: TableTab, view: TableVie
       limit: view.pageSize,
       offset: view.page * view.pageSize,
       sort: view.sort,
-      filters: [],
-      rawWhere: null,
+      filters: view.filter.applied.filters,
+      rawWhere: view.filter.applied.rawWhere,
     }),
-    [tab.schema, tab.name, view.pageSize, view.page, view.sort],
+    [tab.schema, tab.name, view.pageSize, view.page, view.sort, view.filter.applied],
   );
 
   return useQuery({
@@ -43,13 +44,35 @@ export function useTableRows(connectionId: string, tab: TableTab, view: TableVie
 }
 
 /**
- * How many rows the table has: the planner's estimate (instant), or with `exact` a real count,
- * which scans the table. Skipped when the first page already showed every row.
+ * How many rows match: the planner's estimate (instant) for a whole table, otherwise a real
+ * `count(*)`, which scans. The caller decides when that is worth it (`enabled`).
  */
-export function useRowCount(connectionId: string, tab: TableTab, exact: boolean, enabled: boolean) {
+export function useRowCount(
+  connectionId: string,
+  tab: TableTab,
+  applied: FilterState["applied"],
+  exact: boolean,
+  enabled: boolean,
+) {
   return useQuery({
-    queryKey: [...dataKey(connectionId), "count", tab.schema, tab.name, exact],
-    queryFn: () => commands.countRows(connectionId, tab.schema, tab.name, [], null, exact),
+    queryKey: [...dataKey(connectionId), "count", tab.schema, tab.name, applied, exact],
+    queryFn: () =>
+      commands.countRows(
+        connectionId,
+        tab.schema,
+        tab.name,
+        applied.filters,
+        applied.rawWhere,
+        exact,
+      ),
     enabled,
+  });
+}
+
+/** The table's columns and types from the catalog: known even while the rows are loading or failing. */
+export function useTableColumns(connectionId: string, tab: TableTab) {
+  return useQuery({
+    queryKey: ["schema", connectionId, "describe", tab.schema, tab.name],
+    queryFn: () => commands.describeTable(connectionId, tab.schema, tab.name),
   });
 }
