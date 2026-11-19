@@ -7,6 +7,7 @@ import { TabBar } from "@/components/layout/TabBar";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useTabShortcuts } from "@/features/tabs/useTabShortcuts";
+import { refreshData } from "@/features/grid/useTableData";
 import { refreshSchema } from "@/features/sidebar/useSchema";
 import { ConnectedView } from "@/features/connections/ConnectedView";
 import { WelcomeScreen } from "@/features/connections/WelcomeScreen";
@@ -32,6 +33,7 @@ export function AppShell() {
         // Also stops the webview from reloading the whole app.
         e.preventDefault();
         void refreshSchema(activeId);
+        void refreshData(activeId);
       }
     };
     window.addEventListener("keydown", onKey);

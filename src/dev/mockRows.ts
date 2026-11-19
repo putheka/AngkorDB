@@ -24,6 +24,8 @@ const NUMERIC = ["smallint", "integer", "bigint", "numeric", "double precision",
 const isNumeric = (column: ColumnInfo) => NUMERIC.includes(column.baseType);
 
 function cell(column: ColumnInfo, i: number): string | null {
+  // A bigint above 2^53: a JS number would round this, the text must not.
+  if (column.name === "big_counter") return i === 1 ? "9007199254740993" : String(i * 1_000_003);
   if (!column.isPrimaryKey && column.nullable && i % 7 === 0) return null;
   switch (column.baseType) {
     case "bigint":

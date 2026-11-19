@@ -37,6 +37,7 @@ const OBJECTS: Record<string, DbObject[]> = {
     object("public", "orders", "table", 1000),
     object("public", "short_codes", "table", 3),
     object("public", "users", "table", 205),
+    object("public", "wide_table", "table", 500),
     object("public", "user_order_totals", "view"),
   ],
   billing: [
@@ -82,7 +83,9 @@ const TABLES: Record<string, TableSpec> = {
       email: { type: "citext", notNull: true },
       name: { type: "character varying(100)", base: "character varying" },
       status: { type: "user_status", notNull: true, default: "'active'::user_status" },
+      is_admin: { type: "boolean", notNull: true, default: "false" },
       balance: { type: "numeric(20,6)", base: "numeric", notNull: true, default: "0" },
+      big_counter: { type: "bigint" },
       tags: { type: "text[]" },
       profile: { type: "jsonb" },
       created_at: { type: "timestamp with time zone", notNull: true, default: "now()" },
@@ -123,6 +126,38 @@ const TABLES: Record<string, TableSpec> = {
       payload: { type: "jsonb" },
     },
   },
+  "public.metrics_big": {
+    kind: "table",
+    identity: { kind: "primaryKey", columns: ["id"] },
+    columns: {
+      id: { type: "bigint", pk: true, notNull: true, identity: "always" },
+      recorded_at: { type: "timestamp with time zone", notNull: true },
+      sensor: { type: "text", notNull: true },
+      value: { type: "double precision" },
+      meta: { type: "jsonb" },
+    },
+  },
+  "public.wide_table": {
+    kind: "table",
+    comment: "100 columns, to check the grid with a wide table",
+    identity: { kind: "primaryKey", columns: ["id"] },
+    columns: {
+      id: { type: "bigint", pk: true, notNull: true },
+      ...Object.fromEntries(
+        Array.from({ length: 99 }, (_, i): [string, ColumnSpec] => {
+          const n = String(i + 1).padStart(2, "0");
+          const kinds: ColumnSpec[] = [
+            { type: "text" },
+            { type: "integer" },
+            { type: "numeric(12,2)", base: "numeric" },
+            { type: "boolean" },
+            { type: "timestamp with time zone" },
+          ];
+          return [`col_${n}`, kinds[i % kinds.length] ?? { type: "text" }];
+        }),
+      ),
+    },
+  },
   "public.user_order_totals": {
     kind: "view",
     identity: { kind: "readOnly", reason: "Views can't be edited." },
@@ -142,13 +177,27 @@ const FALLBACK: TableSpec = {
   columns: { id: { type: "bigint", pk: true, notNull: true }, name: { type: "text" } },
 };
 
+/** The OIDs Postgres really uses, so the grid aligns and draws mock columns like real ones. */
+const TYPE_OIDS: Record<string, number> = {
+  bigint: 20,
+  smallint: 21,
+  integer: 23,
+  numeric: 1700,
+  "double precision": 701,
+  boolean: 16,
+  json: 114,
+  jsonb: 3802,
+  text: 25,
+  "timestamp with time zone": 1184,
+};
+
 function buildColumns(schema: string, spec: TableSpec): ColumnInfo[] {
   return Object.entries(spec.columns).map(([name, c], index) => ({
     name,
     position: index + 1,
     typeName: c.type,
     baseType: c.base ?? c.type,
-    typeOid: 25,
+    typeOid: TYPE_OIDS[c.base ?? c.type] ?? 25,
     nullable: !c.notNull,
     defaultValue: c.default ?? null,
     identity: c.identity ?? null,

@@ -1,0 +1,150 @@
+import { ChevronLeftIcon, ChevronRightIcon, Columns3Icon, RefreshCwIcon } from "lucide-react";
+
+import type { ResultColumn } from "@/bindings";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { orderedNames, type ColumnLayout } from "@/features/grid/columns";
+import { PAGE_SIZES } from "@/features/grid/tableViews";
+import { formatCompact } from "@/lib/format";
+
+const number = new Intl.NumberFormat("en-US");
+
+export interface GridFooterProps {
+  page: number;
+  pageSize: number;
+  /** Rows on this page. */
+  rowCount: number;
+  hasMore: boolean;
+  /** `exact: false` is the planner's guess. `null` while unknown. */
+  total: { count: number; exact: boolean } | null;
+  fetching: boolean;
+  columns: ResultColumn[];
+  layout: ColumnLayout;
+  onPage: (page: number) => void;
+  onPageSize: (size: number) => void;
+  onLayoutChange: (layout: ColumnLayout) => void;
+  onRefresh: () => void;
+  /** Ask for the real count; shown next to an estimate. */
+  onCountExactly: () => void;
+}
+
+/** `‹ 1–500 of ~1.2M ›`, page size, column visibility and refresh. */
+export function GridFooter(props: GridFooterProps) {
+  const { page, pageSize, rowCount, hasMore, total, layout, columns } = props;
+  const first = page * pageSize + 1;
+  const range =
+    rowCount === 0 ? "No rows" : `${number.format(first)}–${number.format(first + rowCount - 1)}`;
+  const totalText = total
+    ? `${total.exact ? "" : "~"}${total.exact ? number.format(total.count) : formatCompact(total.count)}`
+    : "…";
+  const hiddenCount = layout.hidden.length;
+
+  return (
+    <footer className="flex h-8 shrink-0 items-center justify-between gap-3 border-t px-2 text-xs">
+      <div className="flex items-center gap-1">
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          aria-label="Previous page"
+          disabled={page === 0}
+          onClick={() => props.onPage(page - 1)}
+        >
+          <ChevronLeftIcon />
+        </Button>
+        <span className="min-w-28 text-center tabular-nums">
+          {range}
+          {rowCount > 0 && total !== undefined && <> of {totalText}</>}
+        </span>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          aria-label="Next page"
+          disabled={!hasMore}
+          onClick={() => props.onPage(page + 1)}
+        >
+          <ChevronRightIcon />
+        </Button>
+        {total && !total.exact && (
+          <Button variant="ghost" size="xs" onClick={props.onCountExactly}>
+            Count exactly
+          </Button>
+        )}
+      </div>
+
+      <div className="flex items-center gap-1">
+        <Select value={String(pageSize)} onValueChange={(v) => props.onPageSize(Number(v))}>
+          <SelectTrigger size="sm" className="h-6 gap-1 px-2 text-xs" aria-label="Rows per page">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {PAGE_SIZES.map((size) => (
+              <SelectItem key={size} value={String(size)}>
+                {size} rows
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="xs" aria-label="Show or hide columns">
+              <Columns3Icon />
+              Columns{hiddenCount > 0 && ` (${columns.length - hiddenCount}/${columns.length})`}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="max-h-80 overflow-y-auto">
+            {orderedNames(columns, layout).map((name) => (
+              <DropdownMenuCheckboxItem
+                key={name}
+                checked={!layout.hidden.includes(name)}
+                // Stay open: people tick several columns in one go.
+                onSelect={(e) => e.preventDefault()}
+                onCheckedChange={(show) =>
+                  props.onLayoutChange({
+                    ...layout,
+                    hidden: show
+                      ? layout.hidden.filter((n) => n !== name)
+                      : [...layout.hidden, name],
+                  })
+                }
+              >
+                {name}
+              </DropdownMenuCheckboxItem>
+            ))}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              disabled={hiddenCount === 0}
+              onSelect={() => props.onLayoutChange({ ...layout, hidden: [] })}
+            >
+              Show all
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button variant="ghost" size="icon-xs" aria-label="Refresh" onClick={props.onRefresh}>
+              <RefreshCwIcon className={props.fetching ? "animate-spin" : undefined} />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Reload rows (⌘R)</TooltipContent>
+        </Tooltip>
+      </div>
+    </footer>
+  );
+}

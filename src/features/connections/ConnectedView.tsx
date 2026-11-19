@@ -1,10 +1,13 @@
 import { SquareTerminalIcon, TableIcon } from "lucide-react";
 
+import { TableView } from "@/features/grid/TableView";
+import { useSessionStore } from "@/stores/session";
 import { tabTitle, useTabsStore } from "@/stores/tabs";
 
-/** The main pane: whatever the front tab shows. The grid (ANG-18) and editor (ANG-20) replace these. */
+/** The main pane: whatever the front tab shows. The SQL editor (ANG-20) replaces the query placeholder. */
 export function ConnectedView() {
   const tab = useTabsStore((s) => s.tabs.find((t) => t.id === s.activeId));
+  const connectionId = useSessionStore((s) => s.activeConnectionId);
 
   if (!tab) {
     return (
@@ -28,12 +31,11 @@ export function ConnectedView() {
     );
   }
 
+  if (!connectionId) return null;
+  // Keyed by tab: switching tabs gives each table its own sort, page and columns.
   return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-1 text-center text-muted-foreground">
-      <p className="text-sm font-medium text-foreground">
-        {tab.schema}.{tab.name}
-      </p>
-      <p className="text-xs">Rows will appear here.</p>
+    <div className="min-h-0 flex-1">
+      <TableView key={tab.id} connectionId={connectionId} tab={tab} />
     </div>
   );
 }

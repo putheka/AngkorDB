@@ -52,7 +52,10 @@ export const useSessionStore = create<SessionState>()((set, get) => ({
     useStatusStore.getState().clear();
     useTabsStore.getState().closeAll();
     useBrowserStore.getState().setSchema(null);
-    if (id) queryClient.removeQueries({ queryKey: ["schema", id] });
+    if (id) {
+      queryClient.removeQueries({ queryKey: ["schema", id] });
+      queryClient.removeQueries({ queryKey: ["data", id] });
+    }
     if (id) await commands.disconnectConnection(id).catch(() => undefined);
   },
 

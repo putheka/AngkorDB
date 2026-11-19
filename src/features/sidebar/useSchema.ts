@@ -1,5 +1,6 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 
+import { dataKey } from "@/features/grid/useTableData";
 import { commands } from "@/lib/ipc";
 import { queryClient } from "@/lib/queryClient";
 import { useBrowserStore } from "@/stores/browser";
@@ -55,6 +56,7 @@ export function useSwitchDatabase(connectionId: string) {
       useStatusStore.getState().clear();
       useBrowserStore.getState().setSchema(null);
       await queryClient.resetQueries({ queryKey: schemaKey(connectionId) });
+      queryClient.removeQueries({ queryKey: dataKey(connectionId) });
     },
   });
 }
