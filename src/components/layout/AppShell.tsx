@@ -6,6 +6,7 @@ import { StatusBar } from "@/components/layout/StatusBar";
 import { TabBar } from "@/components/layout/TabBar";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useTabShortcuts } from "@/features/tabs/useTabShortcuts";
 import { refreshSchema } from "@/features/sidebar/useSchema";
 import { ConnectedView } from "@/features/connections/ConnectedView";
 import { WelcomeScreen } from "@/features/connections/WelcomeScreen";
@@ -18,6 +19,8 @@ export function AppShell() {
   const connected = activeId !== null;
   const sidebarCollapsed = useLayoutStore((s) => s.sidebarCollapsed);
   const toggleSidebar = useLayoutStore((s) => s.toggleSidebar);
+
+  useTabShortcuts(connected);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

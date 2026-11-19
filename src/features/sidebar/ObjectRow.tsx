@@ -1,15 +1,5 @@
-import {
-  EyeIcon,
-  HashIcon,
-  LayersIcon,
-  ListIcon,
-  SquareFunctionIcon,
-  TableIcon,
-  type LucideIcon,
-} from "lucide-react";
 import type { CSSProperties } from "react";
 
-import type { ObjectKind } from "@/bindings";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -17,22 +7,11 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import { OBJECT_ICONS } from "@/features/sidebar/objectIcons";
 import { isOpenable, type TreeRow } from "@/features/sidebar/treeRows";
 import { formatCompact, formatRowCount } from "@/lib/format";
 import { qualifiedName } from "@/lib/sql";
 import { cn } from "@/lib/utils";
-
-const ICONS: Record<ObjectKind, LucideIcon> = {
-  table: TableIcon,
-  partitionedTable: TableIcon,
-  foreignTable: TableIcon,
-  view: EyeIcon,
-  materializedView: LayersIcon,
-  function: SquareFunctionIcon,
-  procedure: SquareFunctionIcon,
-  sequence: HashIcon,
-  enumType: ListIcon,
-};
 
 /** The name with the characters the filter matched in bold. */
 function Highlighted({ text, indices }: { text: string; indices: number[] }) {
@@ -60,12 +39,15 @@ interface ObjectRowProps {
   isActive: boolean;
   /** The keyboard cursor is here. */
   isCursor: boolean;
+  /** Single click: a preview tab. */
   onOpen: () => void;
+  /** Double click or the menu: a permanent tab. */
+  onPin: () => void;
 }
 
-export function ObjectRow({ row, style, isActive, isCursor, onOpen }: ObjectRowProps) {
+export function ObjectRow({ row, style, isActive, isCursor, onOpen, onPin }: ObjectRowProps) {
   const { object, indices } = row;
-  const Icon = ICONS[object.kind];
+  const Icon = OBJECT_ICONS[object.kind];
   const openable = isOpenable(object.kind);
 
   return (
@@ -77,6 +59,7 @@ export function ObjectRow({ row, style, isActive, isCursor, onOpen }: ObjectRowP
           aria-selected={isActive}
           style={style}
           onClick={onOpen}
+          onDoubleClick={onPin}
           title={object.detail ? `${object.name}${object.detail}` : undefined}
           className={cn(
             "flex cursor-default items-center gap-2 pr-2 pl-5 text-sm select-none hover:bg-sidebar-accent/60",
@@ -102,7 +85,7 @@ export function ObjectRow({ row, style, isActive, isCursor, onOpen }: ObjectRowP
         </div>
       </ContextMenuTrigger>
       <ContextMenuContent>
-        {openable && <ContextMenuItem onSelect={onOpen}>Open</ContextMenuItem>}
+        {openable && <ContextMenuItem onSelect={onPin}>Open in new tab</ContextMenuItem>}
         <ContextMenuItem onSelect={() => copy(object.name)}>Copy name</ContextMenuItem>
         <ContextMenuItem onSelect={() => copy(qualifiedName(object.schema, object.name))}>
           Copy as schema.name

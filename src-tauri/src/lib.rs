@@ -10,6 +10,7 @@
 pub mod commands;
 pub mod db;
 pub mod error;
+pub mod menu;
 pub mod models;
 pub mod state;
 pub mod storage;
@@ -71,6 +72,8 @@ pub fn run() {
     let specta = specta_builder::<tauri::Wry>();
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .menu(menu::build)
+        .on_menu_event(|app, event| menu::on_event(app, event.id().as_ref()))
         .setup(|app| {
             // Settings live in ~/Library/Application Support/com.angkordb.app/.
             let dir = app.path().app_data_dir()?;

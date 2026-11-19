@@ -28,7 +28,7 @@ import {
   useSwitchDatabase,
 } from "@/features/sidebar/useSchema";
 import { errorMessage } from "@/lib/errors";
-import { useTabsStore } from "@/stores/tabs";
+import { tableTabId, useTabsStore } from "@/stores/tabs";
 
 const ROW_HEIGHT = 26;
 
@@ -45,7 +45,7 @@ export function ObjectTree({ connectionId }: { connectionId: string }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const activeTab = useTabsStore((s) => s.tabs.find((t) => t.id === s.activeId));
+  const activeId = useTabsStore((s) => s.activeId);
   const openTable = useTabsStore((s) => s.openTable);
 
   const rows = useMemo(
@@ -73,10 +73,10 @@ export function ObjectTree({ connectionId }: { connectionId: string }) {
     overscan: 12,
   });
 
-  const open = (index: number) => {
+  const open = (index: number, pin: boolean) => {
     const row = rows[index];
     if (row?.type === "object" && isOpenable(row.object.kind)) {
-      openTable({ schema: row.object.schema, name: row.object.name, kind: row.object.kind });
+      openTable({ schema: row.object.schema, name: row.object.name, kind: row.object.kind }, pin);
     }
   };
 
@@ -98,7 +98,7 @@ export function ObjectTree({ connectionId }: { connectionId: string }) {
       moveCursor(e.key === "ArrowDown" ? 1 : -1);
     } else if (e.key === "Enter" && cursorIndex !== -1) {
       e.preventDefault();
-      open(cursorIndex);
+      open(cursorIndex, true); // Enter is a decision: keep the tab
     } else if (e.key === "Escape" && query) {
       e.preventDefault();
       changeQuery("");
@@ -263,12 +263,16 @@ export function ObjectTree({ connectionId }: { connectionId: string }) {
                   key={row.key}
                   row={row}
                   style={style}
-                  isActive={activeTab?.id === `table:${row.object.schema}.${row.object.name}`}
+                  isActive={activeId === tableTabId(row.object.schema, row.object.name)}
                   isCursor={item.index === cursorIndex}
+                  onPin={() => {
+                    setCursorKey(row.key);
+                    open(item.index, true);
+                  }}
                   onOpen={() => {
                     scrollRef.current?.focus(); // keeps ⌘F and the arrow keys working after a click
                     setCursorKey(row.key);
-                    open(item.index);
+                    open(item.index, false);
                   }}
                 />
               );
