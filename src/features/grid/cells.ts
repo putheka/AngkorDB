@@ -44,6 +44,16 @@ const DEFAULT_CELL: GridCell = {
   themeOverride: { ...NULL_THEME, bgCell: EDITED_BG },
 };
 
+/** `DEFAULT` in a new row: the row is already tinted green, so no yellow here. */
+const NEW_DEFAULT_CELL: GridCell = { ...DEFAULT_CELL, themeOverride: NULL_THEME };
+
+/** Row tints: new rows are green, rows to delete red (the strike-through is drawn by the grid). */
+export const NEW_ROW_THEME: Partial<Theme> = { bgCell: "rgba(34, 197, 94, 0.16)" };
+export const DELETED_ROW_THEME: Partial<Theme> = {
+  bgCell: "rgba(239, 68, 68, 0.16)",
+  textDark: "rgba(140, 140, 140, 0.95)",
+};
+
 export interface CellOptions {
   /** The cell can be edited: it opens the editor, not the read-only viewer. */
   editable?: boolean;
@@ -67,6 +77,16 @@ export function cellFor(
   const cell = plainCell(column, shown, options.editable === true);
   if (!edited) return cell;
   return { ...cell, themeOverride: { ...cell.themeOverride, bgCell: EDITED_BG } };
+}
+
+/** A cell of a row that is to be inserted: its value if one was set, else `DEFAULT`. */
+export function newRowCell(
+  column: ResultColumn,
+  value: CellValue | undefined,
+  editable: boolean,
+): GridCell {
+  if (value === undefined || value.kind === "default") return NEW_DEFAULT_CELL;
+  return plainCell(column, value.kind === "null" ? null : value.text, editable);
 }
 
 function plainCell(column: ResultColumn, value: string | null, editable: boolean): GridCell {

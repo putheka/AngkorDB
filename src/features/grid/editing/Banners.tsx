@@ -1,6 +1,7 @@
 import { LockIcon, PencilIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { describePending, type PendingSummary } from "@/features/grid/editing/changes";
 import { errorDetails, errorMessage } from "@/lib/errors";
 
 /** Why this table can't be edited. */
@@ -16,11 +17,8 @@ export function ReadOnlyBanner({ reason }: { reason: string }) {
   );
 }
 
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
-
 interface PendingBarProps {
-  cells: number;
-  rows: number;
+  summary: PendingSummary;
   /** Writing right now. */
   committing: boolean;
   /** Why the last commit failed; nothing was written. */
@@ -32,8 +30,7 @@ interface PendingBarProps {
 
 /** Edits waiting to be written, with Preview SQL, Commit and Discard (ANG-23). */
 export function PendingBar({
-  cells,
-  rows,
+  summary,
   committing,
   error,
   onPreview,
@@ -45,9 +42,7 @@ export function PendingBar({
     <div className="shrink-0 border-b bg-yellow-400/10 text-xs">
       <div role="status" className="flex items-center gap-2 px-3 py-1">
         <PencilIcon className="size-3.5 shrink-0 text-yellow-600 dark:text-yellow-400" />
-        <span className="tabular-nums">
-          {plural(cells, "edit")} in {plural(rows, "row")} not saved yet
-        </span>
+        <span className="tabular-nums">{describePending(summary)} not saved yet</span>
         <div className="ml-auto flex items-center gap-1">
           <Button size="xs" variant="ghost" disabled={committing} onClick={onPreview}>
             Preview SQL

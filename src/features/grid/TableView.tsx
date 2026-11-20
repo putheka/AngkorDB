@@ -8,14 +8,21 @@ import { DataGrid, type GridEditing } from "@/features/grid/DataGrid";
 import { PendingBar, ReadOnlyBanner } from "@/features/grid/editing/Banners";
 import { useChangesStore, useTabChanges } from "@/features/grid/editing/changeStore";
 import {
+  EMPTY_CHANGES,
+  addNewRow,
+  duplicateValues,
+  isDeleted,
+  keyOf,
   overridesFor,
-  pendingCells,
-  pendingRows,
+  removeNewRows,
   revertCell,
   rowRefOf,
-  keyOf,
   setCell,
+  setNewCell,
+  summarize,
   toTableChanges,
+  toggleDeleted,
+  type CellValue,
 } from "@/features/grid/editing/changes";
 import { PreviewDialog } from "@/features/grid/editing/PreviewDialog";
 import { useCommitChanges } from "@/features/grid/editing/useCommit";
@@ -103,6 +110,10 @@ export function TableView({ connectionId, tab }: { connectionId: string; tab: Ta
     () => (page ? overridesFor(page, refs, changes) : new Map()),
     [page, refs, changes],
   );
+  const deleted = useMemo(
+    () => new Set(refs.flatMap((ref, i) => (ref && isDeleted(changes, ref) ? [i] : []))),
+    [refs, changes],
+  );
   const [previewOpen, setPreviewOpen] = useState(false);
   const commit = useCommitChanges(connectionId, tab, () => setPreviewOpen(false));
   // No edits while writing: the staged copy is dropped when the write is done.
@@ -110,24 +121,76 @@ export function TableView({ connectionId, tab }: { connectionId: string; tab: Ta
   const editing = useMemo<GridEditing | undefined>(() => {
     if (!page || !described.data || readOnlyReason || writing) return undefined;
     const change = useChangesStore.getState().change;
+    const columns = described.data.columns;
+    /** A cell of this page as it is now: the staged edit, else what the server sent. */
+    const pageValue = (row: number, name: string): CellValue => {
+      const at = page.columns.findIndex((c) => c.name === name);
+      const staged = overrides.get(`${row}:${at}`);
+      if (staged) return staged;
+      const original = page.rows[row]?.[at] ?? null;
+      return original === null ? { kind: "null" } : { kind: "value", text: original };
+    };
     return {
       connectionId,
-      columns: described.data.columns,
+      columns,
       overrides,
-      onEdit: (row, column, value) => {
-        const ref = refs[row];
+      newRows: changes.inserts,
+      deleted,
+      onEdit: (target, column, value) => {
+        if (target.kind === "new") {
+          change(tab.id, (c) => setNewCell(c, target.id, column, value));
+          return;
+        }
+        const ref = refs[target.row];
         const at = page.columns.findIndex((c) => c.name === column);
         if (!ref || at === -1) return;
-        const original = page.rows[row]?.[at] ?? null;
+        const original = page.rows[target.row]?.[at] ?? null;
         change(tab.id, (c) => setCell(c, ref, column, original, value));
       },
-      onRevert: (row, column) => {
-        const ref = refs[row];
+      onRevert: (target, column) => {
+        if (target.kind === "new") {
+          change(tab.id, (c) => setNewCell(c, target.id, column, { kind: "default" }));
+          return;
+        }
+        const ref = refs[target.row];
         if (ref) change(tab.id, (c) => revertCell(c, keyOf(ref), column));
       },
+      onAddRow: () => change(tab.id, (c) => addNewRow(c, { id: crypto.randomUUID(), values: {} })),
+      onDuplicate: (targets) =>
+        change(tab.id, (c) =>
+          targets.reduce((acc, target) => {
+            const valueOf = (name: string): CellValue =>
+              target.kind === "page"
+                ? pageValue(target.row, name)
+                : (acc.inserts.find((r) => r.id === target.id)?.values[name] ?? {
+                    kind: "default",
+                  });
+            return addNewRow(acc, {
+              id: crypto.randomUUID(),
+              values: duplicateValues(columns, valueOf),
+            });
+          }, c),
+        ),
+      onDelete: (targets) => {
+        const gone = new Set(targets.flatMap((t) => (t.kind === "new" ? [t.id] : [])));
+        const marked = targets.flatMap((t) => (t.kind === "page" ? (refs[t.row] ?? []) : []));
+        change(tab.id, (c) => toggleDeleted(removeNewRows(c, gone), marked));
+      },
     };
-  }, [page, described.data, readOnlyReason, writing, connectionId, overrides, refs, tab.id]);
-  const pending = pendingCells(changes);
+  }, [
+    page,
+    described.data,
+    readOnlyReason,
+    writing,
+    connectionId,
+    overrides,
+    refs,
+    tab.id,
+    changes.inserts,
+    deleted,
+  ]);
+  const summary = useMemo(() => summarize(changes), [changes]);
+  const pending = summary.total;
   const tableChanges = useMemo(() => toTableChanges(changes), [changes]);
 
   // A new edit makes the last failure moot.
@@ -143,7 +206,7 @@ export function TableView({ connectionId, tab }: { connectionId: string; tab: Ta
 
   // ⌘S writes, ⇧⌘P shows the SQL, ⇧⌘⌫ throws the edits away.
   useEffect(() => {
-    const staged = () => pendingCells(useChangesStore.getState().byTab[tab.id] ?? { updates: {} });
+    const staged = () => summarize(useChangesStore.getState().byTab[tab.id] ?? EMPTY_CHANGES).total;
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || !e.metaKey || e.altKey || e.ctrlKey) return;
       const typing =
@@ -167,6 +230,20 @@ export function TableView({ connectionId, tab }: { connectionId: string; tab: Ta
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [tab.id, committing, commitNow]);
+
+  // ⌘I adds a row at the top.
+  const addRow = editing?.onAddRow;
+  useEffect(() => {
+    if (!addRow) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || !e.metaKey || e.shiftKey || e.altKey || e.ctrlKey) return;
+      if (e.code !== "KeyI") return;
+      e.preventDefault();
+      addRow();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [addRow]);
 
   // The columns come from the catalog, so the bar works even when the rows failed to load.
   const filterColumns = (described.data?.columns ?? page?.columns ?? []).map((c) => ({
@@ -275,6 +352,7 @@ export function TableView({ connectionId, tab }: { connectionId: string; tab: Ta
           filterCount={filterCount}
           filterOpen={filter.open}
           onToggleFilter={filter.open ? closeFilter : openFilter}
+          {...(addRow ? { onAddRow: addRow } : {})}
         />
       </>
     );
@@ -295,8 +373,7 @@ export function TableView({ connectionId, tab }: { connectionId: string; tab: Ta
       {readOnlyReason && page && <ReadOnlyBanner reason={readOnlyReason} />}
       {pending > 0 && (
         <PendingBar
-          cells={pending}
-          rows={pendingRows(changes)}
+          summary={summary}
           committing={committing}
           error={commit.error}
           onPreview={() => setPreviewOpen(true)}

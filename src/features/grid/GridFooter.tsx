@@ -3,6 +3,7 @@ import {
   ChevronRightIcon,
   Columns3Icon,
   ListFilterIcon,
+  PlusIcon,
   RefreshCwIcon,
 } from "lucide-react";
 
@@ -51,6 +52,8 @@ export interface GridFooterProps {
   filterCount: number;
   filterOpen: boolean;
   onToggleFilter: () => void;
+  /** Add a row at the top (⌘I). Left out when the table can't be edited. */
+  onAddRow?: () => void;
 }
 
 /** `‹ 1–500 of ~1.2M ›`, page size, column visibility and refresh. */
@@ -98,6 +101,17 @@ export function GridFooter(props: GridFooterProps) {
       </div>
 
       <div className="flex items-center gap-1">
+        {props.onAddRow && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="xs" aria-label="Add row" onClick={props.onAddRow}>
+                <PlusIcon />
+                Row
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Add a row (⌘I)</TooltipContent>
+          </Tooltip>
+        )}
         <Select value={String(pageSize)} onValueChange={(v) => props.onPageSize(Number(v))}>
           <SelectTrigger size="sm" className="h-6 gap-1 px-2 text-xs" aria-label="Rows per page">
             <SelectValue />

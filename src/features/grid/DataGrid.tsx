@@ -1,10 +1,13 @@
 import {
+  CompactSelection,
   DataEditor,
   GridCellKind,
   type DataEditorRef,
+  type DrawCellCallback,
   type GridCell,
   type GridColumn,
   type GridKeyEventArgs,
+  type GridSelection,
   type HeaderClickedEventArgs,
   type Item,
 } from "@glideapps/glide-data-grid";
@@ -17,9 +20,16 @@ import {
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
+  ContextMenuShortcut,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { cellFor, copyText } from "@/features/grid/cells";
+import {
+  DELETED_ROW_THEME,
+  NEW_ROW_THEME,
+  cellFor,
+  copyText,
+  newRowCell,
+} from "@/features/grid/cells";
 import {
   MIN_WIDTH,
   autoWidth,
@@ -29,7 +39,7 @@ import {
   type ColumnLayout,
 } from "@/features/grid/columns";
 import { CellEditor, type Bounds } from "@/features/grid/editing/CellEditor";
-import type { CellValue } from "@/features/grid/editing/changes";
+import type { CellValue, NewRow } from "@/features/grid/editing/changes";
 import { isEditableColumn } from "@/features/grid/editing/editorKind";
 import { useGridTheme } from "@/features/grid/gridTheme";
 import { nextSort, superscript } from "@/features/grid/sort";
@@ -58,6 +68,16 @@ const LOADING_CELL: GridCell = {
 type MenuTarget =
   { kind: "header"; column: number } | { kind: "cell"; column: number; row: number };
 
+/** A row of the grid: one the server sent (an index into this page) or one that is to be inserted. */
+export type RowTarget = { kind: "page"; row: number } | { kind: "new"; id: string };
+
+const NO_SELECTION: GridSelection = {
+  columns: CompactSelection.empty(),
+  rows: CompactSelection.empty(),
+};
+const NO_NEW_ROWS: readonly NewRow[] = [];
+const NO_DELETED: ReadonlySet<number> = new Set();
+
 /** What makes a grid editable: left out, the grid is read-only. */
 export interface GridEditing {
   connectionId: string;
@@ -65,8 +85,17 @@ export interface GridEditing {
   columns: ColumnInfo[];
   /** The staged value of each edited cell, as `"row:column"` (indexes into this page). */
   overrides: ReadonlyMap<string, CellValue>;
-  onEdit: (row: number, column: string, value: CellValue) => void;
-  onRevert: (row: number, column: string) => void;
+  /** Rows to be inserted. They are drawn above the page, in this order. */
+  newRows: readonly NewRow[];
+  /** Rows of this page (indexes) that are marked for deletion. */
+  deleted: ReadonlySet<number>;
+  onEdit: (target: RowTarget, column: string, value: CellValue) => void;
+  onRevert: (target: RowTarget, column: string) => void;
+  onAddRow: () => void;
+  /** ⌘D and the menu: a new row for each, with the values of the original. */
+  onDuplicate: (targets: RowTarget[]) => void;
+  /** Delete / Backspace and the menu: mark page rows (or take the mark off), drop new rows. */
+  onDelete: (targets: RowTarget[]) => void;
 }
 
 interface EditorState {
@@ -127,6 +156,25 @@ export function DataGrid({
     return found && isEditableColumn(found) ? found : undefined;
   };
   const overrides = editing?.overrides;
+  const newRows = editing?.newRows ?? NO_NEW_ROWS;
+  const deleted = editing?.deleted ?? NO_DELETED;
+  /** Grid rows above the page: the rows that are to be inserted. */
+  const newCount = newRows.length;
+
+  /** What a grid row is: row `g` counts the new rows first. */
+  const targetAt = (g: number): RowTarget | null => {
+    const created = newRows[g];
+    if (created) return { kind: "new", id: created.id };
+    return g >= newCount ? { kind: "page", row: g - newCount } : null;
+  };
+  // The grid only tells us the selection (ours to keep) once it is given one to control.
+  const [selection, setSelection] = useState<GridSelection>(NO_SELECTION);
+  /** The rows under the selection: whole rows picked by their number, else the rows of the cells. */
+  const selectedRows = (): number[] => {
+    if (selection.rows.length > 0) return selection.rows.toArray();
+    const range = selection.current?.range;
+    return range ? Array.from({ length: range.height }, (_, i) => range.y + i) : [];
+  };
 
   // Widths the user hasn't set are worked out once, from the first page, and then kept: pages
   // must not change column widths under the reader.
@@ -159,6 +207,7 @@ export function DataGrid({
     visible: typeof visible;
     overrides: typeof overrides;
     info: typeof info;
+    newRows: typeof newRows;
     cells: Map<number, GridCell>;
   } | null>(null);
   const getCellContent = useCallback(
@@ -171,45 +220,113 @@ export function DataGrid({
         cache.rows !== rows ||
         cache.visible !== visible ||
         cache.overrides !== overrides ||
-        cache.info !== info
+        cache.info !== info ||
+        cache.newRows !== newRows
       ) {
-        cache = { rows, visible, overrides, info, cells: new Map() };
+        cache = { rows, visible, overrides, info, newRows, cells: new Map() };
         cellCache.current = cache;
       }
       const key = row * visible.length + col;
       let cell = cache.cells.get(key);
       if (!cell) {
         const found = info.get(v.column.name);
-        cell = cellFor(v.column, rows[row]?.[v.index] ?? null, {
-          editable: found !== undefined && isEditableColumn(found),
-          edited: overrides?.get(`${row}:${v.index}`),
-        });
+        const editable = found !== undefined && isEditableColumn(found);
+        const created = newRows[row];
+        if (created) {
+          cell = newRowCell(v.column, created.values[v.column.name], editable);
+        } else {
+          const at = row - newCount;
+          cell = cellFor(v.column, rows[at]?.[v.index] ?? null, {
+            editable,
+            edited: overrides?.get(`${at}:${v.index}`),
+          });
+        }
         cache.cells.set(key, cell);
       }
       return cell;
     },
-    [visible, rows, overrides, info],
+    [visible, rows, overrides, info, newRows, newCount],
   );
 
+  // New rows are green, rows to delete red with a line through the text.
+  const getRowTheme = useCallback(
+    (g: number) => {
+      if (g < newCount) return NEW_ROW_THEME;
+      return deleted.has(g - newCount) ? DELETED_ROW_THEME : undefined;
+    },
+    [newCount, deleted],
+  );
+  const drawCell = useMemo<DrawCellCallback | undefined>(() => {
+    if (deleted.size === 0) return undefined;
+    return ({ ctx, cell, theme: cellTheme, rect, row }, drawContent) => {
+      drawContent();
+      if (row < newCount || !deleted.has(row - newCount) || cell.kind !== GridCellKind.Text) return;
+      const text = cell.displayData ?? cell.data;
+      if (text === "") return;
+      ctx.save();
+      ctx.font = `${cellTheme.baseFontStyle} ${cellTheme.fontFamily}`;
+      const width = Math.min(
+        ctx.measureText(text).width,
+        rect.width - 2 * cellTheme.cellHorizontalPadding,
+      );
+      const right = cell.contentAlign === "right";
+      const x = right
+        ? rect.x + rect.width - cellTheme.cellHorizontalPadding - width
+        : rect.x + cellTheme.cellHorizontalPadding;
+      ctx.strokeStyle = "rgba(239, 68, 68, 0.9)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(x, Math.round(rect.y + rect.height / 2) + 0.5);
+      ctx.lineTo(x + width, Math.round(rect.y + rect.height / 2) + 0.5);
+      ctx.stroke();
+      ctx.restore();
+    };
+  }, [deleted, newCount]);
+
+  // A new row appears at the top: show it.
+  const previousNew = useRef(newCount);
+  useEffect(() => {
+    if (newCount > previousNew.current) grid.current?.scrollTo(0, 0);
+    previousNew.current = newCount;
+  }, [newCount]);
+
   /** The cell as it is now: staged edit if there is one, else what the server sent. */
-  const currentValue = (row: number, col: number): CellValue => {
+  const currentValue = (g: number, col: number): CellValue => {
     const v = visible[col];
     if (!v) return { kind: "null" };
+    const created = newRows[g];
+    if (created) return created.values[v.column.name] ?? { kind: "default" };
+    const row = g - newCount;
     const staged = overrides?.get(`${row}:${v.index}`);
     if (staged) return staged;
     const value = rows[row]?.[v.index] ?? null;
     return value === null ? { kind: "null" } : { kind: "value", text: value };
   };
 
-  const startEdit = (col: number, row: number, typed?: string) => {
-    if (!editing || !editableInfo(col)) return;
-    const bounds = grid.current?.getBounds(col, row);
-    if (bounds) setEditor({ col, row, typed, bounds });
+  const isDeletedRow = (g: number) => g >= newCount && deleted.has(g - newCount);
+  const refuseDeleted = (g: number) => {
+    if (!isDeletedRow(g)) return false;
+    setNotice("This row is marked for deletion. Press Delete to bring it back.");
+    return true;
   };
 
-  const stageValue = (col: number, row: number, value: CellValue) => {
+  const startEdit = (col: number, g: number, typed?: string) => {
+    if (!editing || !editableInfo(col) || refuseDeleted(g)) return;
+    const bounds = grid.current?.getBounds(col, g);
+    if (bounds) setEditor({ col, row: g, typed, bounds });
+  };
+
+  const stageValue = (col: number, g: number, value: CellValue) => {
     const column = visible[col]?.column.name;
-    if (editing && column) editing.onEdit(row, column, value);
+    const target = targetAt(g);
+    if (editing && column && target) editing.onEdit(target, column, value);
+  };
+
+  /** The rows a menu or key acts on: the selection if `g` is in it, else just `g`. */
+  const targetsFor = (g: number): RowTarget[] => {
+    const picked = selectedRows();
+    const rowsToUse = picked.includes(g) ? picked : [g];
+    return rowsToUse.flatMap((row) => targetAt(row) ?? []);
   };
 
   const setNullAt = (col: number, row: number) => {
@@ -224,7 +341,24 @@ export function DataGrid({
 
   // Typing on a selected cell starts editing with that key; ⌘⌫ sets NULL.
   const onKeyDown = (e: GridKeyEventArgs) => {
-    if (!editing || editor || !e.location) return;
+    if (!editing || editor) return;
+    const command = e.metaKey || e.ctrlKey;
+    // Delete marks the selected rows for deletion (again: takes the mark off); ⌘D duplicates them.
+    if (!command && !e.altKey && !e.shiftKey && (e.key === "Delete" || e.key === "Backspace")) {
+      const targets = selectedRows().flatMap((g) => targetAt(g) ?? []);
+      if (targets.length === 0) return;
+      e.preventDefault();
+      editing.onDelete(targets);
+      return;
+    }
+    if (command && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "d") {
+      const targets = selectedRows().flatMap((g) => targetAt(g) ?? []);
+      if (targets.length === 0) return;
+      e.preventDefault();
+      editing.onDuplicate(targets);
+      return;
+    }
+    if (!e.location) return;
     const [markedCol, row] = e.location;
     const col = markedCol - ROW_MARKER_OFFSET;
     if (!editableInfo(col)) return;
@@ -270,7 +404,18 @@ export function DataGrid({
     onSortChange([...sort.filter((s) => s.column !== name), { column: name, dir }]);
 
   const menuColumn = menu ? visible[menu.column] : undefined;
-  const menuRow = menu?.kind === "cell" ? rows[menu.row] : undefined;
+  // The menu's row as text: a page row, or a new row (a value that was set, else empty).
+  const menuRow =
+    menu?.kind === "cell"
+      ? newRows[menu.row]
+        ? columns.map((c) => {
+            const set = newRows[menu.row]?.values[c.name];
+            return set?.kind === "value" ? set.text : null;
+          })
+        : rows[menu.row - newCount]
+      : undefined;
+  const menuIsNew = menu?.kind === "cell" && menu.row < newCount;
+  const menuPageRow = menu?.kind === "cell" ? menu.row - newCount : -1;
   const wrapper = useRef<HTMLDivElement>(null);
 
   return (
@@ -287,8 +432,12 @@ export function DataGrid({
             width="100%"
             height="100%"
             columns={gridColumns}
-            rows={rows.length}
+            rows={rows.length + newCount}
             getCellContent={getCellContent}
+            getRowThemeOverride={getRowTheme}
+            {...(drawCell ? { drawCell } : {})}
+            gridSelection={selection}
+            onGridSelectionChange={setSelection}
             theme={theme}
             headerIcons={HEADER_ICONS}
             rowHeight={ROW_HEIGHT}
@@ -383,17 +532,39 @@ export function DataGrid({
                 >
                   Set DEFAULT
                 </ContextMenuItem>
-                {overrides?.has(`${menu.row}:${menuColumn.index}`) && (
+                {(menuIsNew
+                  ? newRows[menu.row]?.values[menuColumn.column.name] !== undefined
+                  : overrides?.has(`${menuPageRow}:${menuColumn.index}`)) && (
                   <ContextMenuItem
-                    onSelect={() => editing.onRevert(menu.row, menuColumn.column.name)}
+                    onSelect={() => {
+                      const target = targetAt(menu.row);
+                      if (target) editing.onRevert(target, menuColumn.column.name);
+                    }}
                   >
-                    Revert change
+                    {menuIsNew ? "Back to DEFAULT" : "Revert change"}
                   </ContextMenuItem>
                 )}
                 <ContextMenuSeparator />
               </>
             )}
-            {onFilterByValue && (
+            {editing && (
+              <>
+                <ContextMenuItem onSelect={() => editing.onDuplicate(targetsFor(menu.row))}>
+                  Duplicate row
+                  <ContextMenuShortcut>⌘D</ContextMenuShortcut>
+                </ContextMenuItem>
+                <ContextMenuItem onSelect={() => editing.onDelete(targetsFor(menu.row))}>
+                  {menuIsNew
+                    ? "Remove new row"
+                    : deleted.has(menuPageRow)
+                      ? "Keep row (undo delete)"
+                      : "Delete row"}
+                  <ContextMenuShortcut>⌫</ContextMenuShortcut>
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+              </>
+            )}
+            {onFilterByValue && !menuIsNew && (
               <>
                 <ContextMenuItem
                   onSelect={() =>
