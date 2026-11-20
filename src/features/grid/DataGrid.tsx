@@ -22,6 +22,9 @@ import {
   ContextMenuItem,
   ContextMenuSeparator,
   ContextMenuShortcut,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import {
@@ -41,9 +44,18 @@ import {
 } from "@/features/grid/columns";
 import { CellEditor, type Bounds } from "@/features/grid/editing/CellEditor";
 import type { CellValue, NewRow } from "@/features/grid/editing/changes";
-import { isEditableColumn } from "@/features/grid/editing/editorKind";
+import { editorKindOf, isEditableColumn } from "@/features/grid/editing/editorKind";
 import { useGridTheme } from "@/features/grid/gridTheme";
 import { nextSort, superscript } from "@/features/grid/sort";
+import {
+  COPY_FORMATS,
+  formatRows,
+  type CopyColumn,
+  type CopyFormat,
+  type CopyRow,
+  type RowKey,
+} from "@/features/grid/clipboard/formats";
+import { rowsFromText, type PasteColumn } from "@/features/grid/clipboard/parse";
 import { errorMessage } from "@/lib/errors";
 
 /** The row-number column is column 0 of the grid's own coordinates; ours start after it. */
@@ -98,6 +110,8 @@ export interface GridEditing {
   onDuplicate: (targets: RowTarget[]) => void;
   /** Delete / Backspace and the menu: mark page rows (or take the mark off), drop new rows. */
   onDelete: (targets: RowTarget[]) => void;
+  /** Pasted rows: each becomes a new row with these values (other columns stay `DEFAULT`). */
+  onPasteRows: (rows: Record<string, CellValue>[]) => void;
 }
 
 interface EditorState {
@@ -127,6 +141,21 @@ export interface DataGridProps {
   onActiveRowChange?: (row: number | null) => void;
   /** Columns that are (part of) a foreign key get an arrow; following it opens the referenced rows. */
   foreignKeys?: ForeignKeyNavigation;
+  /** The table the rows come from: lets "Copy as" write `INSERT` and `UPDATE` statements for it. */
+  copyTarget?: CopyTarget;
+}
+
+export interface CopyTarget {
+  schema: string;
+  table: string;
+  /** The columns that identify a row (primary key or unique index), or `null` without a usable key. */
+  keyColumns: string[] | null;
+}
+
+/** The rows and columns a copy takes, as grid rows and shown-column indexes. */
+interface CopyShape {
+  rows: number[];
+  columns: number[];
 }
 
 export interface ForeignKeyNavigation {
@@ -160,6 +189,7 @@ export function DataGrid({
   onToggleDetail,
   onActiveRowChange,
   foreignKeys,
+  copyTarget,
 }: DataGridProps) {
   const theme = useGridTheme();
   const visible = useMemo(() => visibleColumns(columns, layout), [columns, layout]);
@@ -457,6 +487,157 @@ export function DataGrid({
     return () => clearTimeout(timer);
   }, [notice]);
 
+  // ---- Copy and paste (ANG-28) ------------------------------------------------------------
+
+  /**
+   * What a copy takes. Rows picked by their number: those rows, every shown column. A range of
+   * cells: that range. Otherwise, with a cell right-clicked, its row; with a lone selected cell,
+   * just that cell.
+   */
+  const shapeOf = (clicked?: { row: number; col: number }): CopyShape | null => {
+    const everyColumn = visible.map((_, i) => i);
+    if (selection.rows.length > 0 && (!clicked || selection.rows.hasIndex(clicked.row))) {
+      return { rows: selection.rows.toArray(), columns: everyColumn };
+    }
+    const range = selection.current?.range;
+    if (range) {
+      const inside =
+        clicked &&
+        clicked.row >= range.y &&
+        clicked.row < range.y + range.height &&
+        clicked.col >= range.x &&
+        clicked.col < range.x + range.width;
+      if (!clicked || inside) {
+        return {
+          rows: Array.from({ length: range.height }, (_, i) => range.y + i),
+          columns: Array.from({ length: range.width }, (_, i) => range.x + i),
+        };
+      }
+    }
+    return clicked ? { rows: [clicked.row], columns: everyColumn } : null;
+  };
+
+  /** The row's key, from the values the server sent (an edited key still names the old row). */
+  const keyOfRow = (g: number): RowKey[] | null => {
+    const names = copyTarget?.keyColumns;
+    const original = rows[g - newCount];
+    if (!names || !original) return null;
+    const key: RowKey[] = [];
+    for (const name of names) {
+      const at = columns.findIndex((c) => c.name === name);
+      const column = columns[at];
+      const value = original[at];
+      if (!column || value === null || value === undefined) return null;
+      key.push({ column: name, kind: editorKindOf(column), value });
+    }
+    return key;
+  };
+
+  /** The text a copy of `shape` would put on the clipboard, and how many rows it left out. */
+  const textFor = (format: CopyFormat, shape: CopyShape) => {
+    const shown = shape.columns.flatMap((i) => visible[i] ?? []);
+    const copyColumns: CopyColumn[] = shown.map(({ column }) => ({
+      name: column.name,
+      kind: editorKindOf(column),
+    }));
+    const copyRows: CopyRow[] = shape.rows.map((g) => ({
+      cells: shape.columns.map((i) => currentValue(g, i)),
+      key: keyOfRow(g),
+    }));
+    // One cell is copied as it is, not as a table with one field.
+    const only = copyRows.length === 1 && copyColumns.length === 1 ? copyRows[0]?.cells[0] : null;
+    if (format === "tsv" && only) {
+      return { text: only.kind === "value" ? only.text : "", skipped: 0 };
+    }
+    return formatRows(format, copyColumns, copyRows, {
+      schema: copyTarget?.schema ?? "public",
+      name: copyTarget?.table ?? "table",
+    });
+  };
+
+  const copiedNotice = (format: CopyFormat, rowCount: number, skipped: number) => {
+    const label = COPY_FORMATS.find((f) => f.format === format)?.label.split(" (")[0] ?? format;
+    const skippedText = skipped > 0 ? ` (${skipped} without a key left out)` : "";
+    setNotice(`Copied ${rowCount === 1 ? "1 row" : `${rowCount} rows`} as ${label}${skippedText}.`);
+  };
+
+  const copyShape = (format: CopyFormat, shape: CopyShape) => {
+    const { text, skipped } = textFor(format, shape);
+    if (text === "") {
+      setNotice(
+        format === "update" ? "Nothing to update: these rows have no key." : "Nothing to copy.",
+      );
+      return;
+    }
+    void navigator.clipboard.writeText(text).then(
+      () => copiedNotice(format, shape.rows.length, skipped),
+      () => setNotice("The clipboard would not accept the copy."),
+    );
+  };
+
+  /** Turn clipboard text into new rows (positions follow the shown columns). */
+  const pasteText = (source: string) => {
+    if (!editing) return;
+    const targets: PasteColumn[] = visible.flatMap(({ column }) => {
+      const found = info.get(column.name);
+      if (!found) return [];
+      return {
+        name: column.name,
+        kind: editorKindOf(found),
+        typeOid: found.typeOid,
+        writable: isEditableColumn(found),
+        hasDefault: found.defaultValue !== null || found.identity !== null,
+      };
+    });
+    const result = rowsFromText(source, targets);
+    if (!result.ok) {
+      setNotice(result.error);
+      return;
+    }
+    editing.onPasteRows(result.rows);
+    const n = result.rows.length;
+    const extras = [
+      result.skipped.length > 0 ? `${result.skipped.join(", ")} is generated, not pasted` : null,
+      result.ignoredFields > 0 ? `${result.ignoredFields} extra fields left out` : null,
+    ].filter((x): x is string => x !== null);
+    setNotice(
+      `Pasted ${n === 1 ? "1 new row" : `${n} new rows`}${extras.length > 0 ? ` (${extras.join("; ")})` : ""}. Save with ⌘S.`,
+    );
+  };
+
+  // ⌘C and ⌘V arrive as copy and paste events (the app menu sends them), while the grid has focus.
+  // They are caught here, before the grid's own handlers, so what is copied is what is on screen,
+  // with edits and new rows, and a pasted table becomes new rows.
+  const latest = useRef({ shapeOf, textFor, copiedNotice, pasteText, hasEditor: false });
+  useEffect(() => {
+    latest.current = { shapeOf, textFor, copiedNotice, pasteText, hasEditor: editor !== null };
+  });
+  useEffect(() => {
+    const inGrid = () => wrapper.current?.contains(document.activeElement) === true;
+    const onCopy = (e: ClipboardEvent) => {
+      if (!inGrid() || latest.current.hasEditor) return;
+      const shape = latest.current.shapeOf();
+      if (!shape) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      const { text } = latest.current.textFor("tsv", shape);
+      e.clipboardData?.setData("text/plain", text);
+      latest.current.copiedNotice("tsv", shape.rows.length, 0);
+    };
+    const onPaste = (e: ClipboardEvent) => {
+      if (!inGrid() || latest.current.hasEditor) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      latest.current.pasteText(e.clipboardData?.getData("text/plain") ?? "");
+    };
+    window.addEventListener("copy", onCopy, true);
+    window.addEventListener("paste", onPaste, true);
+    return () => {
+      window.removeEventListener("copy", onCopy, true);
+      window.removeEventListener("paste", onPaste, true);
+    };
+  }, []);
+
   const onHeaderClicked = (col: number, event: HeaderClickedEventArgs) => {
     const name = visible[col]?.column.name;
     if (name) onSortChange(nextSort(sort, name, event.shiftKey));
@@ -519,8 +700,9 @@ export function DataGrid({
             headerIcons={HEADER_ICONS}
             rowHeight={ROW_HEIGHT}
             headerHeight={HEADER_HEIGHT}
-            rowMarkers={{ kind: "number", startIndex: firstRowNumber }}
+            rowMarkers={{ kind: "clickable-number", startIndex: firstRowNumber }}
             getCellsForSelection={true}
+            onPaste={false}
             columnSelect="none"
             smoothScrollX
             smoothScrollY
@@ -669,16 +851,52 @@ export function DataGrid({
             >
               Copy value
             </ContextMenuItem>
+            <ContextMenuSub>
+              <ContextMenuSubTrigger>Copy as</ContextMenuSubTrigger>
+              <ContextMenuSubContent>
+                {COPY_FORMATS.filter(
+                  ({ format }) => copyTarget || (format !== "insert" && format !== "update"),
+                ).map(({ format, label }) => (
+                  <ContextMenuItem
+                    key={format}
+                    disabled={format === "update" && !copyTarget?.keyColumns}
+                    onSelect={() => {
+                      const shape = shapeOf({ row: menu.row, col: menu.column });
+                      if (shape) copyShape(format, shape);
+                    }}
+                  >
+                    {label}
+                    {format === "tsv" && <ContextMenuShortcut>⌘C</ContextMenuShortcut>}
+                    {format === "update" && !copyTarget?.keyColumns && (
+                      <ContextMenuShortcut>needs a key</ContextMenuShortcut>
+                    )}
+                  </ContextMenuItem>
+                ))}
+              </ContextMenuSubContent>
+            </ContextMenuSub>
             <ContextMenuItem
-              onSelect={() =>
-                copyToClipboard(visible.map((v) => copyText(menuRow[v.index] ?? null)).join("\t"))
-              }
+              onSelect={() => {
+                const shape = shapeOf({ row: menu.row, col: menu.column });
+                const names = (shape?.columns ?? [menu.column])
+                  .flatMap((i) => visible[i]?.column.name ?? [])
+                  .join(", ");
+                copyToClipboard(names);
+              }}
             >
-              Copy row
+              Copy column names
             </ContextMenuItem>
-            <ContextMenuItem onSelect={() => copyToClipboard(menuColumn.column.name)}>
-              Copy column name
-            </ContextMenuItem>
+            {editing && (
+              <ContextMenuItem
+                onSelect={() =>
+                  void navigator.clipboard
+                    .readText()
+                    .then(pasteText, () => setNotice("Allow pasting, or paste with ⌘V."))
+                }
+              >
+                Paste as new rows
+                <ContextMenuShortcut>⌘V</ContextMenuShortcut>
+              </ContextMenuItem>
+            )}
           </>
         )}
         {!menu && <ContextMenuItem disabled>Nothing here</ContextMenuItem>}

@@ -185,6 +185,10 @@ export function TableView({ connectionId, tab }: { connectionId: string; tab: Ta
             });
           }, c),
         ),
+      onPasteRows: (pasted) =>
+        change(tab.id, (c) =>
+          pasted.reduce((acc, values) => addNewRow(acc, { id: crypto.randomUUID(), values }), c),
+        ),
       onDelete: (targets) => {
         const gone = new Set(targets.flatMap((t) => (t.kind === "new" ? [t.id] : [])));
         const marked = targets.flatMap((t) => (t.kind === "page" ? (refs[t.row] ?? []) : []));
@@ -468,6 +472,14 @@ export function TableView({ connectionId, tab }: { connectionId: string; tab: Ta
             onToggleDetail={toggleDetail}
             onActiveRowChange={setActiveRow}
             {...(foreignKeys ? { foreignKeys } : {})}
+            copyTarget={{
+              schema: tab.schema,
+              table: tab.name,
+              keyColumns:
+                page.identity.kind === "primaryKey" || page.identity.kind === "uniqueIndex"
+                  ? page.identity.columns
+                  : null,
+            }}
           />
           {page.rows.length === 0 && (
             <p className="pointer-events-none absolute inset-x-0 top-24 text-center text-sm text-muted-foreground">

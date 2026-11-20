@@ -884,3 +884,76 @@ async fn fixed_width_types_are_never_cut_short_by_a_cast() {
     drop(client);
     cleanup(&session, schema).await;
 }
+
+/// Pasting the rows of a table back into itself (ANG-28): every pasted row is an insert with the
+/// same values, so the keys clash. The server's refusal names the pasted row, and nothing is saved.
+#[tokio::test]
+async fn pasting_existing_rows_back_reports_the_key_conflict() {
+    let Some(session) = open_or_skip().await else {
+        return;
+    };
+    let schema = "ang28_paste";
+    scratch(
+        &session,
+        schema,
+        &format!(
+            "CREATE TABLE {schema}.codes (code varchar(3) PRIMARY KEY, label text);
+             INSERT INTO {schema}.codes VALUES ('KH', 'Cambodia'), ('TH', 'Thailand'), ('VN', 'Vietnam');"
+        ),
+    )
+    .await;
+
+    let copied = page(&session, schema, "codes").await;
+    let pasted: Vec<RowInsert> = copied
+        .rows
+        .iter()
+        .map(|row| {
+            insert(&[
+                ("code", text(row[0].as_deref().unwrap())),
+                ("label", text(row[1].as_deref().unwrap())),
+            ])
+        })
+        .collect();
+    assert_eq!(pasted.len(), 3);
+
+    let err = apply(
+        &session,
+        schema,
+        "codes",
+        &TableChanges {
+            inserts: pasted,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(err.code(), "CHANGE_FAILED");
+    assert_eq!(err.pg_code(), Some("23505"));
+    let message = err.message();
+    assert!(
+        message.contains("Change 1 of 3 (insert new row 1)")
+            && message.contains("duplicate key value violates unique constraint")
+            && message.ends_with("nothing was saved."),
+        "{message}"
+    );
+    assert_eq!(page(&session, schema, "codes").await.rows.len(), 3);
+
+    // The same rows with new keys go in, all three in one transaction.
+    let result = apply(
+        &session,
+        schema,
+        "codes",
+        &TableChanges {
+            inserts: vec![
+                insert(&[("code", text("LA")), ("label", text("Laos"))]),
+                insert(&[("code", text("MM")), ("label", CellValue::Null)]),
+            ],
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.inserted.len(), 2);
+    assert_eq!(page(&session, schema, "codes").await.rows.len(), 5);
+    cleanup(&session, schema).await;
+}
