@@ -11,7 +11,9 @@ import { refreshData } from "@/features/grid/useTableData";
 import { refreshSchema } from "@/features/sidebar/useSchema";
 import { ConnectedView } from "@/features/connections/ConnectedView";
 import { WelcomeScreen } from "@/features/connections/WelcomeScreen";
+import { CommandPalette } from "@/features/palette/CommandPalette";
 import { useLayoutStore } from "@/stores/layout";
+import { usePaletteStore } from "@/stores/palette";
 import { useSessionStore } from "@/stores/session";
 
 /** Window layout: title bar · (welcome screen | sidebar + tabs) · status bar. */
@@ -26,7 +28,11 @@ export function AppShell() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!connected || !e.metaKey) return;
-      if (e.key === "0") {
+      // ⌘P finds an object, ⌘K runs a command. `code`, so other keyboard layouts work too.
+      if (!e.shiftKey && !e.altKey && !e.ctrlKey && (e.code === "KeyP" || e.code === "KeyK")) {
+        e.preventDefault();
+        usePaletteStore.getState().toggle(e.code === "KeyP" ? "objects" : "commands");
+      } else if (e.key === "0") {
         e.preventDefault();
         toggleSidebar();
       } else if (e.key === "r" && activeId) {
@@ -83,6 +89,7 @@ export function AppShell() {
         )}
       </div>
 
+      {activeId && <CommandPalette connectionId={activeId} />}
       <StatusBar />
     </div>
   );

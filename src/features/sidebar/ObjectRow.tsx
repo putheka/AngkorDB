@@ -7,26 +7,12 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import { Highlighted } from "@/features/sidebar/Highlighted";
 import { OBJECT_ICONS } from "@/features/sidebar/objectIcons";
 import { isOpenable, type TreeRow } from "@/features/sidebar/treeRows";
 import { formatCompact, formatRowCount } from "@/lib/format";
 import { qualifiedName } from "@/lib/sql";
 import { cn } from "@/lib/utils";
-
-/** The name with the characters the filter matched in bold. */
-function Highlighted({ text, indices }: { text: string; indices: number[] }) {
-  if (indices.length === 0) return text;
-  const hit = new Set(indices);
-  return Array.from(text, (char, i) =>
-    hit.has(i) ? (
-      <b key={i} className="font-semibold text-foreground">
-        {char}
-      </b>
-    ) : (
-      char
-    ),
-  );
-}
 
 function copy(text: string) {
   void navigator.clipboard.writeText(text).catch(() => undefined);

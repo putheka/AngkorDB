@@ -5,6 +5,7 @@ import { errorMessage } from "@/lib/errors";
 import { commands } from "@/lib/ipc";
 import { queryClient } from "@/lib/queryClient";
 import { useBrowserStore } from "@/stores/browser";
+import { usePaletteStore } from "@/stores/palette";
 import { useStatusStore } from "@/stores/status";
 import { useTabsStore } from "@/stores/tabs";
 
@@ -50,6 +51,7 @@ export const useSessionStore = create<SessionState>()((set, get) => ({
     // Leave the screen first; closing the server side can't fail in a way the user can act on.
     set({ activeConnectionId: null, serverVersion: null });
     useStatusStore.getState().clear();
+    usePaletteStore.getState().close();
     useTabsStore.getState().closeAll();
     useBrowserStore.getState().setSchema(null);
     if (id) {
