@@ -38,6 +38,8 @@ export const commands = {
 	listObjects: (connectionId: string, schema: string, options?: InvokeOptions) => __TAURI_INVOKE<DbObject[]>("list_objects", { connectionId, schema }, options),
 	/**  Columns, keys and how rows are identified for a table, view or materialized view. */
 	describeTable: (connectionId: string, schema: string, table: string, options?: InvokeOptions) => __TAURI_INVOKE<TableDescription>("describe_table", { connectionId, schema, table }, options),
+	/**  Labels of an enum type, in order. Empty for a type that isn't an enum. */
+	listEnumValues: (connectionId: string, typeOid: number, options?: InvokeOptions) => __TAURI_INVOKE<string[]>("list_enum_values", { connectionId, typeOid }, options),
 	/**  One page of a table: paging, sorting and filtering happen on the server. */
 	fetchRows: (connectionId: string, query: RowQuery, options?: InvokeOptions) => __TAURI_INVOKE<RowPage>("fetch_rows", { connectionId, query }, options),
 	/**

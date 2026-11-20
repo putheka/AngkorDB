@@ -70,3 +70,15 @@ pub async fn describe_table(
     let session = state.session(&connection_id).await?;
     introspect::describe_table(&*session.meta().await?, &schema, &table).await
 }
+
+/// Labels of an enum type, in order. Empty for a type that isn't an enum.
+#[tauri::command]
+#[specta::specta]
+pub async fn list_enum_values(
+    state: State<'_, AppState>,
+    connection_id: String,
+    type_oid: u32,
+) -> AppResult<Vec<String>> {
+    let session = state.session(&connection_id).await?;
+    introspect::enum_values(&*session.meta().await?, type_oid).await
+}

@@ -189,6 +189,7 @@ const TYPE_OIDS: Record<string, number> = {
   jsonb: 3802,
   text: 25,
   "timestamp with time zone": 1184,
+  user_status: 16500,
 };
 
 function buildColumns(schema: string, spec: TableSpec): ColumnInfo[] {
@@ -281,6 +282,12 @@ export function createSchemaHandlers(requireOpen: (id: string) => void): Record<
     list_objects: (args) => {
       requireOpen(String(args["connectionId"]));
       return structuredClone(OBJECTS[String(args["schema"])] ?? []);
+    },
+
+    list_enum_values: (args) => {
+      requireOpen(String(args["connectionId"]));
+      // The one enum in the mock schema.
+      return args["typeOid"] === 16500 ? ["active", "invited", "suspended"] : [];
     },
 
     describe_table: (args): TableDescription => {

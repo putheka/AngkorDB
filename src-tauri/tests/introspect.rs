@@ -640,3 +640,34 @@ async fn switching_database_opens_a_new_session_and_keeps_the_old_one() {
     );
     assert_eq!(current_database(&session).await, "angkordb_dev");
 }
+
+#[tokio::test]
+async fn enum_values_come_in_declared_order_and_other_types_have_none() {
+    let Some(session) = open_or_skip().await else {
+        return;
+    };
+    let client = session.meta().await.unwrap();
+
+    // `users.status` is the enum `user_status`: its type OID is the column's.
+    let users = describe(&session, "public", "users").await;
+    let status = column(&users, "status");
+    let labels = introspect::enum_values(&client, status.type_oid)
+        .await
+        .unwrap();
+    assert_eq!(labels, ["active", "invited", "suspended"]);
+
+    // Not enums: a built-in type, and an OID that doesn't exist.
+    let text = column(&users, "bio");
+    assert!(
+        introspect::enum_values(&client, text.type_oid)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        introspect::enum_values(&client, 4_000_000_000)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}

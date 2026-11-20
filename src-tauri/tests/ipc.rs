@@ -361,6 +361,10 @@ fn schema_commands_need_an_open_connection() {
                     "filters": [], "rawWhere": null, "exact": false }),
         ),
         (
+            "list_enum_values",
+            json!({ "connectionId": "nope", "typeOid": 16400 }),
+        ),
+        (
             "run_query",
             json!({ "connectionId": "nope", "tabId": "query:1", "sql": "SELECT 1" }),
         ),
@@ -442,6 +446,35 @@ fn browse_the_dev_database_through_ipc() {
     assert_eq!(user_id["isPrimaryKey"], false);
     assert_eq!(user_id["nullable"], false);
     assert_eq!(user_id["foreignKeys"][0]["table"], "users");
+
+    // What the cell editor sends for an enum column: the column's own type OID.
+    let users = ipc
+        .call(
+            "describe_table",
+            json!({ "connectionId": id, "schema": "public", "table": "users" }),
+        )
+        .unwrap();
+    let status = users["columns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == "status")
+        .unwrap();
+    let labels = ipc
+        .call(
+            "list_enum_values",
+            json!({ "connectionId": id, "typeOid": status["typeOid"] }),
+        )
+        .unwrap();
+    assert_eq!(labels, json!(["active", "invited", "suspended"]));
+    assert_eq!(
+        ipc.call(
+            "list_enum_values",
+            json!({ "connectionId": id, "typeOid": user_id["typeOid"] }),
+        )
+        .unwrap(),
+        json!([])
+    );
 
     let err = ipc
         .call(

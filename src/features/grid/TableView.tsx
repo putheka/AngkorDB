@@ -1,9 +1,21 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type { RowCount } from "@/bindings";
+import { useConnections } from "@/features/connections/useConnections";
 import { Button } from "@/components/ui/button";
 import type { ColumnLayout } from "@/features/grid/columns";
-import { DataGrid } from "@/features/grid/DataGrid";
+import { DataGrid, type GridEditing } from "@/features/grid/DataGrid";
+import { PendingBar, ReadOnlyBanner } from "@/features/grid/editing/Banners";
+import { useChangesStore, useTabChanges } from "@/features/grid/editing/changeStore";
+import {
+  overridesFor,
+  pendingCells,
+  pendingRows,
+  revertCell,
+  rowRefOf,
+  keyOf,
+  setCell,
+} from "@/features/grid/editing/changes";
 import { FilterBar } from "@/features/grid/FilterBar";
 import {
   appliedCount,
@@ -71,6 +83,44 @@ export function TableView({ connectionId, tab }: { connectionId: string; tab: Ta
   useEffect(() => () => useStatusStore.getState().clear(), []);
 
   const onLayoutChange = useCallback((layout: ColumnLayout) => update({ layout }), [update]);
+
+  // Staged edits (ANG-22). A table can be edited when its rows can be told apart and the
+  // connection allows writes; otherwise the reason is shown instead.
+  const changes = useTabChanges(tab.id);
+  const { data: connections = [] } = useConnections();
+  const safeMode = connections.find((c) => c.id === connectionId)?.safeMode;
+  const readOnlyReason =
+    safeMode === "read-only"
+      ? "This connection is read-only (safe mode)."
+      : page?.identity.kind === "readOnly"
+        ? page.identity.reason
+        : null;
+  const refs = useMemo(() => (page ? page.rows.map((_, i) => rowRefOf(page, i)) : []), [page]);
+  const overrides = useMemo(
+    () => (page ? overridesFor(page, refs, changes) : new Map()),
+    [page, refs, changes],
+  );
+  const editing = useMemo<GridEditing | undefined>(() => {
+    if (!page || !described.data || readOnlyReason) return undefined;
+    const change = useChangesStore.getState().change;
+    return {
+      connectionId,
+      columns: described.data.columns,
+      overrides,
+      onEdit: (row, column, value) => {
+        const ref = refs[row];
+        const at = page.columns.findIndex((c) => c.name === column);
+        if (!ref || at === -1) return;
+        const original = page.rows[row]?.[at] ?? null;
+        change(tab.id, (c) => setCell(c, ref, column, original, value));
+      },
+      onRevert: (row, column) => {
+        const ref = refs[row];
+        if (ref) change(tab.id, (c) => revertCell(c, keyOf(ref), column));
+      },
+    };
+  }, [page, described.data, readOnlyReason, connectionId, overrides, refs, tab.id]);
+  const pending = pendingCells(changes);
 
   // The columns come from the catalog, so the bar works even when the rows failed to load.
   const filterColumns = (described.data?.columns ?? page?.columns ?? []).map((c) => ({
@@ -154,6 +204,7 @@ export function TableView({ connectionId, tab }: { connectionId: string; tab: Ta
             onFilterByValue={(column, value) =>
               update({ filter: withValueFilter(filter, column, value), page: 0 })
             }
+            {...(editing ? { editing } : {})}
           />
           {page.rows.length === 0 && (
             <p className="pointer-events-none absolute inset-x-0 top-24 text-center text-sm text-muted-foreground">
@@ -193,6 +244,14 @@ export function TableView({ connectionId, tab }: { connectionId: string; tab: Ta
           onApply={applyFilter}
           onClose={closeFilter}
           focusToken={focusToken}
+        />
+      )}
+      {readOnlyReason && page && <ReadOnlyBanner reason={readOnlyReason} />}
+      {pending > 0 && (
+        <PendingBar
+          cells={pending}
+          rows={pendingRows(changes)}
+          onDiscard={() => useChangesStore.getState().discard(tab.id)}
         />
       )}
       {body}

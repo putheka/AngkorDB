@@ -110,6 +110,18 @@ pub async fn list_objects(client: &Client, schema: &str) -> AppResult<Vec<DbObje
         .collect())
 }
 
+/// The labels of an enum type in their declared order. Empty when `type_oid` is not an enum
+/// (or no longer exists), which is how the cell editor tells a dropdown from a text box.
+pub async fn enum_values(client: &Client, type_oid: u32) -> AppResult<Vec<String>> {
+    let rows = client
+        .query(
+            "SELECT enumlabel::text FROM pg_enum WHERE enumtypid = $1 ORDER BY enumsortorder",
+            &[&type_oid],
+        )
+        .await?;
+    Ok(rows.iter().map(|row| row.get(0)).collect())
+}
+
 /// Columns, keys and the row identity of a table, view or materialized view.
 pub async fn describe_table(
     client: &Client,
