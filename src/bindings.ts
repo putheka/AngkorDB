@@ -40,6 +40,8 @@ export const commands = {
 	describeTable: (connectionId: string, schema: string, table: string, options?: InvokeOptions) => __TAURI_INVOKE<TableDescription>("describe_table", { connectionId, schema, table }, options),
 	/**  Labels of an enum type, in order. Empty for a type that isn't an enum. */
 	listEnumValues: (connectionId: string, typeOid: number, options?: InvokeOptions) => __TAURI_INVOKE<string[]>("list_enum_values", { connectionId, typeOid }, options),
+	/**  The foreign keys of other tables that point at this one ("referenced by"). */
+	listIncomingForeignKeys: (connectionId: string, schema: string, table: string, options?: InvokeOptions) => __TAURI_INVOKE<IncomingForeignKey[]>("list_incoming_foreign_keys", { connectionId, schema, table }, options),
 	/**  One page of a table: paging, sorting and filtering happen on the server. */
 	fetchRows: (connectionId: string, query: RowQuery, options?: InvokeOptions) => __TAURI_INVOKE<RowPage>("fetch_rows", { connectionId, query }, options),
 	/**
@@ -47,6 +49,8 @@ export const commands = {
 	 *  false (instant); otherwise `count(*)`, which scans the table.
 	 */
 	countRows: (connectionId: string, schema: string, table: string, filters: Filter[], rawWhere: string | null, exact: boolean, options?: InvokeOptions) => __TAURI_INVOKE<RowCount>("count_rows", { connectionId, schema, table, filters, rawWhere, exact }, options),
+	/**  How many rows match `filters`, up to `cap` (so a table without an index can't make it slow). */
+	countMatching: (connectionId: string, schema: string, table: string, filters: Filter[], cap: number, options?: InvokeOptions) => __TAURI_INVOKE<LimitedCount>("count_matching", { connectionId, schema, table, filters, cap }, options),
 	/**  The SQL that `apply_changes` would run, values written in. Nothing is executed. */
 	previewChanges: (connectionId: string, schema: string, table: string, changes: TableChanges, options?: InvokeOptions) => __TAURI_INVOKE<string>("preview_changes", { connectionId, schema, table, changes }, options),
 	/**
@@ -217,6 +221,27 @@ export type ForeignKeyRef = {
 	schema: string,
 	table: string,
 	column: string,
+};
+
+/**
+ *  A foreign key of another table that points at this one ("referenced by"). The two column
+ *  lists are in constraint order: `columns[i]` of `schema.table` references `referenced_columns[i]`
+ *  of the table asked about.
+ */
+export type IncomingForeignKey = {
+	constraint: string,
+	schema: string,
+	table: string,
+	columns: string[],
+	referencedColumns: string[],
+};
+
+/**  How many rows match, counting at most `cap` of them (so a huge table can't make it slow). */
+export type LimitedCount = {
+	/**  Never more than the cap. */
+	count: number,
+	/**  There are more rows than `count`. */
+	capped: boolean,
 };
 
 export type ObjectKind = "table" | "partitionedTable" | "foreignTable" | "view" | "materializedView" | "sequence" | "function" | "procedure" | "enumType";

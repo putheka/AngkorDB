@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { ArrowRightIcon } from "lucide-react";
 import { useState } from "react";
 
 import type { ColumnInfo } from "@/bindings";
@@ -12,7 +13,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { FkPicker } from "@/features/grid/detail/FkPicker";
 import { JsonEditor } from "@/features/grid/detail/JsonEditor";
+import type { ForeignKeyGroup } from "@/features/grid/foreignKeys";
 import type { CellValue } from "@/features/grid/editing/changes";
 import { editorKindOf, normalize, validate } from "@/features/grid/editing/editorKind";
 import { commands } from "@/lib/ipc";
@@ -32,6 +35,15 @@ interface DetailFieldProps {
   editable: boolean;
   onChange: (value: CellValue) => void;
   onRevert: () => void;
+  /** The column is part of a foreign key: link to the row it points at, and pick another. */
+  foreignKey?: {
+    group: ForeignKeyGroup;
+    /** The key has a value in every column, so there is a row to open. */
+    canFollow: boolean;
+    onFollow: () => void;
+    /** Write the picked row's values into the columns of the key. */
+    onPick: (values: Record<string, string | null>) => void;
+  };
 }
 
 /** `4 bytes`, from the hex text of a bytea value. */
@@ -42,7 +54,8 @@ function byteSize(hex: string): string {
 
 /** One column of the row, laid out as a form field with the editor its type needs. */
 export function DetailField(props: DetailFieldProps) {
-  const { column, value, edited, editable, onChange, onRevert } = props;
+  const { column, value, edited, editable, onChange, onRevert, foreignKey } = props;
+  const [picking, setPicking] = useState(false);
   const kind = editorKindOf(column);
   const isBytea = column.typeOid === BYTEA_OID;
 
@@ -63,6 +76,30 @@ export function DetailField(props: DetailFieldProps) {
           />
         )}
         <span className="ml-auto flex shrink-0 gap-0.5">
+          {foreignKey && (
+            <Button
+              size="xs"
+              variant="ghost"
+              className="h-5 gap-0.5 px-1.5"
+              disabled={!foreignKey.canFollow}
+              title={`Open ${foreignKey.group.table}`}
+              onClick={foreignKey.onFollow}
+            >
+              {foreignKey.group.table}
+              <ArrowRightIcon className="size-3" />
+            </Button>
+          )}
+          {foreignKey && editable && (
+            <Button
+              size="xs"
+              variant={picking ? "secondary" : "ghost"}
+              className="h-5 px-1.5"
+              aria-expanded={picking}
+              onClick={() => setPicking((open) => !open)}
+            >
+              Pick
+            </Button>
+          )}
           {edited && editable && (
             <Button size="xs" variant="ghost" className="h-5 px-1.5" onClick={onRevert}>
               Revert
@@ -90,6 +127,18 @@ export function DetailField(props: DetailFieldProps) {
           )}
         </span>
       </div>
+
+      {foreignKey && editable && picking && (
+        <FkPicker
+          connectionId={props.connectionId}
+          group={foreignKey.group}
+          onPick={(values) => {
+            foreignKey.onPick(values);
+            setPicking(false);
+          }}
+          onClose={() => setPicking(false)}
+        />
+      )}
 
       {kind === "json" ? (
         <JsonField {...props} />

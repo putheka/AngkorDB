@@ -6,6 +6,7 @@
 import type {
   ColumnInfo,
   Filter,
+  LimitedCount,
   RowCount,
   RowPage,
   RowQuery,
@@ -209,6 +210,14 @@ export function createRowHandlers(requireOpen: (id: string) => void): Record<str
           desc.identity.kind === "ctid" ? rows.map((_, i) => `(0,${query.offset + i + 1})`) : [],
         hasMore: all.length > query.offset + limit,
       };
+    },
+
+    count_matching: (args): LimitedCount => {
+      requireOpen(String(args["connectionId"]));
+      const desc = mockDescribeTable(String(args["schema"]), String(args["table"]));
+      const found = filtered(desc, args["filters"] as Filter[], null).length;
+      const cap = Math.min(Math.max(Number(args["cap"]), 1), MAX_LIMIT);
+      return { count: Math.min(found, cap), capped: found > cap };
     },
 
     count_rows: (args): RowCount => {

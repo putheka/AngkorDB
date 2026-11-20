@@ -1,9 +1,11 @@
 import { XIcon } from "lucide-react";
 import { useRef, type KeyboardEvent, type PointerEvent } from "react";
 
-import type { ColumnInfo } from "@/bindings";
+import type { ColumnInfo, IncomingForeignKey } from "@/bindings";
 import { Button } from "@/components/ui/button";
 import { DetailField } from "@/features/grid/detail/DetailField";
+import { ReferencedBy } from "@/features/grid/detail/ReferencedBy";
+import { groupOf, type ForeignKeyGroup } from "@/features/grid/foreignKeys";
 import type { CellValue } from "@/features/grid/editing/changes";
 import { isEditableColumn } from "@/features/grid/editing/editorKind";
 import { DETAIL_MAX, DETAIL_MIN, useLayoutStore } from "@/stores/layout";
@@ -27,6 +29,14 @@ interface RowDetailPanelProps {
   onEdit: (column: string, value: CellValue) => void;
   onRevert: (column: string) => void;
   onClose: () => void;
+  /** The table's schema and its foreign keys, in both directions. */
+  schema: string;
+  foreignKeys: ForeignKeyGroup[];
+  incoming: IncomingForeignKey[];
+  /** Open the row a key of this row points at. */
+  onFollow: (group: ForeignKeyGroup) => void;
+  /** Open the rows of another table that point at this row. */
+  onOpenReferencing: (fk: IncomingForeignKey, values: string[]) => void;
 }
 
 const STEP = 16;
@@ -88,6 +98,11 @@ export function RowDetailPanel({
   onEdit,
   onRevert,
   onClose,
+  schema,
+  foreignKeys,
+  incoming,
+  onFollow,
+  onOpenReferencing,
 }: RowDetailPanelProps) {
   const width = useLayoutStore((s) => s.detailWidth);
   const writable = editable && row !== null && row.status !== "deleted";
@@ -126,18 +141,51 @@ export function RowDetailPanel({
         <p className="p-4 text-sm text-muted-foreground">Select a row to see all its columns.</p>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-3">
-          {columns.map((column) => (
-            <DetailField
-              key={column.name}
+          {columns.map((column) => {
+            const group = groupOf(foreignKeys, column.name);
+            const filled = group?.pairs.every((p) => row.valueOf(p.column).kind === "value");
+            return (
+              <DetailField
+                key={column.name}
+                connectionId={connectionId}
+                column={column}
+                value={row.valueOf(column.name)}
+                edited={row.isEdited(column.name)}
+                editable={writable && isEditableColumn(column)}
+                onChange={(value) => onEdit(column.name, value)}
+                onRevert={() => onRevert(column.name)}
+                {...(group
+                  ? {
+                      foreignKey: {
+                        group,
+                        canFollow: filled === true,
+                        onFollow: () => onFollow(group),
+                        onPick: (values: Record<string, string | null>) => {
+                          for (const [name, text] of Object.entries(values)) {
+                            onEdit(
+                              name,
+                              text === null ? { kind: "null" } : { kind: "value", text },
+                            );
+                          }
+                        },
+                      },
+                    }
+                  : {})}
+              />
+            );
+          })}
+          {row.status !== "new" && (
+            <ReferencedBy
               connectionId={connectionId}
-              column={column}
-              value={row.valueOf(column.name)}
-              edited={row.isEdited(column.name)}
-              editable={writable && isEditableColumn(column)}
-              onChange={(value) => onEdit(column.name, value)}
-              onRevert={() => onRevert(column.name)}
+              schema={schema}
+              incoming={incoming}
+              valueOf={(name) => {
+                const value = row.valueOf(name);
+                return value.kind === "value" ? value.text : null;
+              }}
+              onOpen={onOpenReferencing}
             />
-          ))}
+          )}
         </div>
       )}
     </aside>

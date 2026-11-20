@@ -5,8 +5,8 @@ use tokio_postgres::Client;
 
 use crate::error::{AppError, AppResult};
 use crate::models::schema::{
-    ColumnIdentity, ColumnInfo, DatabaseInfo, DbObject, ForeignKeyRef, ObjectKind, RowIdentity,
-    SchemaInfo, TableDescription,
+    ColumnIdentity, ColumnInfo, DatabaseInfo, DbObject, ForeignKeyRef, IncomingForeignKey,
+    ObjectKind, RowIdentity, SchemaInfo, TableDescription,
 };
 
 /// Databases this user can connect to, without templates.
@@ -120,6 +120,46 @@ pub async fn enum_values(client: &Client, type_oid: u32) -> AppResult<Vec<String
         )
         .await?;
     Ok(rows.iter().map(|row| row.get(0)).collect())
+}
+
+/// The foreign keys of other tables that point at `schema.table`, for "referenced by". A key
+/// of a partitioned table is listed once, not once per partition.
+pub async fn incoming_foreign_keys(
+    client: &Client,
+    schema: &str,
+    table: &str,
+) -> AppResult<Vec<IncomingForeignKey>> {
+    let rows = client
+        .query(
+            "SELECT con.conname::text, ns.nspname::text, c.relname::text,
+                    array_agg(a.attname::text ORDER BY k.ord),
+                    array_agg(ra.attname::text ORDER BY k.ord)
+               FROM pg_constraint con
+               CROSS JOIN LATERAL unnest(con.conkey, con.confkey)
+                         WITH ORDINALITY AS k(attnum, fattnum, ord)
+               JOIN pg_class c ON c.oid = con.conrelid
+               JOIN pg_namespace ns ON ns.oid = c.relnamespace
+               JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = k.attnum
+               JOIN pg_attribute ra ON ra.attrelid = con.confrelid AND ra.attnum = k.fattnum
+               JOIN pg_class rc ON rc.oid = con.confrelid
+               JOIN pg_namespace rn ON rn.oid = rc.relnamespace
+              WHERE con.contype = 'f' AND con.conparentid = 0
+                AND rn.nspname = $1 AND rc.relname = $2
+              GROUP BY con.oid, con.conname, ns.nspname, c.relname
+              ORDER BY ns.nspname, c.relname, con.conname",
+            &[&schema, &table],
+        )
+        .await?;
+    Ok(rows
+        .iter()
+        .map(|row| IncomingForeignKey {
+            constraint: row.get(0),
+            schema: row.get(1),
+            table: row.get(2),
+            columns: row.get(3),
+            referenced_columns: row.get(4),
+        })
+        .collect())
 }
 
 /// Columns, keys and the row identity of a table, view or materialized view.

@@ -1,3 +1,4 @@
+import { useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { RowCount } from "@/bindings";
@@ -5,6 +6,13 @@ import { Button } from "@/components/ui/button";
 import type { ColumnLayout } from "@/features/grid/columns";
 import { DataGrid, type GridEditing, type RowTarget } from "@/features/grid/DataGrid";
 import { RowDetailPanel, type DetailRow } from "@/features/grid/detail/RowDetailPanel";
+import {
+  foreignKeyColumns,
+  foreignKeyGroups,
+  groupOf,
+  type ForeignKeyGroup,
+} from "@/features/grid/foreignKeys";
+import { openTableWhere } from "@/features/grid/fkNavigation";
 import { PendingBar, ReadOnlyBanner } from "@/features/grid/editing/Banners";
 import { useWriteApproval } from "@/features/safety/approval";
 import { useChangesStore, useTabChanges } from "@/features/grid/editing/changeStore";
@@ -45,6 +53,7 @@ import {
   useTableRows,
 } from "@/features/grid/useTableData";
 import { errorDetails, errorMessage } from "@/lib/errors";
+import { commands } from "@/lib/ipc";
 import { useLayoutStore } from "@/stores/layout";
 import { useStatusStore } from "@/stores/status";
 import type { TableTab } from "@/stores/tabs";
@@ -201,6 +210,61 @@ export function TableView({ connectionId, tab }: { connectionId: string; tab: Ta
   // rows first, the way the grid does.
   const detailOpen = useLayoutStore((s) => s.detailOpen);
   const toggleDetail = useLayoutStore((s) => s.toggleDetail);
+
+  // Foreign keys (ANG-27): outgoing ones from the catalog columns, incoming ones ("referenced
+  // by") only when the panel is there to show them.
+  const fkGroups = useMemo(
+    () => (described.data ? foreignKeyGroups(described.data.columns) : []),
+    [described.data],
+  );
+  const fkColumns = useMemo(() => foreignKeyColumns(fkGroups), [fkGroups]);
+  const incoming = useQuery({
+    queryKey: ["schema", connectionId, "incoming", tab.schema, tab.name],
+    queryFn: () => commands.listIncomingForeignKeys(connectionId, tab.schema, tab.name),
+    enabled: detailOpen,
+  });
+
+  /** What a grid row holds in a column right now, `null` for NULL or an unset new row. */
+  const textOf = useCallback(
+    (g: number, name: string): string | null => {
+      const created = changes.inserts[g];
+      const value = created
+        ? (created.values[name] ?? { kind: "default" as const })
+        : pageValue(g - changes.inserts.length, name);
+      return value.kind === "value" ? value.text : null;
+    },
+    [changes.inserts, pageValue],
+  );
+  const followGroup = useCallback(
+    async (group: ForeignKeyGroup, valueOf: (column: string) => string | null) => {
+      const conditions = group.pairs.map((p) => ({ column: p.target, value: valueOf(p.column) }));
+      if (conditions.some((c) => c.value === null)) {
+        throw new Error("This key is NULL, so it points at no row.");
+      }
+      await openTableWhere(
+        connectionId,
+        group.schema,
+        group.table,
+        conditions.map((c) => ({ column: c.column, value: c.value ?? "" })),
+      );
+    },
+    [connectionId],
+  );
+  const foreignKeys = useMemo(
+    () =>
+      fkColumns.size === 0
+        ? undefined
+        : {
+            columns: fkColumns,
+            onFollow: async (g: number, column: string) => {
+              const group = groupOf(fkGroups, column);
+              if (group) await followGroup(group, (name) => textOf(g, name));
+            },
+            targetOf: (column: string) => groupOf(fkGroups, column)?.table,
+          },
+    [fkColumns, fkGroups, followGroup, textOf],
+  );
+
   const [activeRow, setActiveRow] = useState<number | null>(null);
   const detail = useMemo<{ key: string; target: RowTarget | null; row: DetailRow | null }>(() => {
     const none = { key: "none", target: null, row: null };
@@ -403,6 +467,7 @@ export function TableView({ connectionId, tab }: { connectionId: string; tab: Ta
             {...(editing ? { editing } : {})}
             onToggleDetail={toggleDetail}
             onActiveRowChange={setActiveRow}
+            {...(foreignKeys ? { foreignKeys } : {})}
           />
           {page.rows.length === 0 && (
             <p className="pointer-events-none absolute inset-x-0 top-24 text-center text-sm text-muted-foreground">
@@ -475,6 +540,24 @@ export function TableView({ connectionId, tab }: { connectionId: string; tab: Ta
             }
             onRevert={(column) => detail.target && editing?.onRevert(detail.target, column)}
             onClose={toggleDetail}
+            schema={tab.schema}
+            foreignKeys={fkGroups}
+            incoming={incoming.data ?? []}
+            onFollow={(group) => {
+              const valueOf = (name: string) => {
+                const value = detail.row?.valueOf(name);
+                return value?.kind === "value" ? value.text : null;
+              };
+              void followGroup(group, valueOf).catch(() => undefined);
+            }}
+            onOpenReferencing={(fk, values) =>
+              void openTableWhere(
+                connectionId,
+                fk.schema,
+                fk.table,
+                fk.columns.map((column, i) => ({ column, value: values[i] ?? "" })),
+              ).catch(() => undefined)
+            }
           />
         )}
       </div>

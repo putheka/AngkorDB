@@ -5,7 +5,9 @@ use tauri::State;
 use crate::db::introspect;
 use crate::error::AppResult;
 use crate::models::connection::ConnectionInfo;
-use crate::models::schema::{DatabaseInfo, DbObject, SchemaInfo, TableDescription};
+use crate::models::schema::{
+    DatabaseInfo, DbObject, IncomingForeignKey, SchemaInfo, TableDescription,
+};
 use crate::state::AppState;
 
 #[tauri::command]
@@ -69,6 +71,19 @@ pub async fn describe_table(
 ) -> AppResult<TableDescription> {
     let session = state.session(&connection_id).await?;
     introspect::describe_table(&*session.meta().await?, &schema, &table).await
+}
+
+/// The foreign keys of other tables that point at this one ("referenced by").
+#[tauri::command]
+#[specta::specta]
+pub async fn list_incoming_foreign_keys(
+    state: State<'_, AppState>,
+    connection_id: String,
+    schema: String,
+    table: String,
+) -> AppResult<Vec<IncomingForeignKey>> {
+    let session = state.session(&connection_id).await?;
+    introspect::incoming_foreign_keys(&*session.meta().await?, &schema, &table).await
 }
 
 /// Labels of an enum type, in order. Empty for a type that isn't an enum.

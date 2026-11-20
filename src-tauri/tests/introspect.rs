@@ -671,3 +671,76 @@ async fn enum_values_come_in_declared_order_and_other_types_have_none() {
             .is_empty()
     );
 }
+
+#[tokio::test]
+async fn lists_the_foreign_keys_that_point_at_a_table() {
+    let Some(session) = open_or_skip().await else {
+        return;
+    };
+    let client = session.meta().await.unwrap();
+    let keys = |schema: &'static str, table: &'static str| {
+        let client = &client;
+        async move {
+            introspect::incoming_foreign_keys(client, schema, table)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|k| (k.schema, k.table, k.columns, k.referenced_columns))
+                .collect::<Vec<_>>()
+        }
+    };
+    let strings = |items: &[&str]| items.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+
+    // users <- orders <- order_items and billing.invoices (across schemas).
+    assert_eq!(
+        keys("public", "users").await,
+        [(
+            "public".into(),
+            "orders".into(),
+            strings(&["user_id"]),
+            strings(&["id"])
+        )]
+    );
+    assert_eq!(
+        keys("public", "orders").await,
+        [
+            (
+                "billing".into(),
+                "invoices".into(),
+                strings(&["order_id"]),
+                strings(&["id"])
+            ),
+            (
+                "public".into(),
+                "order_items".into(),
+                strings(&["order_id"]),
+                strings(&["id"])
+            ),
+        ]
+    );
+    // Nothing points at order_items, and an unknown table is just empty.
+    assert!(keys("public", "order_items").await.is_empty());
+    assert!(keys("public", "nope").await.is_empty());
+
+    // A composite key keeps its columns in constraint order, whatever the table's column order.
+    client
+        .batch_execute(
+            "DROP SCHEMA IF EXISTS ang27_fk CASCADE; CREATE SCHEMA ang27_fk;
+             CREATE TABLE ang27_fk.parent (a int, b int, c text, PRIMARY KEY (a, b));
+             CREATE TABLE ang27_fk.child (id int PRIMARY KEY, y int, x int,
+               CONSTRAINT child_fk FOREIGN KEY (x, y) REFERENCES ang27_fk.parent (a, b));",
+        )
+        .await
+        .unwrap();
+    let composite = introspect::incoming_foreign_keys(&client, "ang27_fk", "parent")
+        .await
+        .unwrap();
+    client
+        .batch_execute("DROP SCHEMA ang27_fk CASCADE")
+        .await
+        .unwrap();
+    assert_eq!(composite.len(), 1);
+    assert_eq!(composite[0].constraint, "child_fk");
+    assert_eq!(composite[0].columns, strings(&["x", "y"]));
+    assert_eq!(composite[0].referenced_columns, strings(&["a", "b"]));
+}

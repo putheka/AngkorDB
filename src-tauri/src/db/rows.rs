@@ -20,7 +20,7 @@ use tokio_postgres::{Client, Row};
 use crate::db::introspect;
 use crate::error::{AppError, AppResult};
 use crate::models::rows::{
-    Filter, FilterOp, ResultColumn, RowCount, RowPage, RowQuery, SortDir, SortSpec,
+    Filter, FilterOp, LimitedCount, ResultColumn, RowCount, RowPage, RowQuery, SortDir, SortSpec,
 };
 use crate::models::schema::{ColumnInfo, ObjectKind, RowIdentity, TableDescription};
 
@@ -328,6 +328,41 @@ pub async fn count_rows(
     Ok(RowCount {
         count: count as f64,
         exact: true,
+    })
+}
+
+/// How many rows match `filters`, counting at most `cap`: `SELECT count(*) FROM (… LIMIT cap+1)`.
+/// "Referenced by" uses it for every referencing table of a row, so it must stay cheap even when
+/// a table has no index on the key.
+pub async fn count_matching(
+    client: &Client,
+    schema: &str,
+    table: &str,
+    filters: &[Filter],
+    cap: u32,
+) -> AppResult<LimitedCount> {
+    let desc = introspect::describe_table(client, schema, table).await?;
+    let mut params = Vec::new();
+    let (where_sql, _) = where_clause(&desc, filters, None, &mut params)?;
+    let cap = cap.clamp(1, MAX_LIMIT);
+    let built = BuiltSql {
+        sql: format!(
+            "SELECT count(*) FROM (SELECT 1 FROM {}{where_sql} LIMIT {}) AS _t",
+            relation(&desc),
+            cap + 1
+        ),
+        params,
+        has_raw_sql: false,
+    };
+    let rows = run(client, &built).await?;
+    let found: i64 = rows
+        .first()
+        .ok_or_else(|| AppError::Internal("count(*) returned no row".into()))?
+        .try_get(0)?;
+    let found = u32::try_from(found).unwrap_or(u32::MAX);
+    Ok(LimitedCount {
+        count: found.min(cap),
+        capped: found > cap,
     })
 }
 

@@ -4,6 +4,7 @@ import type {
   ColumnIdentity,
   DatabaseInfo,
   DbObject,
+  IncomingForeignKey,
   ObjectKind,
   RowIdentity,
   SchemaInfo,
@@ -232,6 +233,27 @@ export function mockDescribeTable(schema: string, table: string): TableDescripti
   };
 }
 
+/** The foreign keys of other mock tables that point at this one. */
+export function mockIncomingForeignKeys(schema: string, table: string): IncomingForeignKey[] {
+  const found: IncomingForeignKey[] = [];
+  for (const [key, spec] of Object.entries(TABLES)) {
+    const [owner = "", name = ""] = key.split(".");
+    for (const [column, c] of Object.entries(spec.columns)) {
+      // A mock key always points into the schema of the table that has it.
+      if (c.fk && owner === schema && c.fk[0] === table) {
+        found.push({
+          constraint: `fk_${column}`,
+          schema: owner,
+          table: name,
+          columns: [column],
+          referencedColumns: [c.fk[1]],
+        });
+      }
+    }
+  }
+  return found;
+}
+
 /** The `rowEstimate` the sidebar shows for a table, if it is listed. */
 export function mockRowEstimate(schema: string, table: string): number | null {
   return OBJECTS[schema]?.find((o) => o.name === table)?.rowEstimate ?? null;
@@ -243,6 +265,11 @@ export function createSchemaHandlers(requireOpen: (id: string) => void): Record<
   const databaseOf = (id: string) => currentDatabase.get(id) ?? "angkordb_dev";
 
   return {
+    list_incoming_foreign_keys: (args): IncomingForeignKey[] => {
+      requireOpen(String(args["connectionId"]));
+      return mockIncomingForeignKeys(String(args["schema"]), String(args["table"]));
+    },
+
     list_databases: (args) => {
       const id = String(args["connectionId"]);
       requireOpen(id);

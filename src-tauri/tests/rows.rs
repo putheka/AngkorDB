@@ -4,7 +4,7 @@ mod common;
 
 use std::time::Instant;
 
-use angkordb_lib::db::rows::{count_rows, fetch_rows};
+use angkordb_lib::db::rows::{count_matching, count_rows, fetch_rows};
 use angkordb_lib::db::session::Session;
 use angkordb_lib::models::rows::{
     Filter, FilterOp, RowCount, RowPage, RowQuery, SortDir, SortSpec,
@@ -475,4 +475,59 @@ async fn the_first_page_of_a_million_rows_is_fast() {
     eprintln!("page at offset 500000: {:?}", started.elapsed());
     assert_eq!(deep.rows.len(), 100);
     assert_eq!(deep.rows[0][0].as_deref(), Some("500001"));
+}
+
+#[tokio::test]
+async fn count_matching_stops_counting_at_the_cap() {
+    let Some(session) = open_or_skip().await else {
+        return;
+    };
+    let client = session.meta().await.unwrap();
+    let eq = |column: &str, value: &str| vec![filter(column, FilterOp::Eq, &[value])];
+
+    // One user's orders: exact when under the cap.
+    let few = count_matching(&client, "public", "order_items", &eq("order_id", "1"), 1000)
+        .await
+        .unwrap();
+    assert_eq!((few.count, few.capped), (3, false));
+
+    // order_items has 3000 rows: a filter that matches all of them is cut at the cap.
+    let many = count_matching(&client, "public", "order_items", &[], 100)
+        .await
+        .unwrap();
+    assert_eq!((many.count, many.capped), (100, true));
+
+    // Exactly the cap is not "more than the cap".
+    let exact = count_matching(&client, "public", "order_items", &eq("order_id", "1"), 3)
+        .await
+        .unwrap();
+    assert_eq!((exact.count, exact.capped), (3, false));
+
+    // None, and a value that is not valid for the column is the server's error.
+    let none = count_matching(
+        &client,
+        "public",
+        "order_items",
+        &eq("order_id", "999999"),
+        10,
+    )
+    .await
+    .unwrap();
+    assert_eq!((none.count, none.capped), (0, false));
+    let bad = count_matching(&client, "public", "order_items", &eq("order_id", "x"), 10)
+        .await
+        .unwrap_err();
+    assert_eq!(bad.pg_code(), Some("22P02"));
+
+    // Names are checked against the catalog, never pasted into the SQL.
+    let injected = count_matching(
+        &client,
+        "public",
+        "order_items",
+        &eq("order_id\" = 1 --", "1"),
+        10,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(injected.code(), "VALIDATION");
 }

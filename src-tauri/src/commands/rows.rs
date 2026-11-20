@@ -4,7 +4,7 @@ use tauri::State;
 
 use crate::db::rows;
 use crate::error::AppResult;
-use crate::models::rows::{Filter, RowCount, RowPage, RowQuery};
+use crate::models::rows::{Filter, LimitedCount, RowCount, RowPage, RowQuery};
 use crate::state::AppState;
 
 /// One page of a table: paging, sorting and filtering happen on the server.
@@ -18,6 +18,22 @@ pub async fn fetch_rows(
     let session = state.session(&connection_id).await?;
     let client = session.meta().await?;
     rows::fetch_rows(&client, &query).await
+}
+
+/// How many rows match `filters`, up to `cap` (so a table without an index can't make it slow).
+#[tauri::command]
+#[specta::specta]
+pub async fn count_matching(
+    state: State<'_, AppState>,
+    connection_id: String,
+    schema: String,
+    table: String,
+    filters: Vec<Filter>,
+    cap: u32,
+) -> AppResult<LimitedCount> {
+    let session = state.session(&connection_id).await?;
+    let client = session.meta().await?;
+    rows::count_matching(&client, &schema, &table, &filters, cap).await
 }
 
 /// How many rows match. The planner's estimate when there are no filters and `exact` is

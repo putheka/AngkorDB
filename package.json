@@ -20,7 +20,7 @@
     "db:reset": "docker compose down -v && docker compose up -d --wait",
     "db:seed": "docker compose exec -T postgres psql -q -U angkor -d angkordb_dev -f /seed/seed.sql",
     "db:psql": "docker compose exec postgres psql -U angkor -d angkordb_dev",
-    "test:unit": "node --test src/lib/*.test.ts"
+    "test:unit": "node --test \"src/**/*.test.ts\""
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.1",

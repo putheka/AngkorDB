@@ -93,3 +93,13 @@ pub struct RowCount {
     /// `false`: the planner's estimate (`pg_class.reltuples`). Prefix it with `~`.
     pub exact: bool,
 }
+
+/// How many rows match, counting at most `cap` of them (so a huge table can't make it slow).
+#[derive(Debug, Clone, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct LimitedCount {
+    /// Never more than the cap.
+    pub count: u32,
+    /// There are more rows than `count`.
+    pub capped: bool,
+}

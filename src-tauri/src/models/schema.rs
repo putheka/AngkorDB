@@ -86,6 +86,19 @@ pub struct ForeignKeyRef {
     pub column: String,
 }
 
+/// A foreign key of another table that points at this one ("referenced by"). The two column
+/// lists are in constraint order: `columns[i]` of `schema.table` references `referenced_columns[i]`
+/// of the table asked about.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct IncomingForeignKey {
+    pub constraint: String,
+    pub schema: String,
+    pub table: String,
+    pub columns: Vec<String>,
+    pub referenced_columns: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ColumnInfo {

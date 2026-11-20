@@ -375,6 +375,15 @@ fn schema_commands_need_an_open_connection() {
                     "changes": { "updates": [], "inserts": [], "deletes": [] } }),
         ),
         (
+            "list_incoming_foreign_keys",
+            json!({ "connectionId": "nope", "schema": "public", "table": "users" }),
+        ),
+        (
+            "count_matching",
+            json!({ "connectionId": "nope", "schema": "public", "table": "t",
+                    "filters": [], "cap": 10 }),
+        ),
+        (
             "run_query",
             json!({ "connectionId": "nope", "tabId": "query:1", "sql": "SELECT 1" }),
         ),
@@ -578,6 +587,28 @@ fn fetch_and_count_rows_through_ipc() {
             "hasMore": true,
         })
     );
+
+    let incoming = ipc
+        .call(
+            "list_incoming_foreign_keys",
+            json!({ "connectionId": id, "schema": "public", "table": "users" }),
+        )
+        .unwrap();
+    assert_eq!(
+        incoming,
+        json!([{ "constraint": "orders_user_id_fkey", "schema": "public", "table": "orders",
+                 "columns": ["user_id"], "referencedColumns": ["id"] }])
+    );
+    let referencing = ipc
+        .call(
+            "count_matching",
+            json!({ "connectionId": id, "schema": "public", "table": "orders",
+                    "filters": [{ "column": "user_id", "op": "eq", "values": ["1"] }],
+                    "cap": 2 }),
+        )
+        .unwrap();
+    assert_eq!(referencing["capped"], json!(true));
+    assert_eq!(referencing["count"], json!(2));
 
     let count = ipc
         .call(

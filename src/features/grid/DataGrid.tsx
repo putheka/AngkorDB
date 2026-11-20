@@ -3,6 +3,7 @@ import {
   DataEditor,
   GridCellKind,
   type DataEditorRef,
+  type CellClickedEventArgs,
   type DrawCellCallback,
   type GridCell,
   type GridColumn,
@@ -43,6 +44,7 @@ import type { CellValue, NewRow } from "@/features/grid/editing/changes";
 import { isEditableColumn } from "@/features/grid/editing/editorKind";
 import { useGridTheme } from "@/features/grid/gridTheme";
 import { nextSort, superscript } from "@/features/grid/sort";
+import { errorMessage } from "@/lib/errors";
 
 /** The row-number column is column 0 of the grid's own coordinates; ours start after it. */
 const ROW_MARKER_OFFSET = 1;
@@ -123,7 +125,21 @@ export interface DataGridProps {
   onToggleDetail?: () => void;
   /** The row of the selected cell, as a grid row (new rows come first), or `null`. */
   onActiveRowChange?: (row: number | null) => void;
+  /** Columns that are (part of) a foreign key get an arrow; following it opens the referenced rows. */
+  foreignKeys?: ForeignKeyNavigation;
 }
+
+export interface ForeignKeyNavigation {
+  /** Names of the columns that are part of a foreign key. */
+  columns: ReadonlySet<string>;
+  /** Open the rows the key of `row` (a grid row) points at. Rejects with a message to show. */
+  onFollow: (row: number, column: string) => Promise<void>;
+  /** Where the key leads, for the menu: `users`. */
+  targetOf: (column: string) => string | undefined;
+}
+
+/** The part of an FK cell that follows the key when clicked, and where the arrow is drawn. */
+const ARROW_ZONE = 22;
 
 /**
  * Canvas grid for rows of text: NULL in grey italics, numbers right-aligned, booleans as
@@ -143,6 +159,7 @@ export function DataGrid({
   editing,
   onToggleDetail,
   onActiveRowChange,
+  foreignKeys,
 }: DataGridProps) {
   const theme = useGridTheme();
   const visible = useMemo(() => visibleColumns(columns, layout), [columns, layout]);
@@ -262,11 +279,35 @@ export function DataGrid({
     },
     [newCount, deleted],
   );
+  const fkColumns = foreignKeys?.columns;
   const drawCell = useMemo<DrawCellCallback | undefined>(() => {
-    if (deleted.size === 0) return undefined;
-    return ({ ctx, cell, theme: cellTheme, rect, row }, drawContent) => {
+    if (deleted.size === 0 && !fkColumns?.size) return undefined;
+    return ({ ctx, cell, theme: cellTheme, rect, row, col }, drawContent) => {
       drawContent();
-      if (row < newCount || !deleted.has(row - newCount) || cell.kind !== GridCellKind.Text) return;
+      if (cell.kind !== GridCellKind.Text) return;
+      const right = cell.contentAlign === "right";
+
+      // An arrow where the key can be followed: on the side the text is not (numbers sit on the right).
+      const name = visible[col]?.column.name;
+      if (name && fkColumns?.has(name) && cell.copyData !== "") {
+        const x = right ? rect.x + 12 : rect.x + rect.width - 12;
+        const y = rect.y + rect.height / 2;
+        ctx.save();
+        ctx.strokeStyle = "rgba(125, 135, 160, 0.95)";
+        ctx.lineWidth = 1.4;
+        ctx.lineCap = "round";
+        ctx.beginPath();
+        ctx.moveTo(x - 5, y);
+        ctx.lineTo(x + 4, y);
+        ctx.moveTo(x + 1, y - 3.5);
+        ctx.lineTo(x + 4.5, y);
+        ctx.lineTo(x + 1, y + 3.5);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // A line through the text of a row that is to be deleted.
+      if (row < newCount || !deleted.has(row - newCount)) return;
       const text = cell.displayData ?? cell.data;
       if (text === "") return;
       ctx.save();
@@ -275,7 +316,6 @@ export function DataGrid({
         ctx.measureText(text).width,
         rect.width - 2 * cellTheme.cellHorizontalPadding,
       );
-      const right = cell.contentAlign === "right";
       const x = right
         ? rect.x + rect.width - cellTheme.cellHorizontalPadding - width
         : rect.x + cellTheme.cellHorizontalPadding;
@@ -287,7 +327,26 @@ export function DataGrid({
       ctx.stroke();
       ctx.restore();
     };
-  }, [deleted, newCount]);
+  }, [deleted, newCount, fkColumns, visible]);
+
+  /** Follow the key of a cell; a refusal ("NULL references nothing") shows as a notice. */
+  const follow = (col: number, g: number) => {
+    const name = visible[col]?.column.name;
+    if (!foreignKeys || !name) return;
+    foreignKeys.onFollow(g, name).catch((error: unknown) => setNotice(errorMessage(error)));
+  };
+  /** Clicking the arrow of an FK cell with a value, or ⌘-clicking the cell. */
+  const onCellClicked = ([col, g]: Item, event: CellClickedEventArgs) => {
+    const name = visible[col]?.column.name;
+    if (!foreignKeys || !name || !foreignKeys.columns.has(name)) return;
+    const cell = getCellContent([col, g]);
+    if (cell.kind !== GridCellKind.Text || cell.copyData === "") return;
+    const right = cell.contentAlign === "right";
+    const onArrow = right
+      ? event.localEventX <= ARROW_ZONE
+      : event.localEventX >= event.bounds.width - ARROW_ZONE;
+    if (onArrow || event.metaKey) follow(col, g);
+  };
 
   // A new row appears at the top: show it.
   const previousNew = useRef(newCount);
@@ -474,6 +533,7 @@ export function DataGrid({
               }
             }}
             onCellActivated={([col, row]) => startEdit(col, row)}
+            onCellClicked={onCellClicked}
             onKeyDown={onKeyDown}
             onVisibleRegionChanged={() => editor && setEditor(null)}
             onColumnMoved={onColumnMoved}
@@ -565,6 +625,16 @@ export function DataGrid({
                 <ContextMenuSeparator />
               </>
             )}
+            {foreignKeys?.columns.has(menuColumn.column.name) &&
+              menuRow?.[menuColumn.index] != null && (
+                <>
+                  <ContextMenuItem onSelect={() => follow(menu.column, menu.row)}>
+                    Go to {foreignKeys.targetOf(menuColumn.column.name) ?? "referenced row"}
+                    <ContextMenuShortcut>⌘-click</ContextMenuShortcut>
+                  </ContextMenuItem>
+                  <ContextMenuSeparator />
+                </>
+              )}
             {editing && (
               <>
                 <ContextMenuItem onSelect={() => editing.onDuplicate(targetsFor(menu.row))}>
