@@ -228,7 +228,8 @@ export function DataGrid({
     const [markedCol, row] = e.location;
     const col = markedCol - ROW_MARKER_OFFSET;
     if (!editableInfo(col)) return;
-    if ((e.metaKey || e.ctrlKey) && e.key === "Backspace") {
+    // ⇧⌘⌫ is Discard (the table view's); ⌘⌫ alone sets NULL.
+    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === "Backspace") {
       e.preventDefault();
       setNullAt(col, row);
     } else if (!e.metaKey && !e.ctrlKey && !e.altKey && e.key.length === 1 && e.key !== " ") {

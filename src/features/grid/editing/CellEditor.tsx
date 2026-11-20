@@ -220,6 +220,7 @@ export function CellEditor({
     <div
       ref={root}
       role="dialog"
+      data-cell-editor=""
       aria-label={`Edit ${column.name}`}
       tabIndex={-1}
       onKeyDown={onKeyDown}

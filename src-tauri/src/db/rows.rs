@@ -40,11 +40,11 @@ pub fn quote_ident(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))
 }
 
-fn relation(desc: &TableDescription) -> String {
+pub fn relation(desc: &TableDescription) -> String {
     format!("{}.{}", quote_ident(&desc.schema), quote_ident(&desc.name))
 }
 
-fn find_column<'a>(desc: &'a TableDescription, name: &str) -> AppResult<&'a ColumnInfo> {
+pub fn find_column<'a>(desc: &'a TableDescription, name: &str) -> AppResult<&'a ColumnInfo> {
     desc.columns
         .iter()
         .find(|c| c.name == name)

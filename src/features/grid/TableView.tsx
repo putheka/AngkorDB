@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { RowCount } from "@/bindings";
 import { useConnections } from "@/features/connections/useConnections";
@@ -15,7 +15,10 @@ import {
   rowRefOf,
   keyOf,
   setCell,
+  toTableChanges,
 } from "@/features/grid/editing/changes";
+import { PreviewDialog } from "@/features/grid/editing/PreviewDialog";
+import { useCommitChanges } from "@/features/grid/editing/useCommit";
 import { FilterBar } from "@/features/grid/FilterBar";
 import {
   appliedCount,
@@ -100,8 +103,12 @@ export function TableView({ connectionId, tab }: { connectionId: string; tab: Ta
     () => (page ? overridesFor(page, refs, changes) : new Map()),
     [page, refs, changes],
   );
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const commit = useCommitChanges(connectionId, tab, () => setPreviewOpen(false));
+  // No edits while writing: the staged copy is dropped when the write is done.
+  const writing = commit.isPending;
   const editing = useMemo<GridEditing | undefined>(() => {
-    if (!page || !described.data || readOnlyReason) return undefined;
+    if (!page || !described.data || readOnlyReason || writing) return undefined;
     const change = useChangesStore.getState().change;
     return {
       connectionId,
@@ -119,8 +126,47 @@ export function TableView({ connectionId, tab }: { connectionId: string; tab: Ta
         if (ref) change(tab.id, (c) => revertCell(c, keyOf(ref), column));
       },
     };
-  }, [page, described.data, readOnlyReason, connectionId, overrides, refs, tab.id]);
+  }, [page, described.data, readOnlyReason, writing, connectionId, overrides, refs, tab.id]);
   const pending = pendingCells(changes);
+  const tableChanges = useMemo(() => toTableChanges(changes), [changes]);
+
+  // A new edit makes the last failure moot.
+  const { mutate: commitNow, reset: resetCommit, isPending: committing } = commit;
+  const committingRef = useRef(false);
+  useEffect(() => {
+    committingRef.current = committing;
+  });
+  useEffect(() => {
+    // Not while writing: the write itself drops the staged edits when it is done.
+    if (!committingRef.current) resetCommit();
+  }, [changes, resetCommit]);
+
+  // ⌘S writes, ⇧⌘P shows the SQL, ⇧⌘⌫ throws the edits away.
+  useEffect(() => {
+    const staged = () => pendingCells(useChangesStore.getState().byTab[tab.id] ?? { updates: {} });
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || !e.metaKey || e.altKey || e.ctrlKey) return;
+      const typing =
+        e.target instanceof HTMLElement &&
+        (e.target.isContentEditable || /^(INPUT|TEXTAREA)$/.test(e.target.tagName));
+      if (e.code === "KeyS" && !e.shiftKey) {
+        e.preventDefault();
+        // An open cell editor holds an edit that isn't staged yet: closing it stages it.
+        const active = document.activeElement;
+        if (active instanceof HTMLElement && active.closest("[data-cell-editor]")) active.blur();
+        if (staged() > 0 && !committing) commitNow();
+      } else if (e.code === "KeyP" && e.shiftKey) {
+        e.preventDefault();
+        if (staged() > 0) setPreviewOpen(true);
+      } else if (e.code === "Backspace" && e.shiftKey && !typing) {
+        e.preventDefault();
+        useChangesStore.getState().discard(tab.id);
+        setPreviewOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [tab.id, committing, commitNow]);
 
   // The columns come from the catalog, so the bar works even when the rows failed to load.
   const filterColumns = (described.data?.columns ?? page?.columns ?? []).map((c) => ({
@@ -251,10 +297,27 @@ export function TableView({ connectionId, tab }: { connectionId: string; tab: Ta
         <PendingBar
           cells={pending}
           rows={pendingRows(changes)}
-          onDiscard={() => useChangesStore.getState().discard(tab.id)}
+          committing={committing}
+          error={commit.error}
+          onPreview={() => setPreviewOpen(true)}
+          onCommit={() => commitNow()}
+          onDiscard={() => {
+            useChangesStore.getState().discard(tab.id);
+            setPreviewOpen(false);
+          }}
         />
       )}
       {body}
+      <PreviewDialog
+        open={previewOpen && pending > 0}
+        onOpenChange={setPreviewOpen}
+        connectionId={connectionId}
+        schema={tab.schema}
+        table={tab.name}
+        changes={tableChanges}
+        committing={committing}
+        onCommit={() => commitNow()}
+      />
     </div>
   );
 }

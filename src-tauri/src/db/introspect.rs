@@ -174,11 +174,15 @@ pub async fn describe_table(
     })
 }
 
+/// `base_type` is `format_type(oid, -1)`, not `NULL`: `NULL` prints `char(n)` as `character` and
+/// `bit(n)` as `bit`, and casting text to those silently cuts the value to one character. `-1`
+/// prints `bpchar` and `"bit"`, the unconstrained types, so a value is never shortened by the cast
+/// and the column itself raises "value too long" on assignment.
 async fn fetch_columns(client: &Client, oid: u32) -> AppResult<Vec<ColumnInfo>> {
     let rows = client
         .query(
             "SELECT a.attnum, a.attname::text,
-                    format_type(a.atttypid, a.atttypmod), format_type(a.atttypid, NULL),
+                    format_type(a.atttypid, a.atttypmod), format_type(a.atttypid, -1),
                     a.atttypid, NOT a.attnotnull,
                     pg_get_expr(d.adbin, d.adrelid), a.attidentity::text, a.attgenerated::text,
                     col_description(a.attrelid, a.attnum)

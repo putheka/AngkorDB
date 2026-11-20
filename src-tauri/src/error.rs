@@ -40,6 +40,18 @@ pub enum AppError {
 
     #[error("{0}")]
     Internal(String),
+
+    /// The data is not what the edit expected (the row was changed or deleted meanwhile).
+    #[error("{0}")]
+    Conflict(String),
+
+    /// One change of a batch failed, so the whole batch was rolled back (ANG-23).
+    #[error("{what}: {source}")]
+    Change {
+        /// "Change 2 of 5 (update row id = 7)".
+        what: String,
+        source: Box<AppError>,
+    },
 }
 
 impl AppError {
@@ -57,6 +69,8 @@ impl AppError {
             Self::Storage(_) => "STORAGE",
             Self::Keychain(_) => "KEYCHAIN",
             Self::Internal(_) => "INTERNAL",
+            Self::Conflict(_) => "CONFLICT",
+            Self::Change { .. } => "CHANGE_FAILED",
         }
     }
 
@@ -70,6 +84,9 @@ impl AppError {
                 (None, Some(cause)) => format!("{e}: {cause}"),
                 (None, None) => e.to_string(),
             },
+            Self::Change { what, source } => {
+                format!("{what} failed: {} — nothing was saved.", source.message())
+            }
             other => other.to_string(),
         }
     }
@@ -87,6 +104,7 @@ impl AppError {
     fn db_error(&self) -> Option<&tokio_postgres::error::DbError> {
         match self {
             Self::Postgres(e) => e.as_db_error(),
+            Self::Change { source, .. } => source.db_error(),
             _ => None,
         }
     }
@@ -127,10 +145,13 @@ impl From<&AppError> for AppErrorPayload {
             pg_code: db.map(|d| d.code().code().to_owned()),
             detail: db.and_then(|d| d.detail()).map(str::to_owned),
             hint: db.and_then(|d| d.hint()).map(str::to_owned),
-            position: db.and_then(|d| match d.position() {
-                Some(ErrorPosition::Original(p)) => Some(*p),
-                _ => None,
-            }),
+            // A batch has no single SQL text the offset could point into.
+            position: db
+                .filter(|_| !matches!(err, AppError::Change { .. }))
+                .and_then(|d| match d.position() {
+                    Some(ErrorPosition::Original(p)) => Some(*p),
+                    _ => None,
+                }),
         }
     }
 }

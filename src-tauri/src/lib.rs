@@ -53,6 +53,8 @@ pub fn specta_builder<R: tauri::Runtime>() -> Builder<R> {
             commands::schema::list_enum_values,
             commands::rows::fetch_rows,
             commands::rows::count_rows,
+            commands::changes::preview_changes,
+            commands::changes::apply_changes,
             commands::query::run_query,
             commands::query::cancel_query,
             commands::query::close_query_tab,

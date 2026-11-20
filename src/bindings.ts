@@ -47,6 +47,14 @@ export const commands = {
 	 *  false (instant); otherwise `count(*)`, which scans the table.
 	 */
 	countRows: (connectionId: string, schema: string, table: string, filters: Filter[], rawWhere: string | null, exact: boolean, options?: InvokeOptions) => __TAURI_INVOKE<RowCount>("count_rows", { connectionId, schema, table, filters, rawWhere, exact }, options),
+	/**  The SQL that `apply_changes` would run, values written in. Nothing is executed. */
+	previewChanges: (connectionId: string, schema: string, table: string, changes: TableChanges, options?: InvokeOptions) => __TAURI_INVOKE<string>("preview_changes", { connectionId, schema, table, changes }, options),
+	/**
+	 *  Apply every staged change in one transaction. All or nothing: if one statement fails, or
+	 *  a row was changed or deleted by someone else, nothing is written and the error says which
+	 *  change it was.
+	 */
+	applyChanges: (connectionId: string, schema: string, table: string, changes: TableChanges, options?: InvokeOptions) => __TAURI_INVOKE<ApplyResult>("apply_changes", { connectionId, schema, table, changes }, options),
 	/**
 	 *  Run the statements of `sql` one after another on the query tab's own connection. A
 	 *  statement that fails ends the run and is reported as the last result.
@@ -80,6 +88,27 @@ export type AppInfo = {
 	name: string,
 	version: string,
 };
+
+/**  What a committed change set did. */
+export type ApplyResult = {
+	updated: number,
+	deleted: number,
+	/**
+	 *  The inserted rows as the server stored them (defaults and serials filled in), every cell
+	 *  as text in table column order, in the order of `TableChanges::inserts`.
+	 */
+	inserted: ((string | null)[])[],
+};
+
+/**
+ *  What a cell is to become. Text stays text until the server casts it (`$1::text::<type>`),
+ *  so a bigint above 2^53, a numeric or a jsonb document reaches the table exactly as typed.
+ */
+export type CellValue = { kind: "value"; text: string } | 
+/**  SQL `NULL`, sent as a bound `None`. */
+{ kind: "null" } | 
+/**  The keyword `DEFAULT`: the column's own default (a serial, `now()`, …). */
+{ kind: "default" };
 
 export type ColorTag = "none" | "green" | "yellow" | "red";
 
@@ -236,6 +265,11 @@ export type RowIdentity = { kind: "primaryKey"; columns: string[] } |
 /**  Rows can't be edited; `reason` is shown to the user. */
 { kind: "readOnly"; reason: string };
 
+/**  A new row. Columns that are not listed get their `DEFAULT`. */
+export type RowInsert = {
+	values: { [key in string]: CellValue },
+};
+
 export type RowPage = {
 	columns: ResultColumn[],
 	/**  Every cell as text, `None` for SQL `NULL`. One entry per column. */
@@ -263,6 +297,18 @@ export type RowQuery = {
 	 *  a value: it runs inside a read-only transaction so it can't change anything.
 	 */
 	rawWhere: string | null,
+};
+
+/**  How a row is found again (ANG-8 D2). Must match what the server reports for the table. */
+export type RowRef = 
+/**  The primary key, or a NOT NULL unique index: `columns[i]` has the value `values[i]`. */
+{ kind: "key"; columns: string[]; values: string[] } | { kind: "ctid"; ctid: string };
+
+/**  New values for some cells of one existing row. */
+export type RowUpdate = {
+	row: RowRef,
+	/**  Column name → new value. Other columns are left alone. */
+	values: { [key in string]: CellValue },
 };
 
 export type SafeMode = "off" | "confirm" | "touch-id" | "read-only";
@@ -303,6 +349,16 @@ export type StatementResult = {
 	range: TextRange,
 	durationMs: number,
 	outcome: StatementOutcome,
+};
+
+/**
+ *  Everything staged for one table. Applied in one transaction: deletes first (they free keys),
+ *  then updates, then inserts.
+ */
+export type TableChanges = {
+	updates: RowUpdate[],
+	inserts: RowInsert[],
+	deletes: RowRef[],
 };
 
 export type TableDescription = {

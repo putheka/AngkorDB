@@ -11,6 +11,7 @@ import type {
   SslMode,
 } from "@/bindings";
 
+import { createChangeHandlers } from "@/dev/mockChanges";
 import { createQueryHandlers } from "@/dev/mockQuery";
 import { createRowHandlers } from "@/dev/mockRows";
 import { createSchemaHandlers } from "@/dev/mockSchema";
@@ -192,6 +193,7 @@ const handlers: Record<string, Handler> = {
 
   ...createSchemaHandlers(requireOpen),
   ...createRowHandlers(requireOpen),
+  ...createChangeHandlers(requireOpen, (id) => connections.find((c) => c.id === id)?.safeMode),
   ...createQueryHandlers(requireOpen),
 };
 

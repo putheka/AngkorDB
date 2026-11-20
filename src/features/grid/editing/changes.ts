@@ -1,15 +1,10 @@
-import type { RowPage } from "@/bindings";
+import type { CellValue, RowPage, RowRef, TableChanges } from "@/bindings";
 import { omit } from "@/lib/omit";
 
-/**
- * What a cell is to become. Every value is text and stays text until the server casts it
- * (ANG-8 D7: `$1::text::<type>`), so a bigint above 2^53 or a numeric survives untouched.
- */
-export type CellValue = { kind: "value"; text: string } | { kind: "null" } | { kind: "default" };
-
-/** How the server finds a row again when the change is applied (ANG-8 D2). */
-export type RowRef =
-  { kind: "key"; columns: string[]; values: string[] } | { kind: "ctid"; ctid: string };
+// `CellValue` (what a cell is to become: text, NULL or DEFAULT) and `RowRef` (how the server
+// finds a row again) are the same types the Rust side applies (ANG-8 D2, D7). Every value is
+// text until the server casts it, so a bigint above 2^53 or a numeric survives untouched.
+export type { CellValue, RowRef };
 
 /** The edits of one row. */
 export interface RowChange {
@@ -102,6 +97,15 @@ export function revertCell(changes: ChangeSet, key: string, column: string): Cha
 function withRow(changes: ChangeSet, row: RowChange): ChangeSet {
   if (Object.keys(row.values).length === 0) return { updates: omit(changes.updates, row.key) };
   return { updates: { ...changes.updates, [row.key]: row } };
+}
+
+/** What `apply_changes` and `preview_changes` take. Inserts and deletes arrive with ANG-24. */
+export function toTableChanges(changes: ChangeSet): TableChanges {
+  return {
+    updates: Object.values(changes.updates).map((row) => ({ row: row.ref, values: row.values })),
+    inserts: [],
+    deletes: [],
+  };
 }
 
 /** Edited cells. */

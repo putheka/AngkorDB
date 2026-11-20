@@ -18,7 +18,7 @@ import { appError, type Handler } from "@/dev/mockSupport";
 const MAX_ROWS = 1000;
 const MAX_LIMIT = 10_000;
 
-type Row = (string | null)[];
+export type Row = (string | null)[];
 
 const NUMERIC = ["smallint", "integer", "bigint", "numeric", "double precision", "real"];
 const isNumeric = (column: ColumnInfo) => NUMERIC.includes(column.baseType);
@@ -54,7 +54,12 @@ function cell(column: ColumnInfo, i: number): string | null {
 
 const cache = new Map<string, Row[]>();
 
-function tableRows(desc: TableDescription): Row[] {
+/** Replace a table's rows (what the mock `apply_changes` commits). */
+export function setTableRows(desc: TableDescription, rows: Row[]) {
+  cache.set(`${desc.schema}.${desc.name}`, rows);
+}
+
+export function tableRows(desc: TableDescription): Row[] {
   const key = `${desc.schema}.${desc.name}`;
   let rows = cache.get(key);
   if (!rows) {
@@ -65,7 +70,7 @@ function tableRows(desc: TableDescription): Row[] {
   return rows;
 }
 
-function column(desc: TableDescription, name: string): [index: number, column: ColumnInfo] {
+export function column(desc: TableDescription, name: string): [index: number, column: ColumnInfo] {
   const index = desc.columns.findIndex((c) => c.name === name);
   const found = desc.columns[index];
   if (!found) throw appError("VALIDATION", `${desc.name} has no column "${name}"`);

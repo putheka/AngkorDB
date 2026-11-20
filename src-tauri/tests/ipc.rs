@@ -365,6 +365,16 @@ fn schema_commands_need_an_open_connection() {
             json!({ "connectionId": "nope", "typeOid": 16400 }),
         ),
         (
+            "preview_changes",
+            json!({ "connectionId": "nope", "schema": "public", "table": "t",
+                    "changes": { "updates": [], "inserts": [], "deletes": [] } }),
+        ),
+        (
+            "apply_changes",
+            json!({ "connectionId": "nope", "schema": "public", "table": "t",
+                    "changes": { "updates": [], "inserts": [], "deletes": [] } }),
+        ),
+        (
             "run_query",
             json!({ "connectionId": "nope", "tabId": "query:1", "sql": "SELECT 1" }),
         ),
@@ -710,4 +720,102 @@ fn run_query_through_ipc() {
         .unwrap(),
         json!(false)
     );
+}
+
+#[test]
+fn preview_and_apply_changes_through_ipc() {
+    if !dev_db_available() {
+        return;
+    }
+    let ipc = setup();
+    let mut form = config("Dev", "localhost", 54329);
+    form["user"] = json!("angkor");
+    form["database"] = json!("angkordb_dev");
+    let saved = ipc
+        .call(
+            "save_connection",
+            json!({ "config": form, "password": { "kind": "set", "value": "angkor" } }),
+        )
+        .unwrap();
+    let id = saved["id"].as_str().unwrap();
+    ipc.call("connect_connection", json!({ "id": id })).unwrap();
+    ipc.call(
+        "run_query",
+        json!({ "connectionId": id, "tabId": "query:ipc", "sql":
+            "DROP SCHEMA IF EXISTS ang23_ipc CASCADE; CREATE SCHEMA ang23_ipc; \
+             CREATE TABLE ang23_ipc.t (id serial PRIMARY KEY, name text, n numeric); \
+             INSERT INTO ang23_ipc.t (name, n) VALUES ('a', 1), ('b', 2);" }),
+    )
+    .unwrap();
+
+    // Exactly what the UI sends: camelCase, tagged unions, `kind` for every variant.
+    let changes = json!({
+        "updates": [{
+            "row": { "kind": "key", "columns": ["id"], "values": ["1"] },
+            "values": { "name": { "kind": "value", "text": "A!" }, "n": { "kind": "null" } },
+        }],
+        "inserts": [{ "values": { "name": { "kind": "value", "text": "c" } } }],
+        "deletes": [{ "kind": "key", "columns": ["id"], "values": ["2"] }],
+    });
+    let args = |changes: &serde_json::Value| json!({ "connectionId": id, "schema": "ang23_ipc", "table": "t", "changes": changes });
+
+    let shown = ipc.call("preview_changes", args(&changes)).unwrap();
+    assert_eq!(
+        shown,
+        json!(
+            "BEGIN;\n\
+             DELETE FROM \"ang23_ipc\".\"t\" WHERE \"id\" = '2';\n\
+             UPDATE \"ang23_ipc\".\"t\" SET \"name\" = 'A!', \"n\" = NULL WHERE \"id\" = '1';\n\
+             INSERT INTO \"ang23_ipc\".\"t\" (\"name\") VALUES ('c');\n\
+             COMMIT;"
+        )
+    );
+
+    let result = ipc.call("apply_changes", args(&changes)).unwrap();
+    assert_eq!(
+        result,
+        json!({ "updated": 1, "deleted": 1, "inserted": [["3", "c", null]] })
+    );
+
+    // A failure arrives as an error naming the change, with the Postgres details kept.
+    let failing = json!({ "updates": [{
+        "row": { "kind": "key", "columns": ["id"], "values": ["999"] },
+        "values": { "name": { "kind": "value", "text": "x" } },
+    }], "inserts": [], "deletes": [] });
+    let err = ipc.call("apply_changes", args(&failing)).unwrap_err();
+    assert_eq!(err["code"], "CHANGE_FAILED");
+    assert_eq!(
+        err["message"],
+        "Change 1 of 1 (update row id = 999) failed: row changed or missing — nothing was saved."
+    );
+
+    // The connection's safe mode is enforced by the backend, not only by the UI.
+    let mut read_only = config("Locked", "localhost", 54329);
+    read_only["user"] = json!("angkor");
+    read_only["database"] = json!("angkordb_dev");
+    read_only["safeMode"] = json!("read-only");
+    let locked = ipc
+        .call(
+            "save_connection",
+            json!({ "config": read_only, "password": { "kind": "set", "value": "angkor" } }),
+        )
+        .unwrap();
+    let locked_id = locked["id"].as_str().unwrap();
+    ipc.call("connect_connection", json!({ "id": locked_id }))
+        .unwrap();
+    let err = ipc
+        .call(
+            "apply_changes",
+            json!({ "connectionId": locked_id, "schema": "ang23_ipc", "table": "t",
+                    "changes": changes }),
+        )
+        .unwrap_err();
+    assert_eq!(err["code"], "VALIDATION");
+    assert_eq!(err["message"], "This connection is read-only (safe mode).");
+
+    ipc.call(
+        "run_query",
+        json!({ "connectionId": id, "tabId": "query:ipc", "sql": "DROP SCHEMA ang23_ipc CASCADE" }),
+    )
+    .unwrap();
 }

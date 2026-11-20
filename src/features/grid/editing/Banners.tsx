@@ -1,6 +1,7 @@
 import { LockIcon, PencilIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { errorDetails, errorMessage } from "@/lib/errors";
 
 /** Why this table can't be edited. */
 export function ReadOnlyBanner({ reason }: { reason: string }) {
@@ -17,28 +18,61 @@ export function ReadOnlyBanner({ reason }: { reason: string }) {
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
-/** Edits waiting to be written. Applying them comes with the pending-changes engine (ANG-23). */
+interface PendingBarProps {
+  cells: number;
+  rows: number;
+  /** Writing right now. */
+  committing: boolean;
+  /** Why the last commit failed; nothing was written. */
+  error: unknown;
+  onPreview: () => void;
+  onCommit: () => void;
+  onDiscard: () => void;
+}
+
+/** Edits waiting to be written, with Preview SQL, Commit and Discard (ANG-23). */
 export function PendingBar({
   cells,
   rows,
+  committing,
+  error,
+  onPreview,
+  onCommit,
   onDiscard,
-}: {
-  cells: number;
-  rows: number;
-  onDiscard: () => void;
-}) {
+}: PendingBarProps) {
+  const failed = error !== null && error !== undefined;
   return (
-    <div
-      role="status"
-      className="flex shrink-0 items-center gap-2 border-b bg-yellow-400/10 px-3 py-1 text-xs"
-    >
-      <PencilIcon className="size-3.5 shrink-0 text-yellow-600 dark:text-yellow-400" />
-      <span className="tabular-nums">
-        {plural(cells, "edit")} in {plural(rows, "row")} not saved yet
-      </span>
-      <Button size="xs" variant="ghost" className="ml-auto" onClick={onDiscard}>
-        Discard
-      </Button>
+    <div className="shrink-0 border-b bg-yellow-400/10 text-xs">
+      <div role="status" className="flex items-center gap-2 px-3 py-1">
+        <PencilIcon className="size-3.5 shrink-0 text-yellow-600 dark:text-yellow-400" />
+        <span className="tabular-nums">
+          {plural(cells, "edit")} in {plural(rows, "row")} not saved yet
+        </span>
+        <div className="ml-auto flex items-center gap-1">
+          <Button size="xs" variant="ghost" disabled={committing} onClick={onPreview}>
+            Preview SQL
+            <kbd className="ml-1 text-[10px] opacity-60">⇧⌘P</kbd>
+          </Button>
+          <Button size="xs" variant="ghost" disabled={committing} onClick={onDiscard}>
+            Discard
+            <kbd className="ml-1 text-[10px] opacity-60">⇧⌘⌫</kbd>
+          </Button>
+          <Button size="xs" disabled={committing} onClick={onCommit}>
+            {committing ? "Saving…" : "Commit"}
+            <kbd className="ml-1 text-[10px] opacity-70">⌘S</kbd>
+          </Button>
+        </div>
+      </div>
+      {failed && (
+        <div role="alert" className="border-t border-destructive/20 bg-destructive/10 px-3 py-1.5">
+          <p className="font-medium text-destructive">{errorMessage(error)}</p>
+          {errorDetails(error).map((line) => (
+            <p key={line} className="text-muted-foreground">
+              {line}
+            </p>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -155,3 +155,30 @@ body,
   -webkit-user-select: text;
   user-select: text;
 }
+
+/* SQL shown outside the editor (the pending-changes preview): same colors as the editor. */
+.sql-text .tok-keyword,
+.sql-text .tok-keyword2 {
+  color: var(--sql-keyword);
+  font-weight: 500;
+}
+.sql-text .tok-string,
+.sql-text .tok-string2 {
+  color: var(--sql-string);
+}
+.sql-text .tok-number,
+.sql-text .tok-bool,
+.sql-text .tok-atom,
+.sql-text .tok-null {
+  color: var(--sql-number);
+}
+.sql-text .tok-typeName,
+.sql-text .tok-standard {
+  color: var(--sql-type);
+}
+.sql-text .tok-comment,
+.sql-text .tok-lineComment,
+.sql-text .tok-blockComment {
+  color: var(--sql-comment);
+  font-style: italic;
+}
