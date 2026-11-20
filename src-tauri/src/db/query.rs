@@ -15,9 +15,11 @@ use std::time::Instant;
 use futures_util::StreamExt;
 use tokio_postgres::{Client, SimpleQueryMessage};
 
+use crate::db::classify;
 use crate::db::script::{self, Statement};
 use crate::db::session::Session;
 use crate::error::{AppError, AppErrorPayload, AppResult};
+use crate::models::connection::SafeMode;
 use crate::models::query::{QueryRun, StatementOutcome, StatementResult, TextRange};
 use crate::models::rows::ResultColumn;
 
@@ -38,9 +40,18 @@ pub async fn run_script(session: &Session, tab_id: &str, sql: &str) -> AppResult
     let client = session.tab_client(tab_id).await?;
     let started = Instant::now();
 
+    let read_only = session.config().safe_mode == SafeMode::ReadOnly;
     let mut statements = Vec::new();
     for statement in script::split(sql) {
-        let result = run_statement(session, tab_id, &client, sql, &statement).await;
+        // The server refuses writes on a read-only connection, but a statement could switch
+        // that off for the session; those are not sent.
+        let result = if read_only
+            && classify::classify(&sql[statement.start..statement.end]).unlocks_writes
+        {
+            blocked(&statement)
+        } else {
+            run_statement(session, tab_id, &client, sql, &statement).await
+        };
         let failed = matches!(result.outcome, StatementOutcome::Error { .. });
         statements.push(result);
         if failed {
@@ -51,6 +62,26 @@ pub async fn run_script(session: &Session, tab_id: &str, sql: &str) -> AppResult
         statements,
         duration_ms: millis(started),
     })
+}
+
+/// The result shown for a statement a read-only connection refuses to send.
+fn blocked(statement: &Statement) -> StatementResult {
+    let error = AppError::Validation(
+        "This connection is read-only, so a statement that could make the session writable is \
+         not run. Change the connection's safe mode to write."
+            .into(),
+    );
+    StatementResult {
+        range: TextRange {
+            start: statement.utf16_start,
+            end: statement.utf16_end,
+        },
+        duration_ms: 0,
+        outcome: StatementOutcome::Error {
+            error: AppErrorPayload::from(&error),
+            offset: Some(statement.utf16_start),
+        },
+    }
 }
 
 async fn run_statement(

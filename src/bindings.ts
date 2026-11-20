@@ -69,6 +69,16 @@ export const commands = {
 	 *  none. Used for "run the current statement"; no connection needed.
 	 */
 	statementAt: (sql: string, cursor: number, options?: InvokeOptions) => __TAURI_INVOKE<TextRange | null>("statement_at", { sql, cursor }, options),
+	/**
+	 *  What each statement of `sql` does, so the UI can ask before running the ones that change
+	 *  something. Needs no connection.
+	 */
+	classifySql: (sql: string, options?: InvokeOptions) => __TAURI_INVOKE<StatementClass[]>("classify_sql", { sql }, options),
+	/**
+	 *  Show the macOS Touch ID / password prompt with `reason` and wait. Succeeds only when the
+	 *  person passed it; cancelling fails with code `CANCELLED`.
+	 */
+	authenticateUser: (reason: string, options?: InvokeOptions) => __TAURI_INVOKE<null>("authenticate_user", { reason }, options),
 };
 
 /* Types */
@@ -328,6 +338,25 @@ export type SortSpec = {
 };
 
 export type SslMode = "disable" | "prefer" | "require" | "verify-ca" | "verify-full";
+
+/**  One statement of a script and what it does. */
+export type StatementClass = {
+	range: TextRange,
+	kind: StatementKind,
+	/**  The first word in capitals, or two for `SELECT INTO` and `COPY FROM`. */
+	command: string,
+	/**  It could make a read-only session writable again. */
+	unlocksWrites: boolean,
+};
+
+/**  What a statement does, for the safe modes (ANG-25). */
+export type StatementKind = 
+/**  Reads, or only changes the session. */
+"read" | 
+/**  Changes data. */
+"write" | 
+/**  Changes the schema or permissions. */
+"schema";
 
 export type StatementOutcome = 
 /**  The statement returned rows (possibly none): a `SELECT`, `RETURNING`, `SHOW`, … */

@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { RowCount } from "@/bindings";
-import { useConnections } from "@/features/connections/useConnections";
 import { Button } from "@/components/ui/button";
 import type { ColumnLayout } from "@/features/grid/columns";
 import { DataGrid, type GridEditing } from "@/features/grid/DataGrid";
 import { PendingBar, ReadOnlyBanner } from "@/features/grid/editing/Banners";
+import { useWriteApproval } from "@/features/safety/approval";
 import { useChangesStore, useTabChanges } from "@/features/grid/editing/changeStore";
 import {
   EMPTY_CHANGES,
   addNewRow,
+  describePending,
   duplicateValues,
   isDeleted,
   keyOf,
@@ -97,8 +98,7 @@ export function TableView({ connectionId, tab }: { connectionId: string; tab: Ta
   // Staged edits (ANG-22). A table can be edited when its rows can be told apart and the
   // connection allows writes; otherwise the reason is shown instead.
   const changes = useTabChanges(tab.id);
-  const { data: connections = [] } = useConnections();
-  const safeMode = connections.find((c) => c.id === connectionId)?.safeMode;
+  const { mode: safeMode, name: connectionName, approve } = useWriteApproval(connectionId);
   const readOnlyReason =
     safeMode === "read-only"
       ? "This connection is read-only (safe mode)."
@@ -195,10 +195,38 @@ export function TableView({ connectionId, tab }: { connectionId: string; tab: Ta
 
   // A new edit makes the last failure moot.
   const { mutate: commitNow, reset: resetCommit, isPending: committing } = commit;
+
   const committingRef = useRef(false);
   useEffect(() => {
     committingRef.current = committing;
   });
+
+  // Saving asks first when the connection's safe mode says so (ANG-25). A refused Touch ID
+  // (not a cancelled one) is shown like a failed save, until the next edit.
+  const [approval, setApproval] = useState<{ changes: typeof changes; error: unknown } | null>(
+    null,
+  );
+  const approving = useRef(false);
+  const requestCommit = useCallback(async () => {
+    const staged = useChangesStore.getState().byTab[tab.id] ?? EMPTY_CHANGES;
+    const pendingNow = summarize(staged);
+    if (pendingNow.total === 0 || approving.current || committingRef.current) return;
+    approving.current = true;
+    setApproval(null);
+    try {
+      const approved = await approve({
+        title: `Save changes to ${connectionName}?`,
+        lines: [describePending(pendingNow), `in ${tab.schema}.${tab.name}`],
+        reason: `save changes to ${connectionName}`,
+      });
+      if (approved) commitNow();
+    } catch (error) {
+      setApproval({ changes: staged, error });
+    } finally {
+      approving.current = false;
+    }
+  }, [approve, commitNow, connectionName, tab.id, tab.schema, tab.name]);
+
   useEffect(() => {
     // Not while writing: the write itself drops the staged edits when it is done.
     if (!committingRef.current) resetCommit();
@@ -217,7 +245,7 @@ export function TableView({ connectionId, tab }: { connectionId: string; tab: Ta
         // An open cell editor holds an edit that isn't staged yet: closing it stages it.
         const active = document.activeElement;
         if (active instanceof HTMLElement && active.closest("[data-cell-editor]")) active.blur();
-        if (staged() > 0 && !committing) commitNow();
+        if (staged() > 0 && !committing) void requestCommit();
       } else if (e.code === "KeyP" && e.shiftKey) {
         e.preventDefault();
         if (staged() > 0) setPreviewOpen(true);
@@ -229,7 +257,7 @@ export function TableView({ connectionId, tab }: { connectionId: string; tab: Ta
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [tab.id, committing, commitNow]);
+  }, [tab.id, committing, requestCommit]);
 
   // ⌘I adds a row at the top.
   const addRow = editing?.onAddRow;
@@ -375,9 +403,9 @@ export function TableView({ connectionId, tab }: { connectionId: string; tab: Ta
         <PendingBar
           summary={summary}
           committing={committing}
-          error={commit.error}
+          error={commit.error ?? (approval?.changes === changes ? approval.error : null)}
           onPreview={() => setPreviewOpen(true)}
-          onCommit={() => commitNow()}
+          onCommit={() => void requestCommit()}
           onDiscard={() => {
             useChangesStore.getState().discard(tab.id);
             setPreviewOpen(false);
@@ -393,7 +421,7 @@ export function TableView({ connectionId, tab }: { connectionId: string; tab: Ta
         table={tab.name}
         changes={tableChanges}
         committing={committing}
-        onCommit={() => commitNow()}
+        onCommit={() => void requestCommit()}
       />
     </div>
   );

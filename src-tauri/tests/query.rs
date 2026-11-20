@@ -351,6 +351,66 @@ async fn read_only_connections_refuse_writes_in_the_sql_tab() {
 }
 
 #[tokio::test]
+async fn a_read_only_connection_cannot_be_unlocked_from_the_sql_tab() {
+    if open_or_skip().await.is_none() {
+        return;
+    }
+    let mut config = dev_config();
+    config.safe_mode = SafeMode::ReadOnly;
+    let session = Session::open(config, Some(DEV_PASSWORD)).await.unwrap();
+
+    // Each way of switching the setting off is refused before it is sent, and ends the script.
+    for unlock in [
+        "SET default_transaction_read_only = off",
+        "BEGIN READ WRITE",
+        "RESET ALL",
+        "SELECT set_config('default_transaction_read_only', 'off', false)",
+        "DO $$ BEGIN PERFORM 1; END $$",
+    ] {
+        let result = run(
+            &session,
+            "ro-unlock",
+            &format!("SELECT 1; {unlock}; SELECT 3"),
+        )
+        .await;
+        assert_eq!(result.statements.len(), 2, "{unlock}");
+        let StatementOutcome::Error { error, .. } = &result.statements[1].outcome else {
+            panic!("{unlock}: {:?}", result.statements[1].outcome);
+        };
+        assert_eq!(error.code, "VALIDATION", "{unlock}");
+        assert!(error.message.contains("read-only"), "{}", error.message);
+    }
+
+    // The session was never unlocked: a write is still refused by the server.
+    let result = run(
+        &session,
+        "ro-unlock",
+        "INSERT INTO public.short_codes (code, label) VALUES ('ZZ', 'x')",
+    )
+    .await;
+    let StatementOutcome::Error { error, .. } = &result.statements[0].outcome else {
+        panic!("{:?}", result.statements[0].outcome);
+    };
+    assert_eq!(error.pg_code.as_deref(), Some("25006"));
+
+    // Reading the setting is fine, and an ordinary connection may change it.
+    let shown = run(&session, "ro-unlock", "SHOW default_transaction_read_only").await;
+    assert_eq!(rows_of(&shown, 0)[0][0].as_deref(), Some("on"));
+    let open = Session::open(dev_config(), Some(DEV_PASSWORD))
+        .await
+        .unwrap();
+    let result = run(&open, "rw", "SET default_transaction_read_only = off").await;
+    assert!(
+        matches!(
+            result.statements[0].outcome,
+            StatementOutcome::Command { .. }
+        ),
+        "{:?}",
+        result.statements[0].outcome
+    );
+}
+
+#[tokio::test]
 async fn a_dead_tab_connection_is_replaced_on_the_next_run() {
     let Some(session) = open_or_skip().await else {
         return;

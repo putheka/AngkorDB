@@ -5,12 +5,14 @@
 //! - `url`     — parse `postgres://` URLs into connection form fields
 //! - `introspect` — databases, schemas, objects, columns and row identity from `pg_catalog`
 //! - `changes` — apply staged edits in one transaction, or show the SQL they would run
+//! - `classify` — tell reads from writes, and find statements that unlock a read-only session
 //! - `rows`   — page, sort, filter and count the rows of a table
 //! - `script` — split SQL text into statements
 //! - `query`  — run a script on a tab's own connection
 //! - `session` — one open connection: metadata pool + dedicated client per query tab
 
 pub mod changes;
+pub mod classify;
 pub mod config;
 pub mod introspect;
 pub mod query;

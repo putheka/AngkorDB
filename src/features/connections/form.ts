@@ -52,11 +52,20 @@ export const SSL_MODES: { value: SslMode; label: string }[] = [
   { value: "verify-full", label: "Verify full" },
 ];
 
-/** Confirm and Touch ID arrive with ANG-25; offering them now would protect nothing. */
 export const SAFE_MODES: { value: SafeMode; label: string }[] = [
   { value: "off", label: "Off: reads and writes" },
+  { value: "confirm", label: "Confirm: ask before saving or running changes" },
+  { value: "touch-id", label: "Touch ID: ask for Touch ID or your Mac password" },
   { value: "read-only", label: "Read-only: the server refuses writes" },
 ];
+
+/**
+ * What changes when a color is picked: red (production) starts on Confirm, unless a safe mode
+ * was already chosen. Picking another color never takes a safe mode away.
+ */
+export function colorPatch(form: ConnectionForm, color: ColorTag): Partial<ConnectionForm> {
+  return color === "red" && form.safeMode === "off" ? { color, safeMode: "confirm" } : { color };
+}
 
 export const COLOR_TAGS: { value: ColorTag; label: string }[] = [
   { value: "none", label: "No color" },

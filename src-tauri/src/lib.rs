@@ -7,6 +7,7 @@
 //! - `state`    — global `AppState` managed by Tauri
 //! - `error`    — `AppError`, serialized to `{ code, message, ... }` for the UI
 
+pub mod auth;
 pub mod commands;
 pub mod db;
 pub mod error;
@@ -59,6 +60,8 @@ pub fn specta_builder<R: tauri::Runtime>() -> Builder<R> {
             commands::query::cancel_query,
             commands::query::close_query_tab,
             commands::query::statement_at,
+            commands::safety::classify_sql,
+            commands::safety::authenticate_user,
         ])
         .typ::<error::AppErrorPayload>()
         .typ::<models::connection::ConnectionConfig>()

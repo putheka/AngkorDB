@@ -24,6 +24,7 @@ import {
 import {
   applyParsedUrl,
   COLOR_TAGS,
+  colorPatch,
   CONNECTION_URL_PATTERN,
   emptyForm,
   formFromConnection,
@@ -280,7 +281,7 @@ function ConnectionFormBody({ connection, groups, onClose }: ConnectionDialogPro
           </datalist>
         </Field>
         <Field label="Color" className="col-span-3">
-          <ColorPicker value={form.color} onChange={(color) => update({ color })} />
+          <ColorPicker value={form.color} onChange={(color) => update(colorPatch(form, color))} />
         </Field>
 
         <Field label="Safe mode" htmlFor="conn-safe" className="col-span-6">

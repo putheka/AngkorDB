@@ -5,4 +5,5 @@ pub mod changes;
 pub mod connections;
 pub mod query;
 pub mod rows;
+pub mod safety;
 pub mod schema;

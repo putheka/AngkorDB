@@ -628,6 +628,26 @@ fn statement_at_needs_no_connection() {
 }
 
 #[test]
+fn classify_sql_needs_no_connection_and_reports_utf16_ranges() {
+    let ipc = setup();
+    let sql = "SELECT 'ក😀';\nDELETE FROM t;\nCREATE TABLE x (i int); SET default_transaction_read_only = off";
+    assert_eq!(
+        ipc.call("classify_sql", json!({ "sql": sql })).unwrap(),
+        json!([
+            { "range": { "start": 0, "end": 12 }, "kind": "read", "command": "SELECT", "unlocksWrites": false },
+            { "range": { "start": 14, "end": 27 }, "kind": "write", "command": "DELETE", "unlocksWrites": false },
+            { "range": { "start": 29, "end": 51 }, "kind": "schema", "command": "CREATE", "unlocksWrites": false },
+            { "range": { "start": 53, "end": 92 }, "kind": "read", "command": "SET", "unlocksWrites": true },
+        ])
+    );
+    assert_eq!(
+        ipc.call("classify_sql", json!({ "sql": "  -- only a comment" }))
+            .unwrap(),
+        json!([])
+    );
+}
+
+#[test]
 fn run_query_through_ipc() {
     if !dev_db_available() {
         return;

@@ -1,11 +1,31 @@
 import { useQuery } from "@tanstack/react-query";
 
+import type { SafeMode } from "@/bindings";
 import { ColorDot } from "@/features/connections/ColorDot";
+import { SAFE_MODE_INFO } from "@/features/connections/safeMode";
 import { useConnections } from "@/features/connections/useConnections";
 import { formatDuration, formatRowCount } from "@/lib/format";
 import { commands } from "@/lib/ipc";
 import { useSessionStore } from "@/stores/session";
 import { useStatusStore } from "@/stores/status";
+
+/** What the connection does about writes. Quiet when it allows them. */
+function SafeModeLabel({ mode }: { mode: SafeMode }) {
+  const { icon: Icon, label } = SAFE_MODE_INFO[mode];
+  return (
+    <span
+      title={`Safe mode: ${label}`}
+      className={
+        mode === "off"
+          ? "flex shrink-0 items-center gap-1 pl-2 opacity-60"
+          : "flex shrink-0 items-center gap-1 pl-2 font-medium text-foreground"
+      }
+    >
+      <Icon className="size-3" />
+      {label}
+    </span>
+  );
+}
 
 /** Left: open connection. Right: rows and timing of the tab in front, then the app version. */
 export function StatusBar() {
@@ -25,6 +45,7 @@ export function StatusBar() {
           <span className="truncate">
             {active.name} · PostgreSQL {serverVersion}
           </span>
+          <SafeModeLabel mode={active.safeMode} />
         </span>
       ) : (
         <span>Not connected</span>

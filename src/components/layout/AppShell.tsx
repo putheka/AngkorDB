@@ -12,6 +12,7 @@ import { refreshSchema } from "@/features/sidebar/useSchema";
 import { ConnectedView } from "@/features/connections/ConnectedView";
 import { WelcomeScreen } from "@/features/connections/WelcomeScreen";
 import { CommandPalette } from "@/features/palette/CommandPalette";
+import { WriteApprovalDialog } from "@/features/safety/WriteApprovalDialog";
 import { useLayoutStore } from "@/stores/layout";
 import { usePaletteStore } from "@/stores/palette";
 import { useSessionStore } from "@/stores/session";
@@ -90,6 +91,7 @@ export function AppShell() {
       </div>
 
       {activeId && <CommandPalette connectionId={activeId} />}
+      <WriteApprovalDialog />
       <StatusBar />
     </div>
   );

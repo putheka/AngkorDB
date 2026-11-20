@@ -52,3 +52,27 @@ pub struct QueryRun {
     pub statements: Vec<StatementResult>,
     pub duration_ms: u32,
 }
+
+/// What a statement does, for the safe modes (ANG-25).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub enum StatementKind {
+    /// Reads, or only changes the session.
+    Read,
+    /// Changes data.
+    Write,
+    /// Changes the schema or permissions.
+    Schema,
+}
+
+/// One statement of a script and what it does.
+#[derive(Debug, Clone, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct StatementClass {
+    pub range: TextRange,
+    pub kind: StatementKind,
+    /// The first word in capitals, or two for `SELECT INTO` and `COPY FROM`.
+    pub command: String,
+    /// It could make a read-only session writable again.
+    pub unlocks_writes: bool,
+}

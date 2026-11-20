@@ -4,7 +4,13 @@
  * `SELECT g FROM generate_series(1, 25000) g`, `SELECT pg_sleep(5)`, INSERT/UPDATE/DELETE and
  * DDL give plausible results; anything else is a syntax error at its first word.
  */
-import type { QueryRun, StatementOutcome, StatementResult, TextRange } from "@/bindings";
+import type {
+  QueryRun,
+  StatementClass,
+  StatementOutcome,
+  StatementResult,
+  TextRange,
+} from "@/bindings";
 import { mockTableData } from "@/dev/mockRows";
 import { appError, sleep, type Handler } from "@/dev/mockSupport";
 
@@ -224,6 +230,28 @@ function rowsOf(
   };
 }
 
+const WRITES = ["INSERT", "UPDATE", "DELETE", "TRUNCATE", "MERGE", "CALL", "DO", "REFRESH"];
+const SCHEMA_CHANGES = ["CREATE", "ALTER", "DROP", "GRANT", "REVOKE", "COMMENT", "VACUUM"];
+
+/** The first word decides; the real classifier (Rust) looks deeper, e.g. into CTEs. */
+function classifyStatement(sql: string, span: Span): StatementClass {
+  const text = sql.slice(span.start, span.end);
+  const command = (
+    /^(?:\s|--[^\n]*\n?|\/\*[\s\S]*?\*\/)*([A-Za-z]+)/.exec(text)?.[1] ?? ""
+  ).toUpperCase();
+  const kind = WRITES.includes(command)
+    ? "write"
+    : SCHEMA_CHANGES.includes(command)
+      ? "schema"
+      : "read";
+  return {
+    range: { start: span.start, end: span.end },
+    kind,
+    command,
+    unlocksWrites: /default_transaction_read_only|read\s+write/i.test(text),
+  };
+}
+
 export function createQueryHandlers(requireOpen: (id: string) => void): Record<string, Handler> {
   return {
     run_query: async (args): Promise<QueryRun> => {
@@ -263,5 +291,16 @@ export function createQueryHandlers(requireOpen: (id: string) => void): Record<s
     },
 
     statement_at: (args) => statementAt(String(args["sql"]), Number(args["cursor"])),
+
+    classify_sql: (args): StatementClass[] => {
+      const sql = String(args["sql"]);
+      return splitStatements(sql).map((span) => classifyStatement(sql, span));
+    },
+
+    // The real one shows the macOS Touch ID sheet; here the answer comes after a moment.
+    authenticate_user: async () => {
+      await sleep(500);
+      return null;
+    },
   };
 }

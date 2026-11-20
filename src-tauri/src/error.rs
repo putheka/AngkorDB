@@ -45,6 +45,14 @@ pub enum AppError {
     #[error("{0}")]
     Conflict(String),
 
+    /// The person decided not to go on (closed the Touch ID prompt, say). Not a failure.
+    #[error("{0}")]
+    Cancelled(String),
+
+    /// Touch ID or the Mac password could not be checked.
+    #[error("{0}")]
+    Auth(String),
+
     /// One change of a batch failed, so the whole batch was rolled back (ANG-23).
     #[error("{what}: {source}")]
     Change {
@@ -70,6 +78,8 @@ impl AppError {
             Self::Keychain(_) => "KEYCHAIN",
             Self::Internal(_) => "INTERNAL",
             Self::Conflict(_) => "CONFLICT",
+            Self::Cancelled(_) => "CANCELLED",
+            Self::Auth(_) => "AUTH_FAILED",
             Self::Change { .. } => "CHANGE_FAILED",
         }
     }

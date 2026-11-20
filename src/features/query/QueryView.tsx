@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState, type PointerEvent } from "rea
 
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useWriteApproval } from "@/features/safety/approval";
 import { nextRunId, useQueryView, useQueryViews } from "@/features/query/queryViews";
 import { ResultsPane } from "@/features/query/ResultsPane";
 import { SqlEditor, type RunMode, type SqlEditorHandle } from "@/features/query/SqlEditor";
@@ -29,9 +30,35 @@ export function QueryView({ connectionId, tab }: { connectionId: string; tab: Qu
   const container = useRef<HTMLDivElement>(null);
   const drag = useRef<{ startY: number; startHeight: number } | null>(null);
 
+  const { mode: safeMode, name: connectionName, approve } = useWriteApproval(connectionId);
+
   const run = useCallback(
     async (sql: string, base: number) => {
       if (useQueryViews.getState().views[tab.id]?.running) return;
+
+      // Confirm and Touch ID modes ask first when something in the script changes data or schema.
+      if (safeMode === "confirm" || safeMode === "touch-id") {
+        try {
+          const changing = (await commands.classifySql(sql)).filter((s) => s.kind !== "read");
+          if (changing.length > 0) {
+            const shown = changing.slice(0, 5).map((s) => {
+              const text = sql.slice(s.range.start, s.range.end).replace(/\s+/g, " ");
+              return `${text.length > 80 ? `${text.slice(0, 80)}…` : text}`;
+            });
+            const more = changing.length - shown.length;
+            const ok = await approve({
+              title: `Run ${changing.length === 1 ? "a statement" : `${changing.length} statements`} that change ${connectionName}?`,
+              lines: more > 0 ? [...shown, `and ${more} more`] : shown,
+              reason: `run SQL that changes ${connectionName}`,
+            });
+            if (!ok) return;
+          }
+        } catch (error) {
+          update({ runError: errorMessage(error) });
+          return;
+        }
+      }
+
       update({ running: true, startedAt: Date.now(), runError: null });
       try {
         const result = await commands.runQuery(connectionId, tab.id, sql);
@@ -49,7 +76,7 @@ export function QueryView({ connectionId, tab }: { connectionId: string; tab: Qu
         update({ running: false, startedAt: null, runError: errorMessage(error) });
       }
     },
-    [connectionId, tab.id, update],
+    [connectionId, tab.id, update, safeMode, connectionName, approve],
   );
 
   const onRun = useCallback(

@@ -1,4 +1,4 @@
-import { CopyIcon, Loader2Icon, LockIcon, PencilIcon, PlugIcon, Trash2Icon } from "lucide-react";
+import { CopyIcon, Loader2Icon, PencilIcon, PlugIcon, Trash2Icon } from "lucide-react";
 
 import type { ConnectionConfig } from "@/bindings";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/context-menu";
 import { ColorDot } from "@/features/connections/ColorDot";
 import { describeConnection } from "@/features/connections/form";
+import { SAFE_MODE_INFO } from "@/features/connections/safeMode";
 import { cn } from "@/lib/utils";
 
 interface ConnectionRowProps {
@@ -24,6 +25,11 @@ interface ConnectionRowProps {
   onEdit: () => void;
   onDuplicate: () => void;
   onDelete: () => void;
+}
+
+function SafeModeIcon({ mode }: { mode: ConnectionConfig["safeMode"] }) {
+  const { icon: Icon, label } = SAFE_MODE_INFO[mode];
+  return <Icon className="size-3.5 text-muted-foreground" aria-label={label} />;
 }
 
 export function ConnectionRow(props: ConnectionRowProps) {
@@ -58,9 +64,7 @@ export function ConnectionRow(props: ConnectionRowProps) {
                 {describeConnection(connection)}
               </span>
             </span>
-            {connection.safeMode === "read-only" && (
-              <LockIcon className="size-3.5 text-muted-foreground" aria-label="Read-only" />
-            )}
+            {connection.safeMode !== "off" && <SafeModeIcon mode={connection.safeMode} />}
             {connecting && <Loader2Icon className="size-4 animate-spin text-muted-foreground" />}
           </button>
           <Button
