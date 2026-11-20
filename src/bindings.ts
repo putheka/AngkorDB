@@ -45,6 +45,20 @@ export const commands = {
 	 *  false (instant); otherwise `count(*)`, which scans the table.
 	 */
 	countRows: (connectionId: string, schema: string, table: string, filters: Filter[], rawWhere: string | null, exact: boolean, options?: InvokeOptions) => __TAURI_INVOKE<RowCount>("count_rows", { connectionId, schema, table, filters, rawWhere, exact }, options),
+	/**
+	 *  Run the statements of `sql` one after another on the query tab's own connection. A
+	 *  statement that fails ends the run and is reported as the last result.
+	 */
+	runQuery: (connectionId: string, tabId: string, sql: string, options?: InvokeOptions) => __TAURI_INVOKE<QueryRun>("run_query", { connectionId, tabId, sql }, options),
+	/**  Ask the server to stop what the tab is running. `false` if the tab has no connection yet. */
+	cancelQuery: (connectionId: string, tabId: string, options?: InvokeOptions) => __TAURI_INVOKE<boolean>("cancel_query", { connectionId, tabId }, options),
+	/**  Close the tab's connection. Nothing to do if the connection is already gone. */
+	closeQueryTab: (connectionId: string, tabId: string, options?: InvokeOptions) => __TAURI_INVOKE<null>("close_query_tab", { connectionId, tabId }, options),
+	/**
+	 *  The statement of `sql` that `cursor` (a UTF-16 offset) is in, or `None` if the text holds
+	 *  none. Used for "run the current statement"; no connection needed.
+	 */
+	statementAt: (sql: string, cursor: number, options?: InvokeOptions) => __TAURI_INVOKE<TextRange | null>("statement_at", { sql, cursor }, options),
 };
 
 /* Types */
@@ -186,6 +200,15 @@ export type PasswordChange =
 /**  Remove the saved password. */
 { kind: "clear" };
 
+/**
+ *  The result of running a script: one entry per statement that was run. After a statement
+ *  fails, the ones behind it are not run, so the last entry is the error.
+ */
+export type QueryRun = {
+	statements: StatementResult[],
+	durationMs: number,
+};
+
 export type ResultColumn = {
 	name: string,
 	typeOid: number,
@@ -258,6 +281,28 @@ export type SortSpec = {
 
 export type SslMode = "disable" | "prefer" | "require" | "verify-ca" | "verify-full";
 
+export type StatementOutcome = 
+/**  The statement returned rows (possibly none): a `SELECT`, `RETURNING`, `SHOW`, … */
+{ kind: "rows"; columns: ResultColumn[]; 
+/**  Every cell as text, `None` for SQL `NULL`. Booleans are `true` / `false`. */
+rows: ((string | null)[])[]; 
+/**  More rows existed than the cap; the rest were not read. */
+truncated: boolean } | 
+/**  `INSERT`, `UPDATE`, DDL, … `command` is its first word in capitals. */
+{ kind: "command"; command: string; affected: number } | { kind: "error"; error: AppError; 
+/**
+ *  Where the server pointed, as an offset into the submitted text. `None` when it
+ *  named no position.
+ */
+offset: number | null };
+
+export type StatementResult = {
+	/**  The statement within the submitted text. */
+	range: TextRange,
+	durationMs: number,
+	outcome: StatementOutcome,
+};
+
 export type TableDescription = {
 	schema: string,
 	name: string,
@@ -265,4 +310,13 @@ export type TableDescription = {
 	comment: string | null,
 	columns: ColumnInfo[],
 	identity: RowIdentity,
+};
+
+/**
+ *  A stretch of the submitted text. Offsets count UTF-16 code units, which is what the
+ *  editor in the UI counts, so they can be used as editor positions without conversion.
+ */
+export type TextRange = {
+	start: number,
+	end: number,
 };

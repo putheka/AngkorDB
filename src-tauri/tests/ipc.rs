@@ -360,6 +360,14 @@ fn schema_commands_need_an_open_connection() {
             json!({ "connectionId": "nope", "schema": "public", "table": "t",
                     "filters": [], "rawWhere": null, "exact": false }),
         ),
+        (
+            "run_query",
+            json!({ "connectionId": "nope", "tabId": "query:1", "sql": "SELECT 1" }),
+        ),
+        (
+            "cancel_query",
+            json!({ "connectionId": "nope", "tabId": "query:1" }),
+        ),
     ] {
         let err = ipc.call(cmd, args).unwrap_err();
         assert_eq!(err["code"], "NOT_CONNECTED", "{cmd}: {err}");
@@ -549,4 +557,124 @@ fn fetch_and_count_rows_through_ipc() {
         )
         .unwrap_err();
     assert_eq!(err["code"], "VALIDATION");
+}
+
+#[test]
+fn statement_at_needs_no_connection() {
+    let ipc = setup();
+    let sql = "SELECT 'ក😀';\nSELECT 2;";
+    // Cursor in the second statement. Offsets are UTF-16 units: 😀 counts twice.
+    let range = ipc
+        .call("statement_at", json!({ "sql": sql, "cursor": 18 }))
+        .unwrap();
+    assert_eq!(range, json!({ "start": 14, "end": 22 }));
+    assert_eq!(
+        ipc.call("statement_at", json!({ "sql": "-- nothing", "cursor": 0 }))
+            .unwrap(),
+        json!(null)
+    );
+    // Closing the tab of a connection that isn't open is not an error.
+    assert_eq!(
+        ipc.call(
+            "close_query_tab",
+            json!({ "connectionId": "nope", "tabId": "query:1" })
+        )
+        .unwrap(),
+        json!(null)
+    );
+}
+
+#[test]
+fn run_query_through_ipc() {
+    if !dev_db_available() {
+        return;
+    }
+    let ipc = setup();
+    let mut form = config("Dev", "localhost", 54329);
+    form["user"] = json!("angkor");
+    form["database"] = json!("angkordb_dev");
+    let saved = ipc
+        .call(
+            "save_connection",
+            json!({ "config": form, "password": { "kind": "set", "value": "angkor" } }),
+        )
+        .unwrap();
+    let id = saved["id"].as_str().unwrap();
+    ipc.call("connect_connection", json!({ "id": id })).unwrap();
+
+    let run = ipc
+        .call(
+            "run_query",
+            json!({ "connectionId": id, "tabId": "query:1",
+                    "sql": "SELECT 1 AS one, true AS yes, NULL::text AS nothing; UPDATE public.short_codes SET label = label WHERE false; SELEC 3" }),
+        )
+        .unwrap();
+
+    // The exact shape the editor reads.
+    let statements = run["statements"].as_array().unwrap();
+    assert_eq!(statements.len(), 3);
+    assert!(run["durationMs"].is_u64());
+
+    assert_eq!(statements[0]["range"], json!({ "start": 0, "end": 51 }));
+    assert!(statements[0]["durationMs"].is_u64());
+    assert_eq!(
+        statements[0]["outcome"],
+        json!({
+            "kind": "rows",
+            "columns": [
+                { "name": "one", "typeOid": 23, "typeName": "int4" },
+                { "name": "yes", "typeOid": 16, "typeName": "bool" },
+                { "name": "nothing", "typeOid": 25, "typeName": "text" },
+            ],
+            "rows": [["1", "true", null]],
+            "truncated": false,
+        })
+    );
+    assert_eq!(
+        statements[1]["outcome"],
+        json!({ "kind": "command", "command": "UPDATE", "affected": 0 })
+    );
+    let failed = &statements[2]["outcome"];
+    assert_eq!(failed["kind"], "error");
+    assert_eq!(failed["error"]["code"], "POSTGRES");
+    assert_eq!(failed["error"]["pgCode"], "42601");
+    assert!(
+        failed["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("syntax error")
+    );
+    assert!(failed["error"]["detail"].is_null());
+    assert!(failed["offset"].is_u64());
+
+    // Nothing is running on the tab, but it has a connection now.
+    assert_eq!(
+        ipc.call(
+            "cancel_query",
+            json!({ "connectionId": id, "tabId": "query:1" })
+        )
+        .unwrap(),
+        json!(true)
+    );
+    assert_eq!(
+        ipc.call(
+            "cancel_query",
+            json!({ "connectionId": id, "tabId": "never-ran" })
+        )
+        .unwrap(),
+        json!(false)
+    );
+    ipc.call(
+        "close_query_tab",
+        json!({ "connectionId": id, "tabId": "query:1" }),
+    )
+    .unwrap();
+    assert_eq!(
+        ipc.call(
+            "cancel_query",
+            json!({ "connectionId": id, "tabId": "query:1" })
+        )
+        .unwrap(),
+        json!(false)
+    );
 }

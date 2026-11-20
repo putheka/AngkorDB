@@ -174,6 +174,15 @@ function sorted(desc: TableDescription, rows: Row[], sort: SortSpec[]): Row[] {
   });
 }
 
+/** The columns and first `limit` rows of a table, for the mock SQL tab's `SELECT * FROM table`. */
+export function mockTableData(schema: string, table: string, limit: number) {
+  const desc = mockDescribeTable(schema, table);
+  return {
+    columns: desc.columns.map((c) => ({ name: c.name, typeOid: c.typeOid, typeName: c.typeName })),
+    rows: tableRows(desc).slice(0, limit),
+  };
+}
+
 export function createRowHandlers(requireOpen: (id: string) => void): Record<string, Handler> {
   return {
     fetch_rows: (args): RowPage => {

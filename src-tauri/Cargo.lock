@@ -53,6 +53,7 @@ version = "0.1.0"
 dependencies = [
  "apple-native-keyring-store",
  "deadpool-postgres",
+ "futures-util",
  "keyring-core",
  "percent-encoding",
  "rustls",

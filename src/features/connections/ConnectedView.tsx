@@ -1,10 +1,11 @@
-import { SquareTerminalIcon, TableIcon } from "lucide-react";
+import { TableIcon } from "lucide-react";
 
 import { TableView } from "@/features/grid/TableView";
+import { QueryView } from "@/features/query/QueryView";
 import { useSessionStore } from "@/stores/session";
-import { tabTitle, useTabsStore } from "@/stores/tabs";
+import { useTabsStore } from "@/stores/tabs";
 
-/** The main pane: whatever the front tab shows. The SQL editor (ANG-20) replaces the query placeholder. */
+/** The main pane: whatever the front tab shows. */
 export function ConnectedView() {
   const tab = useTabsStore((s) => s.tabs.find((t) => t.id === s.activeId));
   const connectionId = useSessionStore((s) => s.activeConnectionId);
@@ -21,17 +22,17 @@ export function ConnectedView() {
     );
   }
 
+  if (!connectionId) return null;
+
   if (tab.kind === "query") {
+    // Keyed by tab: each query tab has its own editor, and its text is kept while it is hidden.
     return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-2 text-center text-muted-foreground">
-        <SquareTerminalIcon className="size-8 opacity-40" />
-        <p className="text-sm font-medium text-foreground">{tabTitle(tab)}</p>
-        <p className="text-xs">The SQL editor comes soon.</p>
+      <div className="min-h-0 flex-1">
+        <QueryView key={tab.id} connectionId={connectionId} tab={tab} />
       </div>
     );
   }
 
-  if (!connectionId) return null;
   // Keyed by tab: switching tabs gives each table its own sort, page and columns.
   return (
     <div className="min-h-0 flex-1">

@@ -38,6 +38,12 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
+  /* SQL editor syntax colors */
+  --sql-keyword: oklch(0.45 0.2 290);
+  --sql-string: oklch(0.5 0.13 150);
+  --sql-number: oklch(0.52 0.16 55);
+  --sql-type: oklch(0.5 0.12 210);
+  --sql-comment: oklch(0.6 0 0);
 }
 
 html,
@@ -123,6 +129,11 @@ body,
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
+  --sql-keyword: oklch(0.75 0.14 300);
+  --sql-string: oklch(0.78 0.12 150);
+  --sql-number: oklch(0.8 0.12 65);
+  --sql-type: oklch(0.78 0.1 210);
+  --sql-comment: oklch(0.6 0 0);
 }
 
 @layer base {
@@ -136,4 +147,11 @@ body,
   html {
     @apply font-sans;
   }
+}
+
+/* The page is `select-none`; the SQL editor must let people select and copy their text. */
+.cm-editor,
+.cm-editor .cm-content {
+  -webkit-user-select: text;
+  user-select: text;
 }

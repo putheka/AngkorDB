@@ -2,5 +2,6 @@
 
 pub mod app;
 pub mod connections;
+pub mod query;
 pub mod rows;
 pub mod schema;

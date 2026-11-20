@@ -11,6 +11,7 @@ import type {
   SslMode,
 } from "@/bindings";
 
+import { createQueryHandlers } from "@/dev/mockQuery";
 import { createRowHandlers } from "@/dev/mockRows";
 import { createSchemaHandlers } from "@/dev/mockSchema";
 import { appError, sleep, type Handler } from "@/dev/mockSupport";
@@ -191,6 +192,7 @@ const handlers: Record<string, Handler> = {
 
   ...createSchemaHandlers(requireOpen),
   ...createRowHandlers(requireOpen),
+  ...createQueryHandlers(requireOpen),
 };
 
 export function installMockBackend() {
