@@ -3,7 +3,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { RowCount } from "@/bindings";
 import { Button } from "@/components/ui/button";
 import type { ColumnLayout } from "@/features/grid/columns";
-import { DataGrid, type GridEditing } from "@/features/grid/DataGrid";
+import { DataGrid, type GridEditing, type RowTarget } from "@/features/grid/DataGrid";
+import { RowDetailPanel, type DetailRow } from "@/features/grid/detail/RowDetailPanel";
 import { PendingBar, ReadOnlyBanner } from "@/features/grid/editing/Banners";
 import { useWriteApproval } from "@/features/safety/approval";
 import { useChangesStore, useTabChanges } from "@/features/grid/editing/changeStore";
@@ -44,6 +45,7 @@ import {
   useTableRows,
 } from "@/features/grid/useTableData";
 import { errorDetails, errorMessage } from "@/lib/errors";
+import { useLayoutStore } from "@/stores/layout";
 import { useStatusStore } from "@/stores/status";
 import type { TableTab } from "@/stores/tabs";
 
@@ -118,18 +120,21 @@ export function TableView({ connectionId, tab }: { connectionId: string; tab: Ta
   const commit = useCommitChanges(connectionId, tab, () => setPreviewOpen(false));
   // No edits while writing: the staged copy is dropped when the write is done.
   const writing = commit.isPending;
+  /** A cell of this page as it is now: the staged edit, else what the server sent. */
+  const pageValue = useCallback(
+    (row: number, name: string): CellValue => {
+      const at = page?.columns.findIndex((c) => c.name === name) ?? -1;
+      const staged = overrides.get(`${row}:${at}`);
+      if (staged) return staged;
+      const original = page?.rows[row]?.[at] ?? null;
+      return original === null ? { kind: "null" } : { kind: "value", text: original };
+    },
+    [page, overrides],
+  );
   const editing = useMemo<GridEditing | undefined>(() => {
     if (!page || !described.data || readOnlyReason || writing) return undefined;
     const change = useChangesStore.getState().change;
     const columns = described.data.columns;
-    /** A cell of this page as it is now: the staged edit, else what the server sent. */
-    const pageValue = (row: number, name: string): CellValue => {
-      const at = page.columns.findIndex((c) => c.name === name);
-      const staged = overrides.get(`${row}:${at}`);
-      if (staged) return staged;
-      const original = page.rows[row]?.[at] ?? null;
-      return original === null ? { kind: "null" } : { kind: "value", text: original };
-    };
     return {
       connectionId,
       columns,
@@ -188,8 +193,48 @@ export function TableView({ connectionId, tab }: { connectionId: string; tab: Ta
     tab.id,
     changes.inserts,
     deleted,
+    pageValue,
   ]);
   const summary = useMemo(() => summarize(changes), [changes]);
+
+  // The row details panel (Space) shows the row the selected cell is in. `activeRow` counts new
+  // rows first, the way the grid does.
+  const detailOpen = useLayoutStore((s) => s.detailOpen);
+  const toggleDetail = useLayoutStore((s) => s.toggleDetail);
+  const [activeRow, setActiveRow] = useState<number | null>(null);
+  const detail = useMemo<{ key: string; target: RowTarget | null; row: DetailRow | null }>(() => {
+    const none = { key: "none", target: null, row: null };
+    if (!detailOpen || activeRow === null || !page) return none;
+    const created = changes.inserts[activeRow];
+    if (created) {
+      return {
+        key: `new:${created.id}`,
+        target: { kind: "new", id: created.id },
+        row: {
+          title: "New row",
+          status: "new",
+          valueOf: (name) => created.values[name] ?? { kind: "default" },
+          isEdited: (name) => created.values[name] !== undefined,
+        },
+      };
+    }
+    const row = activeRow - changes.inserts.length;
+    if (row < 0 || !page.rows[row]) return none;
+    const ref = refs[row];
+    return {
+      key: ref ? keyOf(ref) : `row:${row}`,
+      target: { kind: "page", row },
+      row: {
+        title: `Row ${offset + 1 + activeRow}`,
+        status: deleted.has(row) ? "deleted" : "normal",
+        valueOf: (name) => pageValue(row, name),
+        isEdited: (name) => {
+          const at = page.columns.findIndex((c) => c.name === name);
+          return overrides.has(`${row}:${at}`);
+        },
+      },
+    };
+  }, [detailOpen, activeRow, page, changes.inserts, refs, offset, deleted, pageValue, overrides]);
   const pending = summary.total;
   const tableChanges = useMemo(() => toTableChanges(changes), [changes]);
 
@@ -356,6 +401,8 @@ export function TableView({ connectionId, tab }: { connectionId: string; tab: Ta
               update({ filter: withValueFilter(filter, column, value), page: 0 })
             }
             {...(editing ? { editing } : {})}
+            onToggleDetail={toggleDetail}
+            onActiveRowChange={setActiveRow}
           />
           {page.rows.length === 0 && (
             <p className="pointer-events-none absolute inset-x-0 top-24 text-center text-sm text-muted-foreground">
@@ -381,6 +428,8 @@ export function TableView({ connectionId, tab }: { connectionId: string; tab: Ta
           filterOpen={filter.open}
           onToggleFilter={filter.open ? closeFilter : openFilter}
           {...(addRow ? { onAddRow: addRow } : {})}
+          detailOpen={detailOpen}
+          onToggleDetail={toggleDetail}
         />
       </>
     );
@@ -412,7 +461,23 @@ export function TableView({ connectionId, tab }: { connectionId: string; tab: Ta
           }}
         />
       )}
-      {body}
+      <div className="flex min-h-0 flex-1">
+        <div className="flex min-w-0 flex-1 flex-col">{body}</div>
+        {detailOpen && page && described.data && (
+          <RowDetailPanel
+            key={detail.key}
+            connectionId={connectionId}
+            columns={described.data.columns}
+            row={detail.row}
+            editable={editing !== undefined}
+            onEdit={(column, value) =>
+              detail.target && editing?.onEdit(detail.target, column, value)
+            }
+            onRevert={(column) => detail.target && editing?.onRevert(detail.target, column)}
+            onClose={toggleDetail}
+          />
+        )}
+      </div>
       <PreviewDialog
         open={previewOpen && pending > 0}
         onOpenChange={setPreviewOpen}

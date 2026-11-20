@@ -3,6 +3,7 @@ import {
   ChevronRightIcon,
   Columns3Icon,
   ListFilterIcon,
+  PanelRightIcon,
   PlusIcon,
   RefreshCwIcon,
 } from "lucide-react";
@@ -54,6 +55,9 @@ export interface GridFooterProps {
   onToggleFilter: () => void;
   /** Add a row at the top (⌘I). Left out when the table can't be edited. */
   onAddRow?: () => void;
+  /** The row details panel on the right (Space). */
+  detailOpen: boolean;
+  onToggleDetail: () => void;
 }
 
 /** `‹ 1–500 of ~1.2M ›`, page size, column visibility and refresh. */
@@ -112,6 +116,21 @@ export function GridFooter(props: GridFooterProps) {
             <TooltipContent>Add a row (⌘I)</TooltipContent>
           </Tooltip>
         )}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant={props.detailOpen ? "secondary" : "ghost"}
+              size="xs"
+              aria-pressed={props.detailOpen}
+              aria-label="Row details"
+              onClick={props.onToggleDetail}
+            >
+              <PanelRightIcon />
+              Details
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Show the selected row as a form (Space)</TooltipContent>
+        </Tooltip>
         <Select value={String(pageSize)} onValueChange={(v) => props.onPageSize(Number(v))}>
           <SelectTrigger size="sm" className="h-6 gap-1 px-2 text-xs" aria-label="Rows per page">
             <SelectValue />

@@ -119,6 +119,10 @@ export interface DataGridProps {
   /** "Filter by this value" in the cell menu. `null` means the cell is NULL. Left out: no item. */
   onFilterByValue?: (column: string, value: string | null) => void;
   editing?: GridEditing;
+  /** Space: show or hide the row detail panel. */
+  onToggleDetail?: () => void;
+  /** The row of the selected cell, as a grid row (new rows come first), or `null`. */
+  onActiveRowChange?: (row: number | null) => void;
 }
 
 /**
@@ -137,6 +141,8 @@ export function DataGrid({
   onSortChange,
   onFilterByValue,
   editing,
+  onToggleDetail,
+  onActiveRowChange,
 }: DataGridProps) {
   const theme = useGridTheme();
   const visible = useMemo(() => visibleColumns(columns, layout), [columns, layout]);
@@ -341,8 +347,16 @@ export function DataGrid({
 
   // Typing on a selected cell starts editing with that key; ⌘⌫ sets NULL.
   const onKeyDown = (e: GridKeyEventArgs) => {
-    if (!editing || editor) return;
+    if (editor) return;
     const command = e.metaKey || e.ctrlKey;
+    // Space shows or hides the row details (instead of opening the cell editor, which Enter does).
+    if (e.key === " " && !command && !e.altKey && !e.shiftKey && onToggleDetail) {
+      e.cancel();
+      e.preventDefault();
+      onToggleDetail();
+      return;
+    }
+    if (!editing) return;
     // Delete marks the selected rows for deletion (again: takes the mark off); ⌘D duplicates them.
     if (!command && !e.altKey && !e.shiftKey && (e.key === "Delete" || e.key === "Backspace")) {
       const targets = selectedRows().flatMap((g) => targetAt(g) ?? []);
@@ -437,7 +451,11 @@ export function DataGrid({
             getRowThemeOverride={getRowTheme}
             {...(drawCell ? { drawCell } : {})}
             gridSelection={selection}
-            onGridSelectionChange={setSelection}
+            onGridSelectionChange={(picked) => {
+              setSelection(picked);
+              const row = picked.current?.cell[1] ?? picked.rows.first();
+              onActiveRowChange?.(row ?? null);
+            }}
             theme={theme}
             headerIcons={HEADER_ICONS}
             rowHeight={ROW_HEIGHT}

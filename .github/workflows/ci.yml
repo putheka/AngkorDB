@@ -33,6 +33,7 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run format:check
+      - run: npm run test:unit
 
   # Rust: fmt, clippy, unit tests, bindings drift test and Postgres integration tests.
   # Linux because service containers need it, and Linux minutes are 10x cheaper than macOS.
