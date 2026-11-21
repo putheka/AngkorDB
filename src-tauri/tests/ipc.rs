@@ -15,7 +15,7 @@ use tauri::test::{
     INVOKE_KEY, MockRuntime, get_ipc_response, mock_builder, mock_context, noop_assets,
 };
 use tauri::webview::InvokeRequest;
-use tauri::{App, WebviewWindow, WebviewWindowBuilder};
+use tauri::{App, Manager, WebviewWindow, WebviewWindowBuilder};
 use tempfile::TempDir;
 
 struct Ipc {
@@ -869,4 +869,47 @@ fn preview_and_apply_changes_through_ipc() {
         json!({ "connectionId": id, "tabId": "query:ipc", "sql": "DROP SCHEMA ang23_ipc CASCADE" }),
     )
     .unwrap();
+}
+
+#[test]
+fn unsaved_changes_are_remembered_and_drive_the_window_hooks() {
+    use angkordb_lib::state::WindowHooks;
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    let ipc = setup();
+    let state = ipc._app.state::<AppState>();
+
+    // Without hooks (as in tests) the commands still work and the count is kept.
+    assert_eq!(state.unsaved_changes(), 0);
+    ipc.call("set_unsaved_changes", json!({ "count": 3 }))
+        .unwrap();
+    assert_eq!(state.unsaved_changes(), 3);
+    ipc.call("quit_app", json!({})).unwrap();
+
+    // With hooks: the edited dot follows "is there anything unsaved", quitting calls the hook.
+    let dots = Arc::new(Mutex::new(Vec::new()));
+    let quits = Arc::new(AtomicU32::new(0));
+    state.set_window_hooks(WindowHooks {
+        set_edited: {
+            let dots = dots.clone();
+            Box::new(move |edited| dots.lock().unwrap().push(edited))
+        },
+        quit: {
+            let quits = quits.clone();
+            Box::new(move || {
+                quits.fetch_add(1, Ordering::SeqCst);
+            })
+        },
+    });
+    for count in [1, 4, 0] {
+        ipc.call("set_unsaved_changes", json!({ "count": count }))
+            .unwrap();
+    }
+    assert_eq!(*dots.lock().unwrap(), [true, true, false]);
+    assert_eq!(state.unsaved_changes(), 0);
+
+    assert_eq!(quits.load(Ordering::SeqCst), 0);
+    ipc.call("quit_app", json!({})).unwrap();
+    assert_eq!(quits.load(Ordering::SeqCst), 1);
 }

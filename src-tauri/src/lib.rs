@@ -11,6 +11,7 @@ pub mod auth;
 pub mod commands;
 pub mod db;
 pub mod error;
+pub mod exit;
 pub mod menu;
 pub mod models;
 pub mod state;
@@ -19,7 +20,7 @@ pub mod storage;
 use std::path::Path;
 
 use specta_typescript::Typescript;
-use state::AppState;
+use state::{AppState, WindowHooks};
 use storage::{ConnectionManager, secrets::default_secret_store};
 use tauri::Manager;
 use tauri_specta::{Builder, collect_commands};
@@ -38,6 +39,8 @@ pub fn specta_builder<R: tauri::Runtime>() -> Builder<R> {
         .disable_serde_phases()
         .commands(collect_commands![
             commands::app::app_info,
+            commands::app::set_unsaved_changes,
+            commands::app::quit_app,
             commands::connections::list_connections,
             commands::connections::save_connection,
             commands::connections::delete_connection,
@@ -91,9 +94,22 @@ pub fn run() {
             let dir = app.path().app_data_dir()?;
             let connections = ConnectionManager::new(&dir, default_secret_store()?);
             app.manage(AppState::new(connections));
+
+            // What commands may not do themselves: touch the window and quit (ANG-29).
+            let window = app.handle().clone();
+            let quitter = app.handle().clone();
+            app.state::<AppState>().set_window_hooks(WindowHooks {
+                set_edited: Box::new(move |edited| {
+                    if let Some(main) = window.get_webview_window("main") {
+                        angkordb_macos_window::set_document_edited(&main, edited);
+                    }
+                }),
+                quit: Box::new(move || quitter.exit(0)),
+            });
             Ok(())
         })
         .invoke_handler(specta.invoke_handler())
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| exit::on_run_event(app, &event));
 }

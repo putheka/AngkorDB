@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ConnectionConfig, PasswordChange } from "@/bindings";
 import { commands } from "@/lib/ipc";
 
-const connectionsKey = ["connections"] as const;
+export const connectionsKey = ["connections"] as const;
 
 export function useConnections() {
   return useQuery({ queryKey: connectionsKey, queryFn: () => commands.listConnections() });

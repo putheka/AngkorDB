@@ -13,6 +13,13 @@ export const commands = {
 	 *  one Tauri runtime (tests call it through the mock runtime).
 	 */
 	appInfo: (options?: InvokeOptions) => __TAURI_INVOKE<AppInfo>("app_info", undefined, options),
+	/**
+	 *  The page says how many tabs have staged edits. While there are any, quitting and closing the
+	 *  window ask the page first, and the window shows the macOS "edited" dot.
+	 */
+	setUnsavedChanges: (count: number, options?: InvokeOptions) => __TAURI_INVOKE<void>("set_unsaved_changes", { count }, options),
+	/**  Quit the app. Called by the page once the person has decided about their unsaved edits. */
+	quitApp: (options?: InvokeOptions) => __TAURI_INVOKE<void>("quit_app", undefined, options),
 	listConnections: (options?: InvokeOptions) => __TAURI_INVOKE<ConnectionConfig[]>("list_connections", undefined, options),
 	/**  Create (empty `config.id`) or update a connection. Returns the saved connection. */
 	saveConnection: (config: ConnectionConfig, password: PasswordChange, options?: InvokeOptions) => __TAURI_INVOKE<ConnectionConfig>("save_connection", { config, password }, options),

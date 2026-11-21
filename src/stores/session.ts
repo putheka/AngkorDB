@@ -2,6 +2,7 @@ import { create } from "zustand";
 
 import type { ConnectionConfig } from "@/bindings";
 import { errorMessage } from "@/lib/errors";
+import { guardUnsaved } from "@/features/grid/editing/unsavedGuard";
 import { commands } from "@/lib/ipc";
 import { queryClient } from "@/lib/queryClient";
 import { useBrowserStore } from "@/stores/browser";
@@ -18,7 +19,8 @@ interface SessionState {
   /** Why the last connect failed. */
   error: string | null;
   connect: (connection: ConnectionConfig) => Promise<void>;
-  disconnect: () => Promise<void>;
+  /** `false` when the person chose to stay because of unsaved edits. */
+  disconnect: () => Promise<boolean>;
   clearError: () => void;
 }
 
@@ -48,6 +50,8 @@ export const useSessionStore = create<SessionState>()((set, get) => ({
 
   disconnect: async () => {
     const id = get().activeConnectionId;
+    // Staged edits are lost with the tabs: ask first.
+    if (!(await guardUnsaved(id, "disconnect"))) return false;
     // Leave the screen first; closing the server side can't fail in a way the user can act on.
     set({ activeConnectionId: null, serverVersion: null });
     useStatusStore.getState().clear();
@@ -59,6 +63,7 @@ export const useSessionStore = create<SessionState>()((set, get) => ({
       queryClient.removeQueries({ queryKey: ["data", id] });
     }
     if (id) await commands.disconnectConnection(id).catch(() => undefined);
+    return true;
   },
 
   clearError: () => set({ error: null }),

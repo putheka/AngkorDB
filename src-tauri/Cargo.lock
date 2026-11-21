@@ -60,6 +60,7 @@ dependencies = [
 name = "angkordb"
 version = "0.1.0"
 dependencies = [
+ "angkordb-macos-window",
  "apple-native-keyring-store",
  "deadpool-postgres",
  "futures-util",
@@ -83,6 +84,14 @@ dependencies = [
  "tokio-postgres-rustls",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "angkordb-macos-window"
+version = "0.1.0"
+dependencies = [
+ "objc2-app-kit",
+ "tauri",
 ]
 
 [[package]]

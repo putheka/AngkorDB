@@ -291,7 +291,9 @@ function CommandResults({
         hint: `${c.user}@${c.host}`,
         run: () => {
           const { disconnect, connect } = useSessionStore.getState();
-          void disconnect().then(() => connect(c));
+          void disconnect().then((done) => {
+            if (done) return connect(c);
+          });
         },
       })),
   ];

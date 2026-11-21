@@ -1,5 +1,6 @@
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
 
 use tokio::sync::RwLock;
 
@@ -7,11 +8,24 @@ use crate::db::session::Session;
 use crate::error::{AppError, AppResult};
 use crate::storage::ConnectionManager;
 
+/// What the app can do to its own window, for commands that must not take a `Window` or
+/// `AppHandle` themselves (see CLAUDE.md). Installed at startup; tests run without it.
+pub struct WindowHooks {
+    /// Show or hide the "unsaved changes" dot of the window.
+    pub set_edited: Box<dyn Fn(bool) + Send + Sync>,
+    /// Leave the app, without asking again.
+    pub quit: Box<dyn Fn() + Send + Sync>,
+}
+
 /// Global state shared by all commands (`tauri::State<AppState>`).
 pub struct AppState {
     connections: ConnectionManager,
     /// Open database sessions, keyed by connection id.
     sessions: RwLock<HashMap<String, Arc<Session>>>,
+    /// How many tabs have staged edits, as the page last said (ANG-29). Quitting asks first
+    /// while this is above zero.
+    unsaved: AtomicU32,
+    hooks: Mutex<Option<WindowHooks>>,
 }
 
 impl AppState {
@@ -19,6 +33,37 @@ impl AppState {
         Self {
             connections,
             sessions: RwLock::new(HashMap::new()),
+            unsaved: AtomicU32::new(0),
+            hooks: Mutex::new(None),
+        }
+    }
+
+    pub fn set_window_hooks(&self, hooks: WindowHooks) {
+        if let Ok(mut slot) = self.hooks.lock() {
+            *slot = Some(hooks);
+        }
+    }
+
+    /// The page reports how many tabs have unsaved edits. The window's edited dot follows.
+    pub fn set_unsaved_changes(&self, count: u32) {
+        self.unsaved.store(count, Ordering::SeqCst);
+        if let Ok(hooks) = self.hooks.lock()
+            && let Some(hooks) = hooks.as_ref()
+        {
+            (hooks.set_edited)(count > 0);
+        }
+    }
+
+    pub fn unsaved_changes(&self) -> u32 {
+        self.unsaved.load(Ordering::SeqCst)
+    }
+
+    /// Quit now. The page calls this after the person chose what to do with their edits.
+    pub fn quit(&self) {
+        if let Ok(hooks) = self.hooks.lock()
+            && let Some(hooks) = hooks.as_ref()
+        {
+            (hooks.quit)();
         }
     }
 

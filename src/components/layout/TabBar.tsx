@@ -11,7 +11,14 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useIsDirty } from "@/features/grid/editing/unsaved";
 import { OBJECT_ICONS } from "@/features/sidebar/objectIcons";
+import {
+  closeAllTabs,
+  closeOtherTabs,
+  closeTab,
+  closeTabsToTheRight,
+} from "@/features/tabs/closeTabs";
 import { qualifiedName } from "@/lib/sql";
 import { cn } from "@/lib/utils";
 import { tabTitle, useTabsStore, type Tab } from "@/stores/tabs";
@@ -131,7 +138,8 @@ interface TabItemProps {
 
 function TabItem({ tab, active, dragging, ...handlers }: TabItemProps) {
   // Actions never change; the position and count do, and the menu's disabled items depend on them.
-  const { pin, close, closeOthers, closeToRight, closeAll } = useTabsStore.getState();
+  const { pin } = useTabsStore.getState();
+  const dirty = useIsDirty(tab.id);
   const count = useTabsStore((s) => s.tabs.length);
   const index = useTabsStore((s) => s.tabs.findIndex((t) => t.id === tab.id));
   const Icon = tab.kind === "table" ? OBJECT_ICONS[tab.objectKind] : SquareTerminalIcon;
@@ -151,7 +159,7 @@ function TabItem({ tab, active, dragging, ...handlers }: TabItemProps) {
           onPointerCancel={handlers.onPointerEnd}
           onDoubleClick={() => pin(tab.id)}
           onAuxClick={(e) => {
-            if (e.button === 1) close(tab.id); // middle click
+            if (e.button === 1) void closeTab(tab.id); // middle click
           }}
           className={cn(
             "group flex max-w-52 shrink-0 cursor-default items-center gap-1.5 border-r pr-1 pl-2.5 select-none",
@@ -166,25 +174,36 @@ function TabItem({ tab, active, dragging, ...handlers }: TabItemProps) {
           <button
             type="button"
             aria-label={`Close ${title}`}
-            onClick={() => close(tab.id)}
-            className="rounded p-0.5 opacity-60 hover:bg-accent hover:opacity-100"
+            onClick={() => void closeTab(tab.id)}
+            className="relative rounded p-0.5 opacity-60 hover:bg-accent hover:opacity-100"
           >
-            <XIcon className="size-3" />
+            {/* A dot while edits are waiting; the × again when the pointer is on it. */}
+            {dirty && (
+              <span
+                role="img"
+                aria-label="Unsaved changes"
+                className="absolute inset-0 m-auto size-1.5 rounded-full bg-yellow-500 group-hover:hidden"
+              />
+            )}
+            <XIcon className={cn("size-3", dirty && "invisible group-hover:visible")} />
           </button>
         </div>
       </ContextMenuTrigger>
       <ContextMenuContent>
         {tab.preview && <ContextMenuItem onSelect={() => pin(tab.id)}>Keep open</ContextMenuItem>}
-        <ContextMenuItem onSelect={() => close(tab.id)}>
+        <ContextMenuItem onSelect={() => void closeTab(tab.id)}>
           Close <ContextMenuShortcut>⌘W</ContextMenuShortcut>
         </ContextMenuItem>
-        <ContextMenuItem disabled={count < 2} onSelect={() => closeOthers(tab.id)}>
+        <ContextMenuItem disabled={count < 2} onSelect={() => void closeOtherTabs(tab.id)}>
           Close others
         </ContextMenuItem>
-        <ContextMenuItem disabled={index === count - 1} onSelect={() => closeToRight(tab.id)}>
+        <ContextMenuItem
+          disabled={index === count - 1}
+          onSelect={() => void closeTabsToTheRight(tab.id)}
+        >
           Close to the right
         </ContextMenuItem>
-        <ContextMenuItem onSelect={closeAll}>Close all</ContextMenuItem>
+        <ContextMenuItem onSelect={() => void closeAllTabs()}>Close all</ContextMenuItem>
         {tab.kind === "table" && (
           <>
             <ContextMenuSeparator />

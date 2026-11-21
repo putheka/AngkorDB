@@ -123,6 +123,13 @@ function requireOpen(id: string) {
 const handlers: Record<string, Handler> = {
   app_info: () => ({ name: "AngkorDB", version: "0.1.0 (browser mock)" }),
 
+  // Quitting and the window's edited dot only exist in the native app.
+  set_unsaved_changes: (args) => {
+    (window as unknown as { __unsavedChanges?: number }).__unsavedChanges = Number(args["count"]);
+    return null;
+  },
+  quit_app: () => null,
+
   list_connections: () => structuredClone(connections),
 
   save_connection: async (args) => {

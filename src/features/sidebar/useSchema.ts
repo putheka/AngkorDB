@@ -1,5 +1,6 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 
+import { guardUnsaved } from "@/features/grid/editing/unsavedGuard";
 import { dataKey } from "@/features/grid/useTableData";
 import { commands } from "@/lib/ipc";
 import { queryClient } from "@/lib/queryClient";
@@ -50,8 +51,14 @@ export function refreshSchema(connectionId: string) {
 /** The session behind the connection now points at another database: nothing cached is valid. */
 export function useSwitchDatabase(connectionId: string) {
   return useMutation({
-    mutationFn: (database: string) => commands.switchDatabase(connectionId, database),
-    onSuccess: async () => {
+    mutationFn: async (database: string) => {
+      // The tabs close with the old database, and their staged edits with them: ask first.
+      if (!(await guardUnsaved(connectionId, "switch database"))) return false;
+      await commands.switchDatabase(connectionId, database);
+      return true;
+    },
+    onSuccess: async (switched) => {
+      if (!switched) return;
       useTabsStore.getState().closeAll();
       useStatusStore.getState().clear();
       useBrowserStore.getState().setSchema(null);

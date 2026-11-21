@@ -1,0 +1,19 @@
+[package]
+name = "angkordb-macos-window"
+version = "0.1.0"
+edition = "2024"
+description = "The one place AngkorDB talks to AppKit directly (needs `unsafe`, which the app crate forbids)"
+
+[dependencies]
+tauri = { version = "2", features = [] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { version = "0.3", default-features = false, features = ["NSWindow", "NSResponder"] }
+
+[lints.rust]
+# Calling into Objective-C is unsafe by nature. Everything unsafe in the project lives here,
+# behind functions that are safe to call.
+unsafe_code = "allow"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

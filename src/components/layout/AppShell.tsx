@@ -12,6 +12,8 @@ import { refreshSchema } from "@/features/sidebar/useSchema";
 import { ConnectedView } from "@/features/connections/ConnectedView";
 import { WelcomeScreen } from "@/features/connections/WelcomeScreen";
 import { CommandPalette } from "@/features/palette/CommandPalette";
+import { UnsavedChangesDialog } from "@/features/grid/editing/UnsavedChangesDialog";
+import { useUnsavedSync } from "@/features/grid/editing/useUnsavedSync";
 import { WriteApprovalDialog } from "@/features/safety/WriteApprovalDialog";
 import { useLayoutStore } from "@/stores/layout";
 import { usePaletteStore } from "@/stores/palette";
@@ -25,6 +27,7 @@ export function AppShell() {
   const toggleSidebar = useLayoutStore((s) => s.toggleSidebar);
 
   useTabShortcuts(connected);
+  useUnsavedSync();
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -91,6 +94,7 @@ export function AppShell() {
       </div>
 
       {activeId && <CommandPalette connectionId={activeId} />}
+      <UnsavedChangesDialog />
       <WriteApprovalDialog />
       <StatusBar />
     </div>

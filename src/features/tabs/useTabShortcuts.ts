@@ -2,6 +2,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useEffect } from "react";
 
+import { closeTab } from "@/features/tabs/closeTabs";
 import { useTabsStore } from "@/stores/tabs";
 
 /** Native menu → page: the "Close Tab" item (⌘W) in `src-tauri/src/menu.rs`. */
@@ -16,8 +17,8 @@ export function closeFrontTabOrWindow() {
   if (now - lastClose < 100) return;
   lastClose = now;
 
-  const { activeId, close } = useTabsStore.getState();
-  if (activeId) close(activeId);
+  const { activeId } = useTabsStore.getState();
+  if (activeId) void closeTab(activeId);
   else {
     try {
       void getCurrentWindow()
