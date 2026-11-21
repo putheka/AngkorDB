@@ -60,6 +60,8 @@ struct Keys {
     /// A key the server does not know.
     stranger: PathBuf,
     other_public: String,
+    /// The public half of a key of a type the server doesn't have.
+    foreign_type_public: String,
 }
 
 const PASSPHRASE: &str = "angkor-passphrase";
@@ -78,8 +80,15 @@ fn keygen(dir: &Path, name: &str, kind: &str, passphrase: &str) -> PathBuf {
         "-f",
     ]);
     command.arg(&path);
-    if kind == "rsa" {
-        command.args(["-b", "2048"]);
+    match kind {
+        "rsa" => {
+            command.args(["-b", "2048"]);
+        }
+        // A key type the test server does not have (it has 256-bit ECDSA, Ed25519 and RSA).
+        "ecdsa" => {
+            command.args(["-b", "384"]);
+        }
+        _ => {}
     }
     assert!(command.status().expect("ssh-keygen").success());
     path
@@ -98,6 +107,7 @@ fn keys() -> &'static Keys {
         let rsa = keygen(&dir, "rsa", "rsa", "");
         let protected = keygen(&dir, "protected", "ed25519", PASSPHRASE);
         let stranger = keygen(&dir, "stranger", "ed25519", "");
+        let foreign = keygen(&dir, "foreign", "ecdsa", "");
         let authorized =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../dev/sshd/authorized/tunnel");
         std::fs::write(
@@ -110,6 +120,7 @@ fn keys() -> &'static Keys {
         .unwrap();
         Keys {
             other_public: public_of(&stranger),
+            foreign_type_public: public_of(&foreign),
             plain,
             rsa,
             protected,
@@ -567,4 +578,27 @@ async fn test_ssh_says_whether_the_database_can_be_reached() {
         .await,
     );
     assert_eq!(unknown_host.code(), "SSH_HOST_UNKNOWN");
+}
+
+#[tokio::test]
+async fn a_recorded_key_of_another_type_is_not_a_new_host() {
+    if !available() {
+        return;
+    }
+    // known_hosts has a key for this server, but of a type the server doesn't have, so the key
+    // it presents is of another type. That must not look like an unknown host to trust.
+    let dir = TempDir::new().unwrap();
+    let known = dir.path().join("known_hosts");
+    let mut fields = keys().foreign_type_public.split_whitespace();
+    let (kind, blob) = (fields.next().unwrap(), fields.next().unwrap());
+    assert_eq!(kind, "ecdsa-sha2-nistp384");
+    let line = format!("[{}]:{} {kind} {blob}\n", ssh_host(), ssh_port());
+    std::fs::write(&known, &line).unwrap();
+
+    let error = expect_err(open(&config(SshAuth::Password), &setup(Some("tunnel"), &known)).await);
+    assert_eq!(error.code(), "SSH_HOST_CHANGED", "{error:?}");
+    let problem = error.host_key().unwrap();
+    assert_eq!(problem.line, Some(1));
+    assert!(ssh::trust(problem, &known).is_err());
+    assert_eq!(std::fs::read_to_string(&known).unwrap(), line);
 }

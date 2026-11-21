@@ -95,9 +95,9 @@ impl HostKeyProblem {
                 .map(|l| format!(" (line {l})"))
                 .unwrap_or_default();
             format!(
-                "The SSH host key of {}:{} has changed{line}. It is not the one in known_hosts: \
-                 the server may have been reinstalled, or someone may be intercepting the \
-                 connection. Connection refused.",
+                "The SSH host key of {}:{} has changed{line}. It is not the one in known_hosts \
+                 (the key on file is another one, or of another type): the server may have been \
+                 reinstalled, or someone may be intercepting the connection. Connection refused.",
                 self.host, self.port
             )
         } else {
@@ -178,7 +178,15 @@ impl client::Handler for Client {
         match check_known_hosts_path(&self.host, self.port, key, &self.known_hosts) {
             Ok(true) => Ok(true),
             Ok(false) => {
-                verdict.problem = Some(problem(false, None));
+                // "Not found" also covers a host whose recorded key is of another type than the
+                // one presented. That is not a new host: someone else's key may be on offer,
+                // so it is refused like a changed key, never offered for trust.
+                let recorded = known_host_keys_path(&self.host, self.port, &self.known_hosts)
+                    .unwrap_or_default();
+                verdict.problem = Some(match recorded.first() {
+                    Some((line, _)) => problem(true, Some(*line)),
+                    None => problem(false, None),
+                });
                 Ok(false)
             }
             Err(keys::Error::KeyChanged { line }) => {
