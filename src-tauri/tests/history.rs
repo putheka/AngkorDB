@@ -187,13 +187,24 @@ fn statements_with_passwords_are_never_stored() {
         "DO $$ BEGIN CREATE ROLE x PASSWORD 'p'; END $$",
         "UPDATE users SET password = 'plain'",
         "UPDATE users SET \"password\" = 'plain'",
+        // Whatever form the value takes, a role or server statement with a password is hidden.
+        "ALTER ROLE app PASSWORD NULL",
+        "ALTER ROLE app PASSWORD U&'\\0070'",
+        "ALTER ROLE app PASSWORD N'p'",
+        "DO $$ BEGIN EXECUTE format('CREATE ROLE %I PASSWORD %L', 'a', 'b'); END $$",
+        "ALTER USER app /* ' */ PASSWORD 'p'",
+        "SELECT '/*'; ALTER ROLE a PASSWORD /* c */ 'p'",
+        "SELECT '--'; ALTER ROLE a PASSWORD -- c\n'p'",
+        "ALTER ROLE app PASSWORD $tag$p$tag$ -- /*",
+        // A password written in a comment or a string is still a password.
+        "/* ALTER ROLE x PASSWORD 'p' */ SELECT 1",
+        "SELECT '-- ALTER ROLE x PASSWORD ''p'''",
     ] {
         assert_eq!(redact(sql), HIDDEN, "{sql}");
     }
     for sql in [
         "CREATE ROLE reader",
         "ALTER ROLE app SET search_path = x",
-        "ALTER ROLE app PASSWORD NULL",
         "SELECT 'password' FROM t",
         "SELECT password, name FROM users",
         "SELECT * FROM users WHERE name = 'x'",

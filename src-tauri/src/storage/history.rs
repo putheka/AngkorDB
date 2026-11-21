@@ -28,39 +28,106 @@ pub fn now_ms() -> f64 {
         .map_or(0.0, |d| d.as_millis() as f64)
 }
 
-/// `sql` with `--` and (nested) `/* */` comments taken out. Strings are not looked at: this is
-/// only for spotting secrets, where cutting too much is harmless.
+/// `sql` with `--` and (nested) `/* */` comments replaced by a space. Strings (`'…'`, `E'…'`),
+/// quoted names and `$tag$…$tag$` bodies are copied as they are, so a `--` or `/*` inside one
+/// is not taken for a comment.
 fn without_comments(sql: &str) -> String {
+    let chars: Vec<char> = sql.chars().collect();
+    let is_word = |c: char| c.is_alphanumeric() || c == '_';
     let mut out = String::with_capacity(sql.len());
-    let bytes = sql.as_bytes();
-    let (mut i, mut depth) = (0, 0usize);
-    while i < bytes.len() {
-        if bytes[i..].starts_with(b"/*") {
-            depth += 1;
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        let next = chars.get(i + 1).copied();
+        if c == '-' && next == Some('-') {
+            while i < chars.len() && chars[i] != '\n' {
+                i += 1;
+            }
+            out.push(' ');
+        } else if c == '/' && next == Some('*') {
+            let mut depth = 1;
             i += 2;
-        } else if depth > 0 && bytes[i..].starts_with(b"*/") {
-            depth -= 1;
-            i += 2;
-        } else if depth == 0 && bytes[i..].starts_with(b"--") {
-            while i < bytes.len() && bytes[i] != b'\n' {
+            while i < chars.len() && depth > 0 {
+                match (chars[i], chars.get(i + 1).copied()) {
+                    ('/', Some('*')) => {
+                        depth += 1;
+                        i += 2;
+                    }
+                    ('*', Some('/')) => {
+                        depth -= 1;
+                        i += 2;
+                    }
+                    _ => i += 1,
+                }
+            }
+            out.push(' ');
+        } else if c == '\'' || c == '"' {
+            let backslashes = c == '\''
+                && i > 0
+                && matches!(chars[i - 1], 'e' | 'E')
+                && (i < 2 || !is_word(chars[i - 2]));
+            out.push(c);
+            i += 1;
+            while i < chars.len() {
+                let d = chars[i];
+                out.push(d);
+                i += 1;
+                if backslashes && d == '\\' {
+                    if let Some(&escaped) = chars.get(i) {
+                        out.push(escaped);
+                        i += 1;
+                    }
+                } else if d == c {
+                    if chars.get(i) == Some(&c) {
+                        out.push(c);
+                        i += 1;
+                    } else {
+                        break;
+                    }
+                }
+            }
+        } else if c == '$' && (i == 0 || !is_word(chars[i - 1])) {
+            // `$tag$ … $tag$`: a tag is a name that doesn't start with a digit, or nothing.
+            let mut j = i + 1;
+            if chars.get(j).is_some_and(|d| d.is_alphabetic() || *d == '_') {
+                while chars.get(j).is_some_and(|d| is_word(*d)) {
+                    j += 1;
+                }
+            }
+            if chars.get(j) == Some(&'$') {
+                let tag = &chars[i..=j];
+                let body = &chars[j + 1..];
+                let end = body
+                    .windows(tag.len())
+                    .position(|window| window == tag)
+                    .map_or(chars.len(), |at| j + 1 + at + tag.len());
+                out.extend(&chars[i..end]);
+                i = end;
+            } else {
+                out.push(c);
                 i += 1;
             }
         } else {
-            if depth == 0 {
-                let ch = sql[i..].chars().next().unwrap_or(' ');
-                out.push(ch);
-                i += ch.len_utf8();
-            } else {
-                i += 1;
-            }
+            out.push(c);
+            i += 1;
         }
     }
     out
 }
 
+/// Is `word` in `lower` as a whole word (not part of `passwords` or `reset_password_token`)?
+fn has_word(lower: &str, word: &str) -> bool {
+    lower.match_indices(word).any(|(at, _)| {
+        let before = lower[..at].chars().next_back();
+        let after = lower[at + word.len()..].chars().next();
+        !before.is_some_and(|c| c.is_alphanumeric() || c == '_')
+            && !after.is_some_and(|c| c.is_alphanumeric() || c == '_')
+    })
+}
+
 /// Does `lower` (lower-case SQL) give a password a value: `PASSWORD 'x'`, `password = 'x'`,
-/// `host=h password=x`, `PASSWORD $$x$$`? A column called `password` that is only selected, or
-/// the string `'password'`, does not.
+/// `host=h password=x`, `PASSWORD $$x$$`, `PASSWORD U&'x'`? A column called `password` that is
+/// only selected, or the string `'password'`, does not.
 fn sets_a_password(lower: &str) -> bool {
     for word in ["password", "passwd"] {
         for (at, _) in lower.match_indices(word) {
@@ -72,17 +139,45 @@ fn sets_a_password(lower: &str) -> bool {
             if after.starts_with(|c: char| c.is_alphanumeric() || c == '_') {
                 continue;
             }
-            // The string 'password' (or a name in quotes like "password" that is not given a value).
+            // The string 'password' on its own.
             if before == Some('\'') && after.starts_with('\'') {
                 continue;
             }
             let rest = after.strip_prefix('"').unwrap_or(after).trim_start();
-            if rest.starts_with(['=', '\'', '$']) || rest.starts_with("e'") {
+            if rest.starts_with(['=', '\'', '$'])
+                || ["e'", "u&'", "n'", "b'", "x'"]
+                    .iter()
+                    .any(|prefix| rest.starts_with(prefix))
+            {
                 return true;
             }
         }
     }
     false
+}
+
+/// Statements that are about roles, servers and connections: if one mentions a password at all,
+/// it is not kept, whatever form the value has (a `format()` string in a `DO` block, an
+/// expression, `NULL`, …).
+fn is_about_credentials(lower: &str) -> bool {
+    let flat = lower.split_whitespace().collect::<Vec<_>>().join(" ");
+    let credential_syntax = [
+        "create role",
+        "alter role",
+        "create user",
+        "alter user",
+        "create group",
+        "alter group",
+        "user mapping",
+        "create server",
+        "alter server",
+        "subscription",
+        "foreign data wrapper",
+        "dblink",
+    ]
+    .iter()
+    .any(|phrase| flat.contains(phrase));
+    credential_syntax && (has_word(&flat, "password") || has_word(&flat, "passwd"))
 }
 
 /// The statement as it may be stored: one that gives a password a value (`CREATE ROLE … PASSWORD`,
@@ -91,11 +186,11 @@ fn sets_a_password(lower: &str) -> bool {
 /// written and with its comments taken out, so a comment can't hide the keyword from the check.
 pub fn redact(sql: &str) -> &str {
     let lower = sql.to_ascii_lowercase();
-    if sets_a_password(&lower) || sets_a_password(&without_comments(&lower)) {
-        HIDDEN
-    } else {
-        sql
-    }
+    let bare = without_comments(&lower);
+    let secret = [lower.as_str(), bare.as_str()]
+        .into_iter()
+        .any(|text| sets_a_password(text) || is_about_credentials(text));
+    if secret { HIDDEN } else { sql }
 }
 
 pub struct HistoryStore {
