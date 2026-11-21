@@ -2,12 +2,13 @@
 
 use tauri::State;
 
-use crate::db::introspect;
+use crate::db::{introspect, structure};
 use crate::error::AppResult;
 use crate::models::connection::ConnectionInfo;
 use crate::models::schema::{
     CompletionSchema, DatabaseInfo, DbObject, IncomingForeignKey, SchemaInfo, TableDescription,
 };
+use crate::models::structure::TableStructure;
 use crate::state::AppState;
 
 #[tauri::command]
@@ -71,6 +72,19 @@ pub async fn describe_table(
 ) -> AppResult<TableDescription> {
     let session = state.session(&connection_id).await?;
     introspect::describe_table(&*session.meta().await?, &schema, &table).await
+}
+
+/// Columns, indexes, constraints, triggers, size and DDL of a table or view (ANG-36).
+#[tauri::command]
+#[specta::specta]
+pub async fn table_structure(
+    state: State<'_, AppState>,
+    connection_id: String,
+    schema: String,
+    table: String,
+) -> AppResult<TableStructure> {
+    let session = state.session(&connection_id).await?;
+    structure::table_structure(&*session.meta().await?, &schema, &table).await
 }
 
 /// Everything the SQL editor completes names from, in one round trip (ANG-30).

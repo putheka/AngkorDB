@@ -23,3 +23,18 @@ export function formatDuration(ms: number): string {
 export function formatCompact(count: number): string {
   return compactFormat.format(Math.round(count));
 }
+
+/** `812 B`, `16 KB`, `2.4 MB`, `1.2 GB`: a size on disk. Binary units, like `pg_size_pretty`. */
+export function formatBytes(bytes: number | null): string {
+  if (bytes === null || !Number.isFinite(bytes) || bytes < 0) return "unknown";
+  if (bytes < 1024) return `${Math.round(bytes)} B`;
+  const units = ["KB", "MB", "GB", "TB", "PB"];
+  let value = bytes / 1024;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit++;
+  }
+  const digits = value < 10 ? 1 : 0;
+  return `${value.toFixed(digits).replace(/\.0$/, "")} ${units[unit]}`;
+}

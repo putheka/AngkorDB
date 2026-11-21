@@ -393,6 +393,10 @@ fn schema_commands_need_an_open_connection() {
             json!({ "connectionId": "nope", "tabId": "query:1" }),
         ),
         (
+            "table_structure",
+            json!({ "connectionId": "nope", "schema": "public", "table": "users" }),
+        ),
+        (
             "explain_query",
             json!({ "connectionId": "nope", "tabId": "query:1", "sql": "SELECT 1", "analyze": false }),
         ),
@@ -1120,4 +1124,84 @@ fn explain_through_ipc() {
         )
         .unwrap_err();
     assert_eq!(two["code"], "VALIDATION");
+}
+
+#[test]
+fn table_structure_through_ipc() {
+    if !dev_db_available() {
+        return;
+    }
+    let ipc = setup();
+    let mut form = config("Dev", "localhost", 54329);
+    form["user"] = json!("angkor");
+    form["database"] = json!("angkordb_dev");
+    let saved = ipc
+        .call(
+            "save_connection",
+            json!({ "config": form, "password": { "kind": "set", "value": "angkor" } }),
+        )
+        .unwrap();
+    let id = saved["id"].as_str().unwrap();
+    ipc.call("connect_connection", json!({ "id": id })).unwrap();
+
+    // The shape the Structure view reads.
+    let s = ipc
+        .call(
+            "table_structure",
+            json!({ "connectionId": id, "schema": "public", "table": "orders" }),
+        )
+        .unwrap();
+    assert_eq!(s["schema"], "public");
+    assert_eq!(s["kind"], "table");
+    assert_eq!(s["info"]["owner"], "angkor");
+    assert!(s["info"]["totalBytes"].is_number());
+    assert!(s["info"]["rowEstimate"].is_number());
+    assert_eq!(s["info"]["persistence"], "permanent");
+    assert_eq!(s["columns"][0]["name"], "id");
+    assert_eq!(s["columns"][0]["typeName"], "bigint");
+    assert_eq!(s["columns"][0]["isPrimaryKey"], true);
+    assert_eq!(s["columns"][0]["nullable"], false);
+    assert_eq!(s["columns"][1]["foreignKeys"][0]["table"], "users");
+    assert_eq!(s["indexes"][0]["name"], "orders_pkey");
+    assert_eq!(s["indexes"][0]["constraint"], "orders_pkey");
+    assert!(s["indexes"][0]["sizeBytes"].is_number());
+    let kinds: Vec<&str> = s["constraints"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["kind"].as_str().unwrap())
+        .collect();
+    assert_eq!(kinds, ["primaryKey", "check", "foreignKey"]);
+    assert_eq!(s["constraints"][2]["references"], "public.users");
+    assert!(
+        s["ddl"]
+            .as_str()
+            .unwrap()
+            .starts_with("CREATE TABLE public.orders (")
+    );
+    assert!(
+        s["prerequisites"]
+            .as_str()
+            .unwrap()
+            .contains("CREATE SEQUENCE public.orders_id_seq")
+    );
+
+    let users = ipc
+        .call(
+            "table_structure",
+            json!({ "connectionId": id, "schema": "public", "table": "users" }),
+        )
+        .unwrap();
+    assert_eq!(users["triggers"][0]["name"], "users_touch_updated_at");
+    assert_eq!(users["triggers"][0]["timing"], "BEFORE");
+    assert_eq!(users["triggers"][0]["state"], "enabled");
+    assert_eq!(users["columns"][0]["identity"], "always");
+
+    let err = ipc
+        .call(
+            "table_structure",
+            json!({ "connectionId": id, "schema": "public", "table": "nope" }),
+        )
+        .unwrap_err();
+    assert_eq!(err["code"], "NOT_FOUND");
 }

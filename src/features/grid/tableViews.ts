@@ -4,6 +4,7 @@ import { create } from "zustand";
 import type { SortSpec } from "@/bindings";
 import { EMPTY_LAYOUT, type ColumnLayout } from "@/features/grid/columns";
 import { EMPTY_FILTER, type FilterState } from "@/features/grid/filters";
+import type { Section, TableMode } from "@/features/structure/sections";
 import { useTabsStore } from "@/stores/tabs";
 
 export const PAGE_SIZES = [100, 500, 1000] as const;
@@ -16,6 +17,10 @@ export interface TableView {
   pageSize: number;
   layout: ColumnLayout;
   filter: FilterState;
+  /** Rows, or how the table is built (ANG-36). */
+  mode: TableMode;
+  /** Which part of the structure is open. */
+  section: Section;
 }
 
 export const DEFAULT_VIEW: TableView = {
@@ -24,6 +29,8 @@ export const DEFAULT_VIEW: TableView = {
   pageSize: 500,
   layout: EMPTY_LAYOUT,
   filter: EMPTY_FILTER,
+  mode: "data",
+  section: "columns",
 };
 
 interface TableViewsState {

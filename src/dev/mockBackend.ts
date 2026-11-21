@@ -16,6 +16,7 @@ import { createHistoryHandlers } from "@/dev/mockHistory";
 import { createQueryHandlers } from "@/dev/mockQuery";
 import { createRowHandlers } from "@/dev/mockRows";
 import { createSchemaHandlers } from "@/dev/mockSchema";
+import { mockTableStructure } from "@/dev/mockStructure";
 import { appError, sleep, type Handler } from "@/dev/mockSupport";
 
 /** Connections opened with `connect_connection`; schema commands need one. */
@@ -201,6 +202,10 @@ const handlers: Record<string, Handler> = {
   },
 
   ...createSchemaHandlers(requireOpen),
+  table_structure: (args) => {
+    requireOpen(String(args["connectionId"]));
+    return mockTableStructure(String(args["schema"]), String(args["table"]));
+  },
   ...createRowHandlers(requireOpen),
   ...createChangeHandlers(requireOpen, (id) => connections.find((c) => c.id === id)?.safeMode),
   ...createQueryHandlers(requireOpen),

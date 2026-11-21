@@ -51,6 +51,8 @@ export const commands = {
 	listIncomingForeignKeys: (connectionId: string, schema: string, table: string, options?: InvokeOptions) => __TAURI_INVOKE<IncomingForeignKey[]>("list_incoming_foreign_keys", { connectionId, schema, table }, options),
 	/**  Everything the SQL editor completes names from, in one round trip (ANG-30). */
 	completionSchema: (connectionId: string, options?: InvokeOptions) => __TAURI_INVOKE<CompletionSchema>("completion_schema", { connectionId }, options),
+	/**  Columns, indexes, constraints, triggers, size and DDL of a table or view (ANG-36). */
+	tableStructure: (connectionId: string, schema: string, table: string, options?: InvokeOptions) => __TAURI_INVOKE<TableStructure>("table_structure", { connectionId, schema, table }, options),
 	/**  One page of a table: paging, sorting and filtering happen on the server. */
 	fetchRows: (connectionId: string, query: RowQuery, options?: InvokeOptions) => __TAURI_INVOKE<RowPage>("fetch_rows", { connectionId, query }, options),
 	/**
@@ -243,6 +245,26 @@ export type ConnectionInfo = {
 	latencyMs: number,
 };
 
+export type ConstraintInfo = {
+	name: string,
+	kind: ConstraintKind,
+	/**
+	 *  `PRIMARY KEY (id)`, `FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE`,
+	 *  `CHECK ((qty > 0))`, … as the server prints it.
+	 */
+	definition: string,
+	columns: string[],
+	/**  A foreign key's target, `schema.table`. */
+	references: string | null,
+	deferrable: boolean,
+	initiallyDeferred: boolean,
+	/**  `false` for a constraint added `NOT VALID`: new rows are checked, old ones are not. */
+	validated: boolean,
+	comment: string | null,
+};
+
+export type ConstraintKind = "primaryKey" | "foreignKey" | "unique" | "check" | "exclusion";
+
 export type DatabaseInfo = {
 	name: string,
 	/**  The database this session is connected to. */
@@ -309,6 +331,12 @@ export type ForeignKeyRef = {
 	column: string,
 };
 
+export type GeneratedKind = 
+/**  `GENERATED ALWAYS AS (…) STORED` */
+"stored" | 
+/**  `GENERATED ALWAYS AS (…) VIRTUAL` (PostgreSQL 18) */
+"virtual";
+
 /**  A statement that was run, newest first in listings. */
 export type HistoryEntry = {
 	id: number,
@@ -332,6 +360,26 @@ export type IncomingForeignKey = {
 	table: string,
 	columns: string[],
 	referencedColumns: string[],
+};
+
+export type IndexInfo = {
+	name: string,
+	/**  `CREATE INDEX …` as the server prints it. */
+	definition: string,
+	/**  The indexed columns or expressions, in order (included columns are not listed). */
+	columns: string[],
+	/**  `btree`, `gin`, … */
+	method: string,
+	unique: boolean,
+	primary: boolean,
+	/**  `false` while a `CREATE INDEX CONCURRENTLY` is unfinished or after it failed. */
+	valid: boolean,
+	/**  Has a `WHERE`. */
+	partial: boolean,
+	sizeBytes: number | null,
+	/**  The constraint this index backs (primary key, unique or exclusion), if any. */
+	constraint: string | null,
+	comment: string | null,
 };
 
 /**  How many rows match, counting at most `cap` of them (so a huge table can't make it slow). */
@@ -374,6 +422,10 @@ export type PasswordChange =
 { kind: "set"; value: string } | 
 /**  Remove the saved password. */
 { kind: "clear" };
+
+export type Persistence = "permanent" | 
+/**  Not written to the write-ahead log: fast, and empty after a crash. */
+"unlogged" | "temporary";
 
 /**
  *  The result of running a script: one entry per statement that was run. After a statement
@@ -540,6 +592,24 @@ export type StatementResult = {
 	notices: Notice[],
 };
 
+export type StructureColumn = {
+	/**  1-based position in the table. */
+	position: number,
+	name: string,
+	/**  As Postgres prints it: `numeric(20,6)`, `character varying(100)`, `text[]`. */
+	typeName: string,
+	nullable: boolean,
+	/**  The `DEFAULT` expression, or for a generated column the expression it is computed from. */
+	defaultValue: string | null,
+	identity: ColumnIdentity | null,
+	generated: GeneratedKind | null,
+	/**  Only when it differs from the type's own collation. */
+	collation: string | null,
+	comment: string | null,
+	isPrimaryKey: boolean,
+	foreignKeys: ForeignKeyRef[],
+};
+
 /**
  *  Everything staged for one table. Applied in one transaction: deletes first (they free keys),
  *  then updates, then inserts.
@@ -559,6 +629,56 @@ export type TableDescription = {
 	identity: RowIdentity,
 };
 
+export type TableInfo = {
+	owner: string,
+	comment: string | null,
+	persistence: Persistence,
+	/**  The planner's estimate (`pg_class.reltuples`); `None` before the first `ANALYZE`. */
+	rowEstimate: number | null,
+	/**  Table, TOAST and indexes together. */
+	totalBytes: number | null,
+	/**  The table and its TOAST data, without indexes. */
+	tableBytes: number | null,
+	indexBytes: number | null,
+	toastBytes: number | null,
+	tablespace: string | null,
+	/**  Table access method (`heap`). */
+	accessMethod: string | null,
+	/**  `RANGE (created_at)`: how a partitioned table is split. */
+	partitionKey: string | null,
+	/**  `FOR VALUES FROM (…) TO (…)`: which part of its parent a partition holds. */
+	partitionBound: string | null,
+	/**  The parent of a partition, or the tables a table inherits from. */
+	parents: string[],
+	/**  `schema.table` of each partition. */
+	partitions: string[],
+	rowSecurity: boolean,
+	options: string[],
+	/**  Materialized views: has it been filled? */
+	populated: boolean | null,
+};
+
+export type TableStructure = {
+	schema: string,
+	name: string,
+	kind: ObjectKind,
+	info: TableInfo,
+	columns: StructureColumn[],
+	indexes: IndexInfo[],
+	constraints: ConstraintInfo[],
+	triggers: TriggerInfo[],
+	/**
+	 *  The statements that create this table and everything of its own: indexes, foreign keys,
+	 *  triggers, comments.
+	 */
+	ddl: string,
+	/**
+	 *  What those statements need to exist first: extensions, types, sequences and the
+	 *  functions that triggers, defaults and checks call. Empty when there is nothing.
+	 */
+	prerequisites: string,
+};
+
 /**
  *  A stretch of the submitted text. Offsets count UTF-16 code units, which is what the
  *  editor in the UI counts, so they can be used as editor positions without conversion.
@@ -567,3 +687,23 @@ export type TextRange = {
 	start: number,
 	end: number,
 };
+
+export type TriggerInfo = {
+	name: string,
+	/**  `BEFORE`, `AFTER` or `INSTEAD OF`. */
+	timing: string,
+	/**  `INSERT`, `UPDATE`, `DELETE`, `TRUNCATE`. */
+	events: string[],
+	/**  `FOR EACH ROW` rather than `FOR EACH STATEMENT`. */
+	perRow: boolean,
+	/**  `schema.function`. */
+	function: string,
+	state: TriggerState,
+	definition: string,
+};
+
+export type TriggerState = "enabled" | "disabled" | 
+/**  Fires only while replicating. */
+"replica" | 
+/**  Fires always, also while replicating. */
+"always";

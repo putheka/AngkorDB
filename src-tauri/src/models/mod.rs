@@ -7,3 +7,4 @@ pub mod history;
 pub mod query;
 pub mod rows;
 pub mod schema;
+pub mod structure;

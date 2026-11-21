@@ -343,7 +343,7 @@ async fn fetch_columns(client: &Client, oid: u32) -> AppResult<Vec<ColumnInfo>> 
 }
 
 /// Primary key columns in key order.
-async fn fetch_primary_key(client: &Client, oid: u32) -> AppResult<Vec<String>> {
+pub(crate) async fn fetch_primary_key(client: &Client, oid: u32) -> AppResult<Vec<String>> {
     let rows = client
         .query(
             "SELECT a.attname::text
@@ -359,7 +359,10 @@ async fn fetch_primary_key(client: &Client, oid: u32) -> AppResult<Vec<String>> 
 }
 
 /// `(column of this table, what it points at)`, in constraint then column order.
-async fn fetch_foreign_keys(client: &Client, oid: u32) -> AppResult<Vec<(String, ForeignKeyRef)>> {
+pub(crate) async fn fetch_foreign_keys(
+    client: &Client,
+    oid: u32,
+) -> AppResult<Vec<(String, ForeignKeyRef)>> {
     let rows = client
         .query(
             "SELECT a.attname::text, con.conname::text, rn.nspname::text, rc.relname::text,

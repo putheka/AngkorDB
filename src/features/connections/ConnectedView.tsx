@@ -1,6 +1,6 @@
 import { TableIcon } from "lucide-react";
 
-import { TableView } from "@/features/grid/TableView";
+import { TableTabView } from "@/features/structure/TableTabView";
 import { QueryView } from "@/features/query/QueryView";
 import { useSessionStore } from "@/stores/session";
 import { useTabsStore } from "@/stores/tabs";
@@ -36,7 +36,7 @@ export function ConnectedView() {
   // Keyed by tab: switching tabs gives each table its own sort, page and columns.
   return (
     <div className="min-h-0 flex-1">
-      <TableView key={tab.id} connectionId={connectionId} tab={tab} />
+      <TableTabView key={tab.id} connectionId={connectionId} tab={tab} />
     </div>
   );
 }
