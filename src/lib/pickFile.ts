@@ -25,3 +25,15 @@ export async function pickFolder(title: string): Promise<string | null> {
   const chosen = await open({ title, multiple: false, directory: true });
   return typeof chosen === "string" ? chosen : null;
 }
+
+/** Ask for a data file to import, with the system's dialog. `null` when they cancel. */
+export async function pickDataFile(title: string): Promise<string | null> {
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const chosen = await open({
+    title,
+    multiple: false,
+    directory: false,
+    filters: [{ name: "Data files", extensions: ["csv", "tsv", "txt", "json", "ndjson", "jsonl"] }],
+  });
+  return typeof chosen === "string" ? chosen : null;
+}

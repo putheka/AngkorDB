@@ -36,6 +36,7 @@ import {
 } from "@/features/grid/editing/changes";
 import { PreviewDialog } from "@/features/grid/editing/PreviewDialog";
 import { useCommitChanges } from "@/features/grid/editing/useCommit";
+import { useImportDialog } from "@/stores/importDialog";
 import { ExportDialog } from "@/features/export/ExportDialog";
 import { FilterBar } from "@/features/grid/FilterBar";
 import {
@@ -507,6 +508,12 @@ export function TableView({ connectionId, tab }: { connectionId: string; tab: Ta
           filterOpen={filter.open}
           onToggleFilter={filter.open ? closeFilter : openFilter}
           onExport={() => setExporting(true)}
+          {...(tab.objectKind === "table" || tab.objectKind === "partitionedTable"
+            ? {
+                onImport: () =>
+                  useImportDialog.getState().open({ schema: tab.schema, table: tab.name }),
+              }
+            : {})}
           {...(addRow ? { onAddRow: addRow } : {})}
           detailOpen={detailOpen}
           onToggleDetail={toggleDetail}

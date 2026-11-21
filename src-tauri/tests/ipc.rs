@@ -398,6 +398,12 @@ fn schema_commands_need_an_open_connection() {
         ("list_activity", json!({ "connectionId": "nope" })),
         ("list_roles", json!({ "connectionId": "nope" })),
         (
+            "start_import",
+            json!({ "connectionId": "nope", "request": { "path": "/tmp/x.csv",
+                "format": { "kind": "json" }, "onError": "abort",
+                "target": { "kind": "new", "schema": "public", "table": "t", "columns": [] } } }),
+        ),
+        (
             "start_export",
             json!({ "connectionId": "nope", "request": { "source": { "kind": "query", "sql": "SELECT 1", "name": null },
                     "format": { "kind": "markdown" }, "path": "/tmp/x.md" } }),
@@ -2422,4 +2428,118 @@ fn an_export_through_ipc_runs_reports_progress_and_can_be_cancelled() {
             .unwrap_err()["code"],
         "NOT_FOUND"
     );
+}
+
+#[test]
+fn an_import_through_ipc_previews_runs_reports_errors_and_is_refused_when_read_only() {
+    if !dev_db_available() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("people.csv");
+    std::fs::write(&file, "id,name\n1,Ann\n2,Bob\nx,Cy\n4,Di\n").unwrap();
+    let format =
+        json!({ "kind": "csv", "delimiter": ",", "quote": "\"", "header": true, "nullText": "" });
+
+    let ipc = setup();
+    // The preview needs no connection.
+    let shown = ipc
+        .call(
+            "preview_import",
+            json!({ "request": { "path": file.display().to_string(), "format": format } }),
+        )
+        .unwrap();
+    assert_eq!(shown["columns"], json!(["id", "name"]));
+    assert_eq!(shown["rows"][1], json!(["2", "Bob"]));
+    assert_eq!(shown["suggestedTypes"], json!(["text", "text"])); // "x" is in the ids
+    assert_eq!(shown["moreRows"], json!(false));
+    let missing = ipc
+        .call(
+            "preview_import",
+            json!({ "request": { "path": "/nonexistent/x.csv", "format": format } }),
+        )
+        .unwrap_err();
+    assert_eq!(missing["code"], "VALIDATION");
+
+    let id = dev_connection(&ipc, "off");
+    let table = format!("angkordb_import_ipc_{}", std::process::id());
+    let target = json!({ "kind": "new", "schema": "public", "table": table, "columns": [
+        { "source": "id", "name": "id", "typeName": "integer" },
+        { "source": "name", "name": "name", "typeName": "text" } ] });
+    let wait = |job: &str| -> Value {
+        for _ in 0..400 {
+            let status = ipc.call("import_status", json!({ "id": job })).unwrap();
+            if status["state"] != "running" {
+                return status;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        panic!("the import never finished");
+    };
+    let drop_table = || {
+        let _ = ipc.call(
+            "apply_object_operation",
+            json!({ "connectionId": id, "operation": { "kind": "drop", "objectKind": "table",
+                "schema": "public", "name": table, "cascade": false } }),
+        );
+    };
+    drop_table();
+
+    // Skipping bad rows: three go in, one is listed with its line.
+    let job = ipc
+        .call(
+            "start_import",
+            json!({ "connectionId": id, "request": { "path": file.display().to_string(),
+                "format": format, "target": target, "onError": "skip" } }),
+        )
+        .unwrap();
+    let status = wait(job.as_str().unwrap());
+    assert_eq!(status["state"], "done", "{status}");
+    assert_eq!(status["rowsWritten"], json!(3.0));
+    assert_eq!(status["rowsSkipped"], json!(1.0));
+    assert_eq!(status["errors"][0]["at"], "line 4");
+    assert_eq!(status["table"], format!("public.{table}"));
+    assert_eq!(status["bytesRead"], status["bytesTotal"]);
+
+    // Aborting: the whole import fails with the line, and the table is not made.
+    drop_table();
+    let job = ipc
+        .call(
+            "start_import",
+            json!({ "connectionId": id, "request": { "path": file.display().to_string(),
+                "format": format, "target": target, "onError": "abort" } }),
+        )
+        .unwrap();
+    let failed = wait(job.as_str().unwrap());
+    assert_eq!(failed["state"], "failed");
+    assert!(
+        failed["error"]["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("Line 4:"),
+        "{failed}"
+    );
+    assert_eq!(failed["rowsWritten"], json!(0.0));
+    drop_table();
+    assert_eq!(
+        ipc.call("cancel_import", json!({ "id": "nope" })).unwrap(),
+        json!(false)
+    );
+    assert_eq!(
+        ipc.call("import_status", json!({ "id": "nope" }))
+            .unwrap_err()["code"],
+        "NOT_FOUND"
+    );
+
+    // A read-only connection can't import.
+    let read_only = dev_connection(&ipc, "read-only");
+    let refused = ipc
+        .call(
+            "start_import",
+            json!({ "connectionId": read_only, "request": { "path": file.display().to_string(),
+                "format": format, "target": target, "onError": "abort" } }),
+        )
+        .unwrap_err();
+    assert_eq!(refused["code"], "VALIDATION");
+    assert!(refused["message"].as_str().unwrap().contains("read-only"));
 }

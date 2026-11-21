@@ -140,6 +140,20 @@ export const commands = {
 	 */
 	applyChanges: (connectionId: string, schema: string, table: string, changes: TableChanges, options?: InvokeOptions) => __TAURI_INVOKE<ApplyResult>("apply_changes", { connectionId, schema, table, changes }, options),
 	/**
+	 *  The start of a file: its columns, the first 50 rows and a type for each column. Reads the
+	 *  file only; needs no connection.
+	 */
+	previewImport: (request: PreviewRequest, options?: InvokeOptions) => __TAURI_INVOKE<ImportPreview>("preview_import", { request }, options),
+	/**
+	 *  Start writing the file into the table in the background, in one transaction. Refused on a
+	 *  read-only connection. Returns the id to ask about it with.
+	 */
+	startImport: (connectionId: string, request: ImportRequest, options?: InvokeOptions) => __TAURI_INVOKE<string>("start_import", { connectionId, request }, options),
+	/**  How far an import is, the rows that could not be written, and how it ended. */
+	importStatus: (id: string, options?: InvokeOptions) => __TAURI_INVOKE<ImportStatus>("import_status", { id }, options),
+	/**  Stop an import after the batch it is on. Nothing it wrote is kept. */
+	cancelImport: (id: string, options?: InvokeOptions) => __TAURI_INVOKE<boolean>("cancel_import", { id }, options),
+	/**
 	 *  Start writing the rows to a file in the background. Returns the id to ask about it with.
 	 *  Reading only, so it works on a read-only connection.
 	 */
@@ -333,6 +347,14 @@ export type ColumnInfo = {
 	isPrimaryKey: boolean,
 	comment: string | null,
 	foreignKeys: ForeignKeyRef[],
+};
+
+/**  One column of the file going to one column of the table. */
+export type ColumnMap = {
+	/**  The column's name in the file (see [`ImportPreview::columns`]). */
+	source: string,
+	/**  The column of the table it is written to. */
+	column: string,
 };
 
 export type CommentChange = { kind: "set"; text: string } | 
@@ -715,6 +737,70 @@ export type HistoryEntry = {
 	ok: boolean,
 };
 
+export type ImportFormat = { kind: "csv"; 
+/**  One ASCII character: `,` `;` tab `|`. */
+delimiter: string; 
+/**  One ASCII character: `"` or `'`. */
+quote: string; 
+/**  The first row has the column names. */
+header: boolean; 
+/**  What `NULL` is written as in the file. Blank: an empty field. */
+nullText: string } | 
+/**  An array of objects, or one object per line (told apart by the first character). */
+{ kind: "json" };
+
+export type ImportPreview = {
+	/**  The columns of the file: the header, or `column_1`, … without one; for JSON the keys. */
+	columns: string[],
+	/**  The first rows, one cell per column; `None` for `NULL`. */
+	rows: ((string | null)[])[],
+	/**  A type for each column that fits what the first thousand rows hold (for a new table). */
+	suggestedTypes: string[],
+	fileBytes: number | null,
+	/**  The file has more rows than the preview shows. */
+	moreRows: boolean,
+};
+
+export type ImportRequest = {
+	path: string,
+	format: ImportFormat,
+	target: ImportTarget,
+	onError: OnError,
+};
+
+export type ImportState = "running" | "done" | "failed" | "cancelled";
+
+export type ImportStatus = {
+	state: ImportState,
+	/**  Rows read from the file so far. */
+	rowsRead: number | null,
+	/**  Rows written (kept only if the import completes). */
+	rowsWritten: number | null,
+	/**  Rows left out because they could not be written (`OnError::Skip`). */
+	rowsSkipped: number | null,
+	bytesRead: number | null,
+	bytesTotal: number | null,
+	/**  The first rows that failed, with the line and the reason. */
+	errors: RowError[],
+	/**  There were more failed rows than `errors` holds. */
+	moreErrors: boolean,
+	/**  What stopped the import as a whole, if it did not finish. */
+	error: AppError | null,
+	/**  The table written to (`schema.table`). */
+	table: string | null,
+};
+
+export type ImportTarget = 
+/**
+ *  A table that exists. File columns that are not mapped are left out; table columns that
+ *  are not mapped get their defaults.
+ */
+{ kind: "existing"; schema: string; table: string; mapping: ColumnMap[]; 
+/**  Empty the table first (in the same transaction, so a failed import keeps its rows). */
+truncate: boolean } | 
+/**  Make the table from the file first. */
+{ kind: "new"; schema: string; table: string; columns: NewColumn[] };
+
 /**
  *  A foreign key of another table that points at this one ("referenced by"). The two column
  *  lists are in constraint order: `columns[i]` of `schema.table` references `referenced_columns[i]`
@@ -768,6 +854,13 @@ export type LimitedCount = {
 	count: number,
 	/**  There are more rows than `count`. */
 	capped: boolean,
+};
+
+export type NewColumn = {
+	source: string,
+	name: string,
+	/**  As SQL: `bigint`, `numeric(10,2)`, `timestamp with time zone`, `jsonb`, … */
+	typeName: string,
 };
 
 export type NewTableColumn = {
@@ -828,6 +921,12 @@ export type ObjectOperation = {
 	kind: "dropSchema",
 } & DropSchema;
 
+export type OnError = 
+/**  The first row that can't be written stops the import and nothing is kept. */
+"abort" | 
+/**  Rows that can't be written are left out and listed; the rest is imported. */
+"skip";
+
 /**  Fields extracted from a `postgres://` URL, used to fill the connection form. */
 export type ParsedConnectionUrl = {
 	name: string,
@@ -863,6 +962,11 @@ export type PlannedStatement = {
 	concurrent: boolean,
 	/**  Throws something away: a column, an index, a constraint. */
 	destructive: boolean,
+};
+
+export type PreviewRequest = {
+	path: string,
+	format: ImportFormat,
 };
 
 export type PrivilegeChange = {
@@ -1007,6 +1111,13 @@ export type RowCount = {
 	count: number | null,
 	/**  `false`: the planner's estimate (`pg_class.reltuples`). Prefix it with `~`. */
 	exact: boolean,
+};
+
+/**  A row that could not be imported, and why. */
+export type RowError = {
+	/**  `line 12` (CSV, one object per line) or `item 12` (an array of objects). */
+	at: string,
+	message: string,
 };
 
 /**  How rows of a table are told apart when editing (ANG-8 D2). */

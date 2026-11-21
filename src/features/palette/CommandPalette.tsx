@@ -36,6 +36,7 @@ import { useBrowserStore } from "@/stores/browser";
 import { useLayoutStore } from "@/stores/layout";
 import { usePaletteStore, type PaletteMode } from "@/stores/palette";
 import { useSessionStore } from "@/stores/session";
+import { useImportDialog } from "@/stores/importDialog";
 import { useTabsStore } from "@/stores/tabs";
 
 const NO_RECENTS: never[] = [];
@@ -243,6 +244,13 @@ function CommandResults({
       group: "Commands",
       label: "Open activity (processes and locks)",
       run: () => useTabsStore.getState().openActivity(),
+    },
+    {
+      id: "import",
+      group: "Commands",
+      label: "Import a file as a new table…",
+      run: () =>
+        useImportDialog.getState().open({ schema: currentSchema ?? "public", table: null }),
     },
     {
       id: "roles",

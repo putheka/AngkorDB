@@ -35,6 +35,7 @@ pub struct AppState {
     /// Host keys an SSH tunnel stopped at, by fingerprint, until the person trusts one or not.
     pending_host_keys: Mutex<HashMap<String, HostKeyProblem>>,
     exports: crate::db::export::Exports,
+    imports: crate::db::import::Imports,
 }
 
 impl AppState {
@@ -49,7 +50,13 @@ impl AppState {
             known_hosts: ssh::default_known_hosts(),
             pending_host_keys: Mutex::new(HashMap::new()),
             exports: crate::db::export::Exports::default(),
+            imports: crate::db::import::Imports::default(),
         }
+    }
+
+    /// The imports of this run, running and done.
+    pub fn imports(&self) -> &crate::db::import::Imports {
+        &self.imports
     }
 
     /// The exports of this run, running and done.

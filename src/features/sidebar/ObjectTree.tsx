@@ -34,6 +34,7 @@ import { EnumDialog } from "@/features/objects/EnumDialog";
 import { SequenceDialog } from "@/features/objects/SequenceDialog";
 import { openSavedQuery } from "@/features/query/history/openSavedQuery";
 import { commands } from "@/lib/ipc";
+import { useImportDialog } from "@/stores/importDialog";
 import { ExportDialog } from "@/features/export/ExportDialog";
 import { ObjectActionDialog, type ObjectAction } from "@/features/objects/ObjectActionDialog";
 import { useTableViews } from "@/features/grid/tableViews";
@@ -389,7 +390,11 @@ export function ObjectTree({ connectionId }: { connectionId: string }) {
                   onAction={(kind) =>
                     kind === "export"
                       ? setExporting(row.object)
-                      : setAction({ kind, object: row.object })
+                      : kind === "import"
+                        ? useImportDialog
+                            .getState()
+                            .open({ schema: row.object.schema, table: row.object.name })
+                        : setAction({ kind, object: row.object })
                   }
                   onDefinition={() => openDefinition(row.object)}
                   onDetails={() => setDetails(row.object)}

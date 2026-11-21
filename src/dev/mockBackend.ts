@@ -4,6 +4,8 @@
  * built and checked without the native app. State lives in memory and resets on reload.
  */
 import type {
+  ImportRequest,
+  PreviewRequest,
   ExportRequest,
   ExportStatus,
   ConnectionConfig,
@@ -29,6 +31,12 @@ import {
   mockRoleList,
   mockRolePreview,
 } from "@/dev/mockRoles";
+import {
+  cancelMockImport,
+  mockImportStatus,
+  mockPreview as mockImportPreview,
+  startMockImport,
+} from "@/dev/mockImport";
 import { cancelMockExport, mockExportStatus, startMockExport } from "@/dev/mockExport";
 import { createChangeHandlers } from "@/dev/mockChanges";
 import { createHistoryHandlers } from "@/dev/mockHistory";
@@ -344,12 +352,25 @@ const handlers: Record<string, Handler> = {
   "plugin:dialog|open": (args) =>
     (args["options"] as { directory?: boolean } | undefined)?.directory
       ? "/Users/me/Downloads"
-      : "/Users/me/certs/server-ca.pem",
+      : (args["options"] as { filters?: { name: string }[] } | undefined)?.filters?.some(
+            (f) => f.name === "Data files",
+          )
+        ? "/Users/me/Downloads/people.csv"
+        : "/Users/me/certs/server-ca.pem",
   "plugin:dialog|save": (args) =>
     `/Users/me/Downloads/${String(
       (args["options"] as { defaultPath?: string } | undefined)?.defaultPath ?? "export.csv",
     )}`,
   "plugin:opener|reveal_item_in_dir": () => null,
+
+  preview_import: (args) => mockImportPreview(args["request"] as PreviewRequest),
+  start_import: (args) => {
+    requireOpen(String(args["connectionId"]));
+    requireWritable(String(args["connectionId"]));
+    return startMockImport(args["request"] as ImportRequest);
+  },
+  import_status: (args) => mockImportStatus(String(args["id"])),
+  cancel_import: (args) => cancelMockImport(String(args["id"])),
 
   start_export: (args) => {
     requireOpen(String(args["connectionId"]));

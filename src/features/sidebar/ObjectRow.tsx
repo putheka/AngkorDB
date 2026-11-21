@@ -34,7 +34,7 @@ interface ObjectRowProps {
   /** Open it on its Structure view. */
   onStructure: () => void;
   /** Rename, truncate, drop or refresh it (the menu). */
-  onAction: (action: "rename" | "truncate" | "drop" | "refresh" | "export") => void;
+  onAction: (action: "rename" | "truncate" | "drop" | "refresh" | "export" | "import") => void;
   /** Open the SQL that defines it in a query tab (functions, views, …). */
   onDefinition: () => void;
   /** The dialog of a sequence or an enum type. */
@@ -133,6 +133,9 @@ export function ObjectRow({
         <ContextMenuSeparator />
         {EXPORTABLE.includes(object.kind) && (
           <ContextMenuItem onSelect={() => onAction("export")}>Export…</ContextMenuItem>
+        )}
+        {TABLES.includes(object.kind) && (
+          <ContextMenuItem onSelect={() => onAction("import")}>Import…</ContextMenuItem>
         )}
         {RENAMEABLE.includes(object.kind) && (
           <ContextMenuItem onSelect={() => onAction("rename")}>Rename…</ContextMenuItem>

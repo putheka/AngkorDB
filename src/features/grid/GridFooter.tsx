@@ -3,6 +3,7 @@ import {
   ChevronRightIcon,
   Columns3Icon,
   DownloadIcon,
+  UploadIcon,
   ListFilterIcon,
   PanelRightIcon,
   PlusIcon,
@@ -56,6 +57,8 @@ export interface GridFooterProps {
   onToggleFilter: () => void;
   /** Export the rows of this table (what the filter matches) to a file. */
   onExport?: () => void;
+  /** Import a CSV or JSON file into this table. Left out for a view. */
+  onImport?: () => void;
   /** Add a row at the top (⌘I). Left out when the table can't be edited. */
   onAddRow?: () => void;
   /** The row details panel on the right (Space). */
@@ -108,6 +111,17 @@ export function GridFooter(props: GridFooterProps) {
       </div>
 
       <div className="flex items-center gap-1">
+        {props.onImport && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="xs" aria-label="Import" onClick={props.onImport}>
+                <UploadIcon />
+                Import
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Add the rows of a CSV or JSON file</TooltipContent>
+          </Tooltip>
+        )}
         {props.onExport && (
           <Tooltip>
             <TooltipTrigger asChild>

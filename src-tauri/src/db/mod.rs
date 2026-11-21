@@ -25,6 +25,8 @@ pub mod definitions;
 pub mod explain;
 pub mod export;
 pub mod export_format;
+pub mod import;
+pub mod import_sniff;
 pub mod introspect;
 pub mod objects;
 pub mod privileges;

@@ -8,6 +8,7 @@ pub mod definitions;
 pub mod explain;
 pub mod export;
 pub mod history;
+pub mod import;
 pub mod objects;
 pub mod privileges;
 pub mod query;
