@@ -6,7 +6,7 @@ use crate::db::introspect;
 use crate::error::AppResult;
 use crate::models::connection::ConnectionInfo;
 use crate::models::schema::{
-    DatabaseInfo, DbObject, IncomingForeignKey, SchemaInfo, TableDescription,
+    CompletionSchema, DatabaseInfo, DbObject, IncomingForeignKey, SchemaInfo, TableDescription,
 };
 use crate::state::AppState;
 
@@ -71,6 +71,17 @@ pub async fn describe_table(
 ) -> AppResult<TableDescription> {
     let session = state.session(&connection_id).await?;
     introspect::describe_table(&*session.meta().await?, &schema, &table).await
+}
+
+/// Everything the SQL editor completes names from, in one round trip (ANG-30).
+#[tauri::command]
+#[specta::specta]
+pub async fn completion_schema(
+    state: State<'_, AppState>,
+    connection_id: String,
+) -> AppResult<CompletionSchema> {
+    let session = state.session(&connection_id).await?;
+    introspect::completion_schema(&*session.meta().await?).await
 }
 
 /// The foreign keys of other tables that point at this one ("referenced by").

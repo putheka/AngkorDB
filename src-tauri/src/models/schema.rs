@@ -86,6 +86,43 @@ pub struct ForeignKeyRef {
     pub column: String,
 }
 
+/// What the SQL editor needs to complete names: every table and view with its columns, and the
+/// user-defined functions, across all non-system schemas (ANG-30).
+#[derive(Debug, Clone, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct CompletionSchema {
+    /// `current_schemas(false)`: the schemas whose objects can be named without a prefix.
+    pub search_path: Vec<String>,
+    pub tables: Vec<CompletionTable>,
+    pub functions: Vec<CompletionFunction>,
+}
+
+#[derive(Debug, Clone, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct CompletionTable {
+    pub schema: String,
+    pub name: String,
+    pub kind: ObjectKind,
+    pub columns: Vec<CompletionColumn>,
+}
+
+#[derive(Debug, Clone, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct CompletionColumn {
+    pub name: String,
+    /// As Postgres prints it: `numeric(20,6)`.
+    pub type_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct CompletionFunction {
+    pub schema: String,
+    pub name: String,
+    /// `(p_name text DEFAULT 'world'::text) → text`
+    pub signature: String,
+}
+
 /// A foreign key of another table that points at this one ("referenced by"). The two column
 /// lists are in constraint order: `columns[i]` of `schema.table` references `referenced_columns[i]`
 /// of the table asked about.

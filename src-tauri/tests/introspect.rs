@@ -744,3 +744,61 @@ async fn lists_the_foreign_keys_that_point_at_a_table() {
     assert_eq!(composite[0].columns, strings(&["x", "y"]));
     assert_eq!(composite[0].referenced_columns, strings(&["a", "b"]));
 }
+
+#[tokio::test]
+async fn completion_schema_has_tables_columns_functions_and_the_search_path() {
+    let Some(session) = open_or_skip().await else {
+        return;
+    };
+    let client = session.meta().await.unwrap();
+    let schema = introspect::completion_schema(&client).await.unwrap();
+
+    assert!(
+        schema.search_path.contains(&"public".to_owned()),
+        "{:?}",
+        schema.search_path
+    );
+
+    let users = schema
+        .tables
+        .iter()
+        .find(|t| t.schema == "public" && t.name == "users")
+        .expect("public.users");
+    let names: Vec<_> = users.columns.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(&names[..3], ["id", "uuid", "email"]);
+    let balance = users.columns.iter().find(|c| c.name == "balance").unwrap();
+    assert_eq!(balance.type_name, "numeric(20,6)");
+
+    // Views and other schemas are in; system schemas are not.
+    let view = schema
+        .tables
+        .iter()
+        .find(|t| t.name == "user_order_totals")
+        .expect("the view");
+    assert_eq!(view.kind, ObjectKind::View);
+    assert!(
+        schema
+            .tables
+            .iter()
+            .any(|t| t.schema == "billing" && t.name == "invoices")
+    );
+    assert!(
+        schema
+            .tables
+            .iter()
+            .all(|t| t.schema != "pg_catalog" && t.schema != "information_schema")
+    );
+
+    let greet = schema
+        .functions
+        .iter()
+        .find(|f| f.name == "greet")
+        .expect("public.greet");
+    assert_eq!(greet.schema, "public");
+    assert!(
+        greet.signature.starts_with("(p_name text DEFAULT"),
+        "{}",
+        greet.signature
+    );
+    assert!(greet.signature.ends_with("→ text"), "{}", greet.signature);
+}

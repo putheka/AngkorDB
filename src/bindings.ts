@@ -49,6 +49,8 @@ export const commands = {
 	listEnumValues: (connectionId: string, typeOid: number, options?: InvokeOptions) => __TAURI_INVOKE<string[]>("list_enum_values", { connectionId, typeOid }, options),
 	/**  The foreign keys of other tables that point at this one ("referenced by"). */
 	listIncomingForeignKeys: (connectionId: string, schema: string, table: string, options?: InvokeOptions) => __TAURI_INVOKE<IncomingForeignKey[]>("list_incoming_foreign_keys", { connectionId, schema, table }, options),
+	/**  Everything the SQL editor completes names from, in one round trip (ANG-30). */
+	completionSchema: (connectionId: string, options?: InvokeOptions) => __TAURI_INVOKE<CompletionSchema>("completion_schema", { connectionId }, options),
 	/**  One page of a table: paging, sorting and filtering happen on the server. */
 	fetchRows: (connectionId: string, query: RowQuery, options?: InvokeOptions) => __TAURI_INVOKE<RowPage>("fetch_rows", { connectionId, query }, options),
 	/**
@@ -157,6 +159,37 @@ export type ColumnInfo = {
 	isPrimaryKey: boolean,
 	comment: string | null,
 	foreignKeys: ForeignKeyRef[],
+};
+
+export type CompletionColumn = {
+	name: string,
+	/**  As Postgres prints it: `numeric(20,6)`. */
+	typeName: string,
+};
+
+export type CompletionFunction = {
+	schema: string,
+	name: string,
+	/**  `(p_name text DEFAULT 'world'::text) → text` */
+	signature: string,
+};
+
+/**
+ *  What the SQL editor needs to complete names: every table and view with its columns, and the
+ *  user-defined functions, across all non-system schemas (ANG-30).
+ */
+export type CompletionSchema = {
+	/**  `current_schemas(false)`: the schemas whose objects can be named without a prefix. */
+	searchPath: string[],
+	tables: CompletionTable[],
+	functions: CompletionFunction[],
+};
+
+export type CompletionTable = {
+	schema: string,
+	name: string,
+	kind: ObjectKind,
+	columns: CompletionColumn[],
 };
 
 /**  Saved connection settings. The password is NOT stored here — it lives in the macOS Keychain. */

@@ -2,6 +2,7 @@
 import type {
   ColumnInfo,
   ColumnIdentity,
+  CompletionSchema,
   DatabaseInfo,
   DbObject,
   IncomingForeignKey,
@@ -265,6 +266,28 @@ export function createSchemaHandlers(requireOpen: (id: string) => void): Record<
   const databaseOf = (id: string) => currentDatabase.get(id) ?? "angkordb_dev";
 
   return {
+    completion_schema: (args): CompletionSchema => {
+      requireOpen(String(args["connectionId"]));
+      const tables: CompletionSchema["tables"] = [];
+      const functions: CompletionSchema["functions"] = [];
+      for (const [schema, objects] of Object.entries(OBJECTS)) {
+        for (const o of objects) {
+          if (["table", "view", "materializedView"].includes(o.kind)) {
+            const described = mockDescribeTable(schema, o.name);
+            tables.push({
+              schema,
+              name: o.name,
+              kind: o.kind,
+              columns: described.columns.map((c) => ({ name: c.name, typeName: c.typeName })),
+            });
+          } else if (o.kind === "function") {
+            functions.push({ schema, name: o.name, signature: o.detail ?? "()" });
+          }
+        }
+      }
+      return { searchPath: ["public"], tables, functions };
+    },
+
     list_incoming_foreign_keys: (args): IncomingForeignKey[] => {
       requireOpen(String(args["connectionId"]));
       return mockIncomingForeignKeys(String(args["schema"]), String(args["table"]));

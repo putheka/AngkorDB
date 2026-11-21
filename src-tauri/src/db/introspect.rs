@@ -5,8 +5,9 @@ use tokio_postgres::Client;
 
 use crate::error::{AppError, AppResult};
 use crate::models::schema::{
-    ColumnIdentity, ColumnInfo, DatabaseInfo, DbObject, ForeignKeyRef, IncomingForeignKey,
-    ObjectKind, RowIdentity, SchemaInfo, TableDescription,
+    ColumnIdentity, ColumnInfo, CompletionColumn, CompletionFunction, CompletionSchema,
+    CompletionTable, DatabaseInfo, DbObject, ForeignKeyRef, IncomingForeignKey, ObjectKind,
+    RowIdentity, SchemaInfo, TableDescription,
 };
 
 /// Databases this user can connect to, without templates.
@@ -120,6 +121,91 @@ pub async fn enum_values(client: &Client, type_oid: u32) -> AppResult<Vec<String
         )
         .await?;
     Ok(rows.iter().map(|row| row.get(0)).collect())
+}
+
+/// More columns than this are not sent: a database with a million columns would make the editor
+/// slower to open than the completion is worth.
+const MAX_COMPLETION_COLUMNS: usize = 200_000;
+const MAX_COMPLETION_FUNCTIONS: i64 = 5_000;
+
+/// Tables, views and their columns, and user-defined functions, for completion in the SQL editor.
+pub async fn completion_schema(client: &Client) -> AppResult<CompletionSchema> {
+    let path = client
+        .query_one("SELECT current_schemas(false)::text[]", &[])
+        .await?
+        .get::<_, Vec<String>>(0);
+
+    let rows = client
+        .query(
+            "SELECT n.nspname::text, c.relname::text, c.relkind::text,
+                    array_agg(a.attname::text ORDER BY a.attnum),
+                    array_agg(format_type(a.atttypid, a.atttypmod) ORDER BY a.attnum)
+               FROM pg_class c
+               JOIN pg_namespace n ON n.oid = c.relnamespace
+               JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+              WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
+                AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+                AND n.nspname NOT LIKE 'pg\\_toast%' AND n.nspname NOT LIKE 'pg\\_temp\\_%'
+              GROUP BY n.nspname, c.relname, c.relkind
+              ORDER BY n.nspname, c.relname",
+            &[],
+        )
+        .await?;
+    let mut tables = Vec::with_capacity(rows.len());
+    let mut columns = 0usize;
+    for row in &rows {
+        let names: Vec<String> = row.get(3);
+        let types: Vec<String> = row.get(4);
+        columns += names.len();
+        if columns > MAX_COMPLETION_COLUMNS {
+            break;
+        }
+        tables.push(CompletionTable {
+            schema: row.get(0),
+            name: row.get(1),
+            kind: match row.get::<_, String>(2).as_str() {
+                "p" => ObjectKind::PartitionedTable,
+                "f" => ObjectKind::ForeignTable,
+                "v" => ObjectKind::View,
+                "m" => ObjectKind::MaterializedView,
+                _ => ObjectKind::Table,
+            },
+            columns: names
+                .into_iter()
+                .zip(types)
+                .map(|(name, type_name)| CompletionColumn { name, type_name })
+                .collect(),
+        });
+    }
+
+    let functions = client
+        .query(
+            "SELECT n.nspname::text, p.proname::text,
+                    '(' || pg_get_function_arguments(p.oid) || ')'
+                      || CASE WHEN p.prokind = 'p' THEN ''
+                              ELSE ' → ' || pg_get_function_result(p.oid) END
+               FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+              WHERE p.prokind IN ('f', 'p')
+                AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+                AND n.nspname NOT LIKE 'pg\\_toast%'
+              ORDER BY n.nspname, p.proname
+              LIMIT $1",
+            &[&MAX_COMPLETION_FUNCTIONS],
+        )
+        .await?
+        .iter()
+        .map(|row| CompletionFunction {
+            schema: row.get(0),
+            name: row.get(1),
+            signature: row.get(2),
+        })
+        .collect();
+
+    Ok(CompletionSchema {
+        search_path: path,
+        tables,
+        functions,
+    })
 }
 
 /// The foreign keys of other tables that point at `schema.table`, for "referenced by". A key

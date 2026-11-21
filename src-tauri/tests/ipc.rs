@@ -378,6 +378,7 @@ fn schema_commands_need_an_open_connection() {
             "list_incoming_foreign_keys",
             json!({ "connectionId": "nope", "schema": "public", "table": "users" }),
         ),
+        ("completion_schema", json!({ "connectionId": "nope" })),
         (
             "count_matching",
             json!({ "connectionId": "nope", "schema": "public", "table": "t",
@@ -586,6 +587,34 @@ fn fetch_and_count_rows_through_ipc() {
             "ctids": [],
             "hasMore": true,
         })
+    );
+
+    let completion = ipc
+        .call("completion_schema", json!({ "connectionId": id }))
+        .unwrap();
+    assert!(
+        completion["searchPath"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("public"))
+    );
+    let users = completion["tables"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "users")
+        .unwrap();
+    assert_eq!(users["kind"], "table");
+    assert_eq!(
+        users["columns"][0],
+        json!({ "name": "id", "typeName": "bigint" })
+    );
+    assert!(
+        completion["functions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["name"] == "greet")
     );
 
     let incoming = ipc

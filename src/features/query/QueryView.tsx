@@ -1,9 +1,11 @@
+import { useQuery } from "@tanstack/react-query";
 import { PlayIcon, SquareIcon } from "lucide-react";
-import { useCallback, useEffect, useRef, useState, type PointerEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useWriteApproval } from "@/features/safety/approval";
+import { buildIndex } from "@/features/query/completion/suggest";
 import { nextRunId, useQueryView, useQueryViews } from "@/features/query/queryViews";
 import { ResultsPane } from "@/features/query/ResultsPane";
 import { SqlEditor, type RunMode, type SqlEditorHandle } from "@/features/query/SqlEditor";
@@ -31,6 +33,15 @@ export function QueryView({ connectionId, tab }: { connectionId: string; tab: Qu
   const drag = useRef<{ startY: number; startHeight: number } | null>(null);
 
   const { mode: safeMode, name: connectionName, approve } = useWriteApproval(connectionId);
+
+  // Names to complete: tables, columns and functions of the whole database, loaded once and
+  // reloaded with the schema (⌘R). It is under "schema", so a reload refreshes it too.
+  const schema = useQuery({
+    queryKey: ["schema", connectionId, "completion"],
+    queryFn: () => commands.completionSchema(connectionId),
+    staleTime: 5 * 60_000,
+  });
+  const completion = useMemo(() => (schema.data ? buildIndex(schema.data) : null), [schema.data]);
 
   const run = useCallback(
     async (sql: string, base: number) => {
@@ -179,6 +190,7 @@ export function QueryView({ connectionId, tab }: { connectionId: string; tab: Qu
           onTextChange={(text) => update({ text })}
           onSelectionChange={(selection) => update({ selection })}
           onRun={(mode) => void onRun(mode)}
+          completion={completion}
         />
       </div>
 

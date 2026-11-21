@@ -12,6 +12,8 @@ import {
   lineNumbers,
   type DecorationSet,
 } from "@codemirror/view";
+import { sqlAutocomplete } from "@/features/query/completion/source";
+import type { SchemaIndex } from "@/features/query/completion/suggest";
 import { editorTheme, highlightStyle } from "@/features/query/editorTheme";
 import { useEffect, useImperativeHandle, useRef, type Ref } from "react";
 
@@ -34,6 +36,8 @@ interface SqlEditorProps {
   onSelectionChange: (selection: { anchor: number; head: number }) => void;
   /** ⌘↵ runs the selection or the statement at the cursor; ⌘⇧↵ runs everything. */
   onRun: (mode: RunMode) => void;
+  /** The schema to complete names from (ANG-30); `null` until it has loaded. */
+  completion: SchemaIndex | null;
 }
 
 const setErrorMark = StateEffect.define<{ from: number; to: number } | null>();
@@ -69,13 +73,14 @@ export function SqlEditor({
   onTextChange,
   onSelectionChange,
   onRun,
+  completion,
 }: SqlEditorProps) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
   // The editor is created once; these always point at the latest props.
-  const callbacks = useRef({ onTextChange, onSelectionChange, onRun });
+  const callbacks = useRef({ onTextChange, onSelectionChange, onRun, completion });
   useEffect(() => {
-    callbacks.current = { onTextChange, onSelectionChange, onRun };
+    callbacks.current = { onTextChange, onSelectionChange, onRun, completion };
   });
 
   useImperativeHandle(ref, () => ({
@@ -120,6 +125,7 @@ export function SqlEditor({
         history(),
         bracketMatching(),
         sql({ dialect: PostgreSQL, upperCaseKeywords: false }),
+        sqlAutocomplete(() => callbacks.current.completion),
         syntaxHighlighting(highlightStyle),
         errorMarks,
         editorTheme,
