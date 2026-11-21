@@ -35,9 +35,7 @@ type Pending =
  * Every shortcut, searchable. A key can be added to a command, taken away, or put back to the
  * default; a key another command already uses is refused unless the person replaces it.
  */
-export function ShortcutsDialog() {
-  const open = useShortcuts((s) => s.dialogOpen);
-  const close = useShortcuts((s) => s.closeDialog);
+export function ShortcutsPanel() {
   const overrides = useShortcuts((s) => s.overrides);
   const { assign, remove, reset, resetAll } = useShortcuts.getState();
   const [search, setSearch] = useState("");
@@ -92,13 +90,6 @@ export function ShortcutsDialog() {
     [query, overrides],
   );
   const changed = Object.keys(overrides).length > 0;
-
-  function done() {
-    setPending(null);
-    setMessage(null);
-    setSearch("");
-    close();
-  }
 
   const row = (def: CommandDef) => {
     const chords = bindingsOf(def, overrides);
@@ -192,7 +183,64 @@ export function ShortcutsDialog() {
   };
 
   return (
-    <Dialog open={open} onOpenChange={(next) => !next && done()}>
+    <div className="flex flex-col gap-3">
+      <Input
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        placeholder="Search commands or keys"
+        aria-label="Search shortcuts"
+        autoComplete="off"
+      />
+      {message && (
+        <p role="alert" className="text-xs text-destructive">
+          {message}
+        </p>
+      )}
+      <div className="flex flex-col gap-3">
+        {groups.map(({ group, commands }) => (
+          <section key={group}>
+            <h3 className="pb-1 text-xs font-medium tracking-wide text-muted-foreground uppercase">
+              {group}
+            </h3>
+            <ul className={cn("divide-y")}>{commands.map(row)}</ul>
+          </section>
+        ))}
+        {groups.length === 0 && (
+          <p className="py-4 text-center text-sm text-muted-foreground">Nothing matches.</p>
+        )}
+        {!query && (
+          <section>
+            <h3 className="pb-1 text-xs font-medium tracking-wide text-muted-foreground uppercase">
+              Fixed keys
+            </h3>
+            <ul className="divide-y">
+              {FIXED_KEYS.map((fixed) => (
+                <li key={fixed.what} className="flex items-center gap-2 py-1.5 text-sm">
+                  <span className="min-w-0 flex-1 truncate">{fixed.what}</span>
+                  <kbd className="rounded border bg-muted px-1.5 py-0.5 font-sans text-xs">
+                    {fixed.keys}
+                  </kbd>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+      </div>
+      <div className="flex justify-end">
+        <Button type="button" variant="ghost" disabled={!changed} onClick={resetAll}>
+          Reset all to default
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/** The shortcuts in a window of their own, opened with the keyboard icon or ⇧⌘/. */
+export function ShortcutsDialog() {
+  const open = useShortcuts((s) => s.dialogOpen);
+  const close = useShortcuts((s) => s.closeDialog);
+  return (
+    <Dialog open={open} onOpenChange={(next) => !next && close()}>
       <DialogContent className="max-h-[calc(100vh-2rem)] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>Keyboard shortcuts</DialogTitle>
@@ -200,53 +248,9 @@ export function ShortcutsDialog() {
             Add or take away keys for a command. A key another command uses asks first.
           </DialogDescription>
         </DialogHeader>
-        <Input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search commands or keys"
-          aria-label="Search shortcuts"
-          autoComplete="off"
-        />
-        {message && (
-          <p role="alert" className="text-xs text-destructive">
-            {message}
-          </p>
-        )}
-        <div className="flex flex-col gap-3">
-          {groups.map(({ group, commands }) => (
-            <section key={group}>
-              <h3 className="pb-1 text-xs font-medium tracking-wide text-muted-foreground uppercase">
-                {group}
-              </h3>
-              <ul className={cn("divide-y")}>{commands.map(row)}</ul>
-            </section>
-          ))}
-          {groups.length === 0 && (
-            <p className="py-4 text-center text-sm text-muted-foreground">Nothing matches.</p>
-          )}
-          {!query && (
-            <section>
-              <h3 className="pb-1 text-xs font-medium tracking-wide text-muted-foreground uppercase">
-                Fixed keys
-              </h3>
-              <ul className="divide-y">
-                {FIXED_KEYS.map((fixed) => (
-                  <li key={fixed.what} className="flex items-center gap-2 py-1.5 text-sm">
-                    <span className="min-w-0 flex-1 truncate">{fixed.what}</span>
-                    <kbd className="rounded border bg-muted px-1.5 py-0.5 font-sans text-xs">
-                      {fixed.keys}
-                    </kbd>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          )}
-        </div>
+        {open && <ShortcutsPanel />}
         <DialogFooter>
-          <Button type="button" variant="ghost" disabled={!changed} onClick={resetAll}>
-            Reset all to default
-          </Button>
-          <Button type="button" onClick={done}>
+          <Button type="button" onClick={close}>
             Done
           </Button>
         </DialogFooter>

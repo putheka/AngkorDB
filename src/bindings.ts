@@ -29,6 +29,13 @@ export const commands = {
 	setUnsavedChanges: (count: number, options?: InvokeOptions) => __TAURI_INVOKE<void>("set_unsaved_changes", { count }, options),
 	/**  Quit the app. Called by the page once the person has decided about their unsaved edits. */
 	quitApp: (options?: InvokeOptions) => __TAURI_INVOKE<void>("quit_app", undefined, options),
+	/**  Show the settings window (⌘,), opening it if it isn't open. */
+	openSettings: (options?: InvokeOptions) => __TAURI_INVOKE<void>("open_settings", undefined, options),
+	/**
+	 *  The page reports the "Confirm on quit" setting: with it on, quitting asks even when nothing
+	 *  is unsaved.
+	 */
+	setConfirmOnQuit: (confirm: boolean, options?: InvokeOptions) => __TAURI_INVOKE<void>("set_confirm_on_quit", { confirm }, options),
 	/**
 	 *  Write the chosen connections to a file: their settings, never a password, an SSH secret or a
 	 *  key passphrase. Returns how many were written.

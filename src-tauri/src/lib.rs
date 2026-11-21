@@ -14,6 +14,7 @@ pub mod error;
 pub mod exit;
 pub mod menu;
 pub mod models;
+pub mod settings;
 pub mod state;
 pub mod storage;
 
@@ -46,6 +47,8 @@ pub fn specta_builder<R: tauri::Runtime>() -> Builder<R> {
             commands::app::app_info,
             commands::app::set_unsaved_changes,
             commands::app::quit_app,
+            commands::app::open_settings,
+            commands::app::set_confirm_on_quit,
             commands::connection_files::export_connections,
             commands::connection_files::read_connection_file,
             commands::connection_files::import_connections,
@@ -187,6 +190,7 @@ pub fn run() {
             // What commands may not do themselves: touch the window and quit (ANG-29).
             let window = app.handle().clone();
             let quitter = app.handle().clone();
+            let opener = app.handle().clone();
             app.state::<AppState>().set_window_hooks(WindowHooks {
                 set_edited: Box::new(move |edited| {
                     if let Some(main) = window.get_webview_window("main") {
@@ -194,6 +198,11 @@ pub fn run() {
                     }
                 }),
                 quit: Box::new(move || quitter.exit(0)),
+                // Windows are made on the main thread.
+                open_settings: Box::new(move || {
+                    let app = opener.clone();
+                    let _ = opener.run_on_main_thread(move || settings::open(&app));
+                }),
             });
             Ok(())
         })

@@ -10,10 +10,13 @@ use tauri::{AppHandle, Emitter, Runtime};
 
 /// Menu item id, and the name of the event sent to the page.
 pub const CLOSE_TAB: &str = "close-tab";
+/// Menu item id of "Settings…" (⌘,); the window is opened by Rust itself.
+pub const SETTINGS: &str = "open-settings";
 
 pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     let name = app.package_info().name.clone();
     let close_tab = MenuItem::with_id(app, CLOSE_TAB, "Close Tab", true, Some("CmdOrCtrl+W"))?;
+    let settings = MenuItem::with_id(app, SETTINGS, "Settings…", true, Some("CmdOrCtrl+,"))?;
 
     let app_menu = Submenu::with_items(
         app,
@@ -21,6 +24,8 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         true,
         &[
             &PredefinedMenuItem::about(app, None, Some(AboutMetadata::default()))?,
+            &PredefinedMenuItem::separator(app)?,
+            &settings,
             &PredefinedMenuItem::separator(app)?,
             &PredefinedMenuItem::services(app, None)?,
             &PredefinedMenuItem::separator(app)?,
@@ -72,7 +77,9 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
 
 /// Forward the menu items the page cares about.
 pub fn on_event<R: Runtime>(app: &AppHandle<R>, id: &str) {
-    if id == CLOSE_TAB {
+    if id == SETTINGS {
+        crate::settings::open(app);
+    } else if id == CLOSE_TAB {
         // Only fails if no window is listening, in which case there is nothing to close.
         let _ = app.emit(CLOSE_TAB, ());
     }

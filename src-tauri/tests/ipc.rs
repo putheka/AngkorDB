@@ -1019,6 +1019,7 @@ fn unsaved_changes_are_remembered_and_drive_the_window_hooks() {
     // With hooks: the edited dot follows "is there anything unsaved", quitting calls the hook.
     let dots = Arc::new(Mutex::new(Vec::new()));
     let quits = Arc::new(AtomicU32::new(0));
+    let opens = Arc::new(AtomicU32::new(0));
     state.set_window_hooks(WindowHooks {
         set_edited: {
             let dots = dots.clone();
@@ -1028,6 +1029,12 @@ fn unsaved_changes_are_remembered_and_drive_the_window_hooks() {
             let quits = quits.clone();
             Box::new(move || {
                 quits.fetch_add(1, Ordering::SeqCst);
+            })
+        },
+        open_settings: {
+            let opens = opens.clone();
+            Box::new(move || {
+                opens.fetch_add(1, Ordering::SeqCst);
             })
         },
     });
@@ -1041,6 +1048,12 @@ fn unsaved_changes_are_remembered_and_drive_the_window_hooks() {
     assert_eq!(quits.load(Ordering::SeqCst), 0);
     ipc.call("quit_app", json!({})).unwrap();
     assert_eq!(quits.load(Ordering::SeqCst), 1);
+
+    // The settings window is asked for through the hook, once per call.
+    assert_eq!(opens.load(Ordering::SeqCst), 0);
+    ipc.call("open_settings", json!({})).unwrap();
+    ipc.call("open_settings", json!({})).unwrap();
+    assert_eq!(opens.load(Ordering::SeqCst), 2);
 }
 
 #[test]
@@ -2996,4 +3009,22 @@ fn the_workspace_and_the_launch_settings_are_kept_and_deleting_a_connection_forg
     );
     ipc.call("set_last_connection", json!({ "connectionId": null }))
         .unwrap();
+}
+
+#[test]
+fn the_settings_window_and_confirm_on_quit_commands_work_without_a_window() {
+    let ipc = setup();
+    // No window hooks in tests: opening the settings window is a no-op, not an error.
+    assert_eq!(ipc.call("open_settings", json!({})).unwrap(), json!(null));
+    let state = ipc._app.state::<AppState>();
+    assert!(!state.confirm_quit());
+    assert_eq!(
+        ipc.call("set_confirm_on_quit", json!({ "confirm": true }))
+            .unwrap(),
+        json!(null)
+    );
+    assert!(state.confirm_quit());
+    ipc.call("set_confirm_on_quit", json!({ "confirm": false }))
+        .unwrap();
+    assert!(!state.confirm_quit());
 }

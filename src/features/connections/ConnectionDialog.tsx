@@ -45,6 +45,7 @@ import {
 } from "@/features/connections/form";
 import { HostKeyDetails } from "@/features/connections/HostKeyDialog";
 import { hostKeyStop, type HostKeyStop } from "@/features/connections/hostKey";
+import { useGeneral } from "@/stores/general";
 import { useSaveConnection } from "@/features/connections/useConnections";
 import { errorDetails, errorMessage } from "@/lib/errors";
 import { commands } from "@/lib/ipc";
@@ -77,7 +78,9 @@ export function ConnectionDialog({ connection, groups, onClose }: ConnectionDial
 
 function ConnectionFormBody({ connection, groups, onClose }: ConnectionDialogProps) {
   const [form, setForm] = useState<ConnectionForm>(() =>
-    connection ? formFromConnection(connection) : emptyForm,
+    connection
+      ? formFromConnection(connection)
+      : { ...emptyForm, safeMode: useGeneral.getState().defaultSafeMode },
   );
   const [showErrors, setShowErrors] = useState(false);
   const [urlText, setUrlText] = useState("");

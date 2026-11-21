@@ -7,8 +7,10 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AppearanceMenu } from "@/features/appearance/AppearanceMenu";
 import { useTabShortcuts } from "@/features/tabs/useTabShortcuts";
+import { QuitConfirmDialog } from "@/features/settings/quitConfirm";
 import { ShortcutsDialog } from "@/features/shortcuts/ShortcutsDialog";
 import { Shortcut } from "@/features/shortcuts/Shortcut";
+import { commands } from "@/lib/ipc";
 import { useShortcut, useShortcutDispatcher } from "@/features/shortcuts/registry";
 import { useWorkspacePersistence } from "@/features/workspace/useWorkspacePersistence";
 import { refreshData } from "@/features/grid/useTableData";
@@ -54,6 +56,7 @@ export function AppShell() {
     { enabled: connected },
   );
   useShortcut("app.shortcuts", () => useShortcuts.getState().toggleDialog());
+  useShortcut("app.settings", () => void commands.openSettings());
 
   return (
     <div className="flex h-full flex-col">
@@ -122,6 +125,7 @@ export function AppShell() {
       <UnsavedChangesDialog />
       <WriteApprovalDialog />
       <ShortcutsDialog />
+      <QuitConfirmDialog />
       <StatusBar />
     </div>
   );

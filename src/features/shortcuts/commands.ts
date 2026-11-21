@@ -60,6 +60,15 @@ export const COMMANDS: readonly CommandDef[] = [
     keys: ["Cmd+Digit0"],
   },
   {
+    id: "app.settings",
+    title: "Settings",
+    group: "General",
+    scope: "app",
+    keys: ["Cmd+Comma"],
+    // The menu bar's "Settings…" owns ⌘, in the app.
+    fixed: true,
+  },
+  {
     id: "app.shortcuts",
     title: "Keyboard shortcuts",
     group: "General",

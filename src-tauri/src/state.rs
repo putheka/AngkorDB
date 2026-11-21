@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tokio::sync::RwLock;
@@ -19,6 +19,8 @@ pub struct WindowHooks {
     pub set_edited: Box<dyn Fn(bool) + Send + Sync>,
     /// Leave the app, without asking again.
     pub quit: Box<dyn Fn() + Send + Sync>,
+    /// Show the settings window (opening it if needed).
+    pub open_settings: Box<dyn Fn() + Send + Sync>,
 }
 
 /// Global state shared by all commands (`tauri::State<AppState>`).
@@ -29,6 +31,8 @@ pub struct AppState {
     /// How many tabs have staged edits, as the page last said (ANG-29). Quitting asks first
     /// while this is above zero.
     unsaved: AtomicU32,
+    /// "Confirm on quit" is on (ANG-53): quitting asks even with nothing unsaved.
+    confirm_quit: AtomicBool,
     hooks: Mutex<Option<WindowHooks>>,
     history: HistoryStore,
     workspaces: WorkspaceStore,
@@ -47,6 +51,7 @@ impl AppState {
             connections,
             sessions: RwLock::new(HashMap::new()),
             unsaved: AtomicU32::new(0),
+            confirm_quit: AtomicBool::new(false),
             hooks: Mutex::new(None),
             // Without a file (tests): history that lasts as long as the app does.
             history: HistoryStore::in_memory().expect("an in-memory SQLite database"),
@@ -139,6 +144,24 @@ impl AppState {
             && let Some(hooks) = hooks.as_ref()
         {
             (hooks.set_edited)(count > 0);
+        }
+    }
+
+    /// The page reports the "Confirm on quit" setting.
+    pub fn set_confirm_quit(&self, confirm: bool) {
+        self.confirm_quit.store(confirm, Ordering::SeqCst);
+    }
+
+    pub fn confirm_quit(&self) -> bool {
+        self.confirm_quit.load(Ordering::SeqCst)
+    }
+
+    /// Show the settings window. Without a window (tests) nothing happens.
+    pub fn open_settings(&self) {
+        if let Ok(hooks) = self.hooks.lock()
+            && let Some(hooks) = hooks.as_ref()
+        {
+            (hooks.open_settings)();
         }
     }
 

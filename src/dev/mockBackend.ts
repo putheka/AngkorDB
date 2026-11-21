@@ -542,6 +542,12 @@ const handlers: Record<string, Handler> = {
     mockStore("startup", mockStartup);
     return null;
   },
+  // The settings window: a second browser window of the same mock page.
+  open_settings: () => {
+    window.open(`${location.origin}/#settings`, "angkordb-settings", "width=820,height=600");
+    return null;
+  },
+  set_confirm_on_quit: () => null,
   resolve_ssh_alias: (args): SshAlias | null =>
     String(args["host"]).trim() === "prod-db"
       ? {

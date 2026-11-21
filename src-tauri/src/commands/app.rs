@@ -37,3 +37,18 @@ pub fn set_unsaved_changes(state: State<'_, AppState>, count: u32) {
 pub fn quit_app(state: State<'_, AppState>) {
     state.quit();
 }
+
+/// Show the settings window (⌘,), opening it if it isn't open.
+#[tauri::command]
+#[specta::specta]
+pub fn open_settings(state: State<'_, AppState>) {
+    state.open_settings();
+}
+
+/// The page reports the "Confirm on quit" setting: with it on, quitting asks even when nothing
+/// is unsaved.
+#[tauri::command]
+#[specta::specta]
+pub fn set_confirm_on_quit(state: State<'_, AppState>, confirm: bool) {
+    state.set_confirm_quit(confirm);
+}

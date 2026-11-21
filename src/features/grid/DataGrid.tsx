@@ -60,6 +60,7 @@ import { shortcutLabel } from "@/features/shortcuts/labels";
 import { gridMetrics } from "@/features/appearance/prefs";
 import { errorMessage } from "@/lib/errors";
 import { useAppearance } from "@/stores/appearance";
+import { useGeneral } from "@/stores/general";
 
 /** The row-number column is column 0 of the grid's own coordinates; ours start after it. */
 const ROW_MARKER_OFFSET = 1;
@@ -196,6 +197,13 @@ export function DataGrid({
   const density = useAppearance((s) => s.density);
   const gridFontSize = useAppearance((s) => s.gridFontSize);
   const { rowHeight, headerHeight } = gridMetrics({ density, gridFontSize });
+  const nullDisplay = useGeneral((s) => s.nullDisplay);
+  const dateFormat = useGeneral((s) => s.dateFormat);
+  const timeZone = useGeneral((s) => s.timeZone);
+  const display = useMemo(
+    () => ({ nullDisplay, dateFormat, timeZone }),
+    [nullDisplay, dateFormat, timeZone],
+  );
   const visible = useMemo(() => visibleColumns(columns, layout), [columns, layout]);
   const [menu, setMenu] = useState<MenuTarget | null>(null);
   const [editor, setEditor] = useState<EditorState | null>(null);
@@ -265,6 +273,7 @@ export function DataGrid({
     overrides: typeof overrides;
     info: typeof info;
     newRows: typeof newRows;
+    display: typeof display;
     cells: Map<number, GridCell>;
   } | null>(null);
   const getCellContent = useCallback(
@@ -278,9 +287,10 @@ export function DataGrid({
         cache.visible !== visible ||
         cache.overrides !== overrides ||
         cache.info !== info ||
-        cache.newRows !== newRows
+        cache.newRows !== newRows ||
+        cache.display !== display
       ) {
-        cache = { rows, visible, overrides, info, newRows, cells: new Map() };
+        cache = { rows, visible, overrides, info, newRows, display, cells: new Map() };
         cellCache.current = cache;
       }
       const key = row * visible.length + col;
@@ -290,19 +300,20 @@ export function DataGrid({
         const editable = found !== undefined && isEditableColumn(found);
         const created = newRows[row];
         if (created) {
-          cell = newRowCell(v.column, created.values[v.column.name], editable);
+          cell = newRowCell(v.column, created.values[v.column.name], editable, display);
         } else {
           const at = row - newCount;
           cell = cellFor(v.column, rows[at]?.[v.index] ?? null, {
             editable,
             edited: overrides?.get(`${at}:${v.index}`),
+            display,
           });
         }
         cache.cells.set(key, cell);
       }
       return cell;
     },
-    [visible, rows, overrides, info, newRows, newCount],
+    [visible, rows, overrides, info, newRows, newCount, display],
   );
 
   // New rows are green, rows to delete red with a line through the text.

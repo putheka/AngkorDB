@@ -1,13 +1,14 @@
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import { create } from "zustand";
 
 import type { SortSpec } from "@/bindings";
 import { EMPTY_LAYOUT, type ColumnLayout } from "@/features/grid/columns";
 import { EMPTY_FILTER, type FilterState } from "@/features/grid/filters";
 import type { Section, TableMode } from "@/features/structure/sections";
+import { useGeneral } from "@/stores/general";
 import { useTabsStore } from "@/stores/tabs";
 
-export const PAGE_SIZES = [100, 500, 1000] as const;
+export { PAGE_SIZES } from "@/features/settings/generalPrefs";
 
 /** What the user has done to one table tab: how it is filtered, sorted, paged and laid out. */
 export interface TableView {
@@ -33,6 +34,12 @@ export const DEFAULT_VIEW: TableView = {
   section: "columns",
 };
 
+/** A table that is opened for the first time: the defaults, with the page size of the settings. */
+const newTableView = (): TableView => ({
+  ...DEFAULT_VIEW,
+  pageSize: useGeneral.getState().pageSize,
+});
+
 interface TableViewsState {
   views: Record<string, TableView>;
   update: (tabId: string, patch: Partial<TableView>) => void;
@@ -42,13 +49,18 @@ export const useTableViews = create<TableViewsState>()((set) => ({
   views: {},
   update: (tabId, patch) =>
     set((state) => ({
-      views: { ...state.views, [tabId]: { ...(state.views[tabId] ?? DEFAULT_VIEW), ...patch } },
+      views: {
+        ...state.views,
+        [tabId]: { ...(state.views[tabId] ?? newTableView()), ...patch },
+      },
     })),
 }));
 
 /** The view state of a tab, and a function to change it. */
 export function useTableView(tabId: string) {
-  const view = useTableViews((s) => s.views[tabId] ?? DEFAULT_VIEW);
+  const saved = useTableViews((s) => s.views[tabId]);
+  const pageSize = useGeneral((s) => s.pageSize);
+  const view = useMemo(() => saved ?? { ...DEFAULT_VIEW, pageSize }, [saved, pageSize]);
   const updateView = useTableViews((s) => s.update);
   const update = useCallback(
     (patch: Partial<TableView>) => updateView(tabId, patch),

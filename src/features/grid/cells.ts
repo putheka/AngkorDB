@@ -3,6 +3,8 @@ import { GridCellKind, type GridCell, type Theme } from "@glideapps/glide-data-g
 import type { ResultColumn } from "@/bindings";
 import { isBoolean, isNumeric } from "@/features/grid/columns";
 import type { CellValue } from "@/features/grid/editing/changes";
+import { formatTemporal } from "@/features/grid/temporal";
+import { DEFAULT_DISPLAY, nullText, type DisplayPrefs } from "@/features/settings/generalPrefs";
 
 /** Cells longer than this are cut for drawing; the full value stays in `data` for copy/overlay. */
 const MAX_DISPLAY = 200;
@@ -13,16 +15,19 @@ const NULL_THEME: Partial<Theme> = {
   baseFontStyle: "italic 13px",
 };
 
-const NULL_LEFT: GridCell = {
-  kind: GridCellKind.Text,
-  data: "",
-  displayData: "NULL",
-  copyData: "",
-  allowOverlay: false,
-  readonly: true,
-  themeOverride: NULL_THEME,
-};
-const NULL_RIGHT: GridCell = { ...NULL_LEFT, contentAlign: "right" };
+/** A NULL cell, with the text the person chose for it. */
+function nullCell(numeric: boolean, display: DisplayPrefs): GridCell {
+  const cell: GridCell = {
+    kind: GridCellKind.Text,
+    data: "",
+    displayData: nullText(display.nullDisplay),
+    copyData: "",
+    allowOverlay: false,
+    readonly: true,
+    themeOverride: NULL_THEME,
+  };
+  return numeric ? { ...cell, contentAlign: "right" } : cell;
+}
 
 /** One line, not too long: new lines become ⏎ so a multi-line value stays on one row. */
 export function displayText(value: string): string {
@@ -59,6 +64,8 @@ export interface CellOptions {
   editable?: boolean;
   /** What the cell is staged to become, if it has been edited. */
   edited?: CellValue | undefined;
+  /** How NULLs, dates and times are written. */
+  display?: DisplayPrefs;
 }
 
 /**
@@ -74,7 +81,12 @@ export function cellFor(
   if (edited?.kind === "default") return DEFAULT_CELL;
   const shown = edited ? (edited.kind === "null" ? null : edited.text) : value;
 
-  const cell = plainCell(column, shown, options.editable === true);
+  const cell = plainCell(
+    column,
+    shown,
+    options.editable === true,
+    options.display ?? DEFAULT_DISPLAY,
+  );
   if (!edited) return cell;
   return { ...cell, themeOverride: { ...cell.themeOverride, bgCell: EDITED_BG } };
 }
@@ -84,14 +96,20 @@ export function newRowCell(
   column: ResultColumn,
   value: CellValue | undefined,
   editable: boolean,
+  display: DisplayPrefs = DEFAULT_DISPLAY,
 ): GridCell {
   if (value === undefined || value.kind === "default") return NEW_DEFAULT_CELL;
-  return plainCell(column, value.kind === "null" ? null : value.text, editable);
+  return plainCell(column, value.kind === "null" ? null : value.text, editable, display);
 }
 
-function plainCell(column: ResultColumn, value: string | null, editable: boolean): GridCell {
+function plainCell(
+  column: ResultColumn,
+  value: string | null,
+  editable: boolean,
+  display: DisplayPrefs,
+): GridCell {
   const numeric = isNumeric(column);
-  if (value === null) return numeric ? NULL_RIGHT : NULL_LEFT;
+  if (value === null) return nullCell(numeric, display);
 
   if (isBoolean(column) && (value === "true" || value === "false")) {
     return {
@@ -106,7 +124,8 @@ function plainCell(column: ResultColumn, value: string | null, editable: boolean
   return {
     kind: GridCellKind.Text,
     data: value,
-    displayData: displayText(value),
+    // Dates and times are written as chosen; the value that is copied or edited stays as sent.
+    displayData: displayText(formatTemporal(value, column.typeName, display)),
     // Editable cells open the editor; the others show the whole value on double-click or Enter.
     allowOverlay: !editable,
     readonly: true,
