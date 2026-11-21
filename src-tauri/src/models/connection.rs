@@ -28,6 +28,27 @@ pub struct ConnectionConfig {
     /// files saved before ANG-43.
     #[serde(default)]
     pub ssh: Option<SshConfig>,
+    /// Certificate files for TLS (ANG-44). `None`: the system's trusted roots, no client
+    /// certificate. Missing in files saved before ANG-44.
+    #[serde(default)]
+    pub ssl_files: Option<SslFiles>,
+}
+
+/// Files for the TLS handshake. Only the paths are stored; the files are read when connecting.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SslFiles {
+    /// The root certificate (CA) the server's certificate must be signed by, as PEM. When given,
+    /// it is the only one trusted: the system's roots are not.
+    pub root_cert: Option<String>,
+    /// The certificate the server may ask the client for, as PEM.
+    pub client_cert: Option<String>,
+    /// Its private key, as PEM (PKCS#8, PKCS#1 or SEC1, plain or protected by a passphrase).
+    pub client_key: Option<String>,
+    /// True when the key's passphrase is saved in the Keychain. Maintained by the backend,
+    /// ignored on input.
+    #[serde(default)]
+    pub has_key_secret: bool,
 }
 
 /// An SSH server to tunnel through. `host`/`port` of the connection are then as the SSH server

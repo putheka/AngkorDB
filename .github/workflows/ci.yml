@@ -96,6 +96,18 @@ jobs:
             -v "$PWD/dev/sshd/authorized:/authorized:ro" \
             angkordb-sshd /usr/sbin/sshd -D -e -p 2222
 
+      - name: Start the TLS-only Postgres
+        run: |
+          docker build -t angkordb-pgtls dev/tls
+          docker run -d --name angkordb-pgtls -p 54330:5432 \
+            -e POSTGRES_USER=angkor -e POSTGRES_PASSWORD=angkor -e POSTGRES_DB=angkordb_dev \
+            -v "$PWD/dev/tls/certs:/certs" angkordb-pgtls
+          # The certificates are made on its first start.
+          for i in $(seq 1 60); do
+            [ -f dev/tls/certs/client-rsa.key ] && docker exec angkordb-pgtls pg_isready -h 127.0.0.1 -U angkor && break
+            sleep 1
+          done
+
       - name: Load dev seed data
         run: >-
           psql "postgres://angkor:angkor@localhost:54329/angkordb_dev"

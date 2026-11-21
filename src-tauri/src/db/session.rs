@@ -10,6 +10,7 @@ use tokio_postgres::{AsyncMessage, Client, Config};
 use tokio_postgres_rustls::MakeRustlsConnect;
 
 use crate::db::ssh::{SshSetup, SshTunnel};
+use crate::db::tls::TlsOptions;
 use crate::db::{config, tls};
 use crate::error::{AppError, AppResult};
 use crate::models::connection::{ConnectionConfig, ConnectionInfo};
@@ -51,10 +52,28 @@ impl Session {
         password: Option<&str>,
         ssh: Option<SshSetup>,
     ) -> AppResult<Self> {
-        let tunnel = open_tunnel(&config, ssh).await?;
+        Self::open_with(
+            config,
+            password,
+            Extras {
+                ssh,
+                ..Extras::default()
+            },
+        )
+        .await
+    }
+
+    /// [`Session::open`] with everything a connection can need besides its password.
+    pub async fn open_with(
+        config: ConnectionConfig,
+        password: Option<&str>,
+        extras: Extras,
+    ) -> AppResult<Self> {
+        let tls = tls::make_tls(&TlsOptions::of(&config, extras.ssl_key_passphrase))?;
+        let tunnel = open_tunnel(&config, extras.ssh).await?;
         let pg_config =
             config::pg_config_via(&config, password, tunnel.as_ref().map(|t| t.local_port()));
-        Self::connect(config, pg_config, tunnel).await
+        Self::connect(config, pg_config, tls, tunnel).await
     }
 
     /// Open another database on the same server with the same credentials: a new session
@@ -69,16 +88,16 @@ impl Session {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clone();
-        Self::connect(config, pg_config, tunnel).await
+        Self::connect(config, pg_config, self.tls.clone(), tunnel).await
     }
 
     async fn connect(
         config: ConnectionConfig,
         pg_config: Config,
+        tls: MakeRustlsConnect,
         tunnel: Option<Arc<SshTunnel>>,
     ) -> AppResult<Self> {
         let started = Instant::now();
-        let tls = tls::make_tls()?;
 
         let manager = Manager::from_config(
             pg_config.clone(),
@@ -230,6 +249,14 @@ impl Session {
     }
 }
 
+/// What a connection needs besides its settings and password: the SSH secret, and the passphrase
+/// of its TLS client key.
+#[derive(Default)]
+pub struct Extras {
+    pub ssh: Option<SshSetup>,
+    pub ssl_key_passphrase: Option<String>,
+}
+
 /// Open the SSH tunnel of a connection that has one.
 async fn open_tunnel(
     config: &ConnectionConfig,
@@ -274,11 +301,28 @@ pub async fn test_connection_with_ssh(
     password: Option<&str>,
     ssh: Option<SshSetup>,
 ) -> AppResult<ConnectionInfo> {
+    test_connection_with(
+        config,
+        password,
+        Extras {
+            ssh,
+            ..Extras::default()
+        },
+    )
+    .await
+}
+
+/// [`test_connection`] with everything a connection can need besides its password.
+pub async fn test_connection_with(
+    config: &ConnectionConfig,
+    password: Option<&str>,
+    extras: Extras,
+) -> AppResult<ConnectionInfo> {
     let started = Instant::now();
-    let tunnel = open_tunnel(config, ssh).await?;
+    let tls = tls::make_tls(&TlsOptions::of(config, extras.ssl_key_passphrase))?;
+    let tunnel = open_tunnel(config, extras.ssh).await?;
     let pg_config =
         config::pg_config_via(config, password, tunnel.as_ref().map(|t| t.local_port()));
-    let tls = tls::make_tls()?;
 
     let attempt = async {
         let (client, connection) = pg_config.connect(tls).await?;

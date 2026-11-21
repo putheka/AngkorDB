@@ -105,6 +105,24 @@ let connections: ConnectionConfig[] = [
   },
 ];
 
+/** What the server's certificate would say, for hosts with a name that asks for it. */
+function checkTls(config: ConnectionConfig) {
+  const verifying = config.sslMode === "verify-ca" || config.sslMode === "verify-full";
+  if (!verifying) return;
+  if (config.host.includes("selfsigned") && !config.sslFiles?.rootCert) {
+    throw appError(
+      "CONNECTION",
+      "TLS: The server's certificate was signed by an authority this Mac doesn't trust. Choose the root certificate (CA) file of the server, or set SSL to Require if you only need encryption.",
+    );
+  }
+  if (config.host.includes("wrongname") && config.sslMode === "verify-full") {
+    throw appError(
+      "CONNECTION",
+      `TLS: The server's certificate is for db.example.org, not for ${config.host}. Connect with the name in the certificate, or use Verify CA.`,
+    );
+  }
+}
+
 /** SSH servers the person trusted; the first time a host is seen the connection stops there. */
 const trustedHosts = new Set<string>();
 const pendingHostKeys = new Map<string, string>();
@@ -212,10 +230,11 @@ const handlers: Record<string, Handler> = {
   list_connections: () => structuredClone(connections),
 
   save_connection: async (args) => {
-    const { config, password, sshSecret } = args as {
+    const { config, password, sshSecret, sslKeySecret } = args as {
       config: ConnectionConfig;
       password: PasswordChange;
       sshSecret: PasswordChange | null;
+      sslKeySecret: PasswordChange | null;
     };
     await sleep(150);
     const previous = connections.find((c) => c.id === config.id);
@@ -230,6 +249,18 @@ const handlers: Record<string, Handler> = {
           : password.kind === "clear"
             ? false
             : !!previous?.hasPassword,
+      sslFiles: config.sslFiles
+        ? {
+            ...config.sslFiles,
+            hasKeySecret: !config.sslFiles.clientKey
+              ? false
+              : sslKeySecret?.kind === "set"
+                ? true
+                : sslKeySecret?.kind === "clear"
+                  ? false
+                  : !!previous?.sslFiles?.hasKeySecret,
+          }
+        : null,
       ssh: config.ssh
         ? {
             ...config.ssh,
@@ -272,6 +303,7 @@ const handlers: Record<string, Handler> = {
     await sleep(600);
     noteSshSecret(sshSecret);
     checkSsh(config);
+    checkTls(config);
     if (config.host.includes("bad")) {
       throw appError("CONNECTION", "error connecting to server: Connection refused (os error 61)");
     }
@@ -304,6 +336,9 @@ const handlers: Record<string, Handler> = {
         : null,
     };
   },
+
+  // The system file dialog: a fixed path stands in for what the person would pick.
+  "plugin:dialog|open": () => "/Users/me/certs/server-ca.pem",
 
   trust_ssh_host: (args) => {
     const where = pendingHostKeys.get(String(args["fingerprint"]));

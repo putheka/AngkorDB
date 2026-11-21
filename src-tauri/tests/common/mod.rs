@@ -30,6 +30,7 @@ pub fn dev_config() -> ConnectionConfig {
         statement_timeout_ms: None,
         has_password: false,
         ssh: None,
+        ssl_files: None,
     }
 }
 

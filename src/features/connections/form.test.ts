@@ -9,9 +9,11 @@ import {
   formFromConnection,
   formToConfig,
   formToSshSecretChange,
+  formToSslKeySecretChange,
   secondsText,
   timeoutMs,
   validateForm,
+  verifiesCertificate,
 } from "./form.ts";
 
 test("the statement timeout is typed in seconds and kept in milliseconds", () => {
@@ -57,6 +59,7 @@ const direct: ConnectionConfig = {
   statementTimeoutMs: null,
   hasPassword: false,
   ssh: null,
+  sslFiles: null,
 };
 
 test("a connection without a tunnel stays without one through the form", () => {
@@ -126,4 +129,59 @@ test("the tunnel's fields are checked only when there is a tunnel", () => {
   // A password or the agent needs no key path.
   assert.deepEqual(validateForm({ ...good, sshAuth: "password", sshKeyPath: "" }), {});
   assert.deepEqual(validateForm({ ...good, sshAuth: "agent", sshKeyPath: "" }), {});
+});
+
+test("certificate files round-trip through the form, and none is none", () => {
+  assert.equal(formToConfig(formFromConnection(direct)).sslFiles, null);
+  const files = {
+    rootCert: "/certs/ca.crt",
+    clientCert: "/certs/client.crt",
+    clientKey: "/certs/client.key",
+    hasKeySecret: true,
+  };
+  const form = formFromConnection({ ...direct, sslMode: "verify-full", sslFiles: files });
+  assert.equal(form.sslRootCert, "/certs/ca.crt");
+  assert.equal(form.hasSslKeySecret, true);
+  assert.deepEqual(formToConfig(form).sslFiles, files);
+  // Blank and padded paths.
+  const root = { ...emptyForm, sslRootCert: "  /certs/ca.crt " };
+  assert.deepEqual(formToConfig(root).sslFiles, {
+    rootCert: "/certs/ca.crt",
+    clientCert: null,
+    clientKey: null,
+    hasKeySecret: false,
+  });
+  assert.equal(formToConfig({ ...emptyForm, sslRootCert: "   " }).sslFiles, null);
+});
+
+test("the client key's passphrase is kept, replaced or removed; no key, no passphrase", () => {
+  const base = { ...emptyForm, sslClientKey: "/k", sslClientCert: "/c", hasSslKeySecret: true };
+  assert.deepEqual(formToSslKeySecretChange(base), { kind: "keep" });
+  assert.deepEqual(formToSslKeySecretChange({ ...base, sslKeySecret: "p" }), {
+    kind: "set",
+    value: "p",
+  });
+  assert.deepEqual(formToSslKeySecretChange({ ...base, removeSslKeySecret: true }), {
+    kind: "clear",
+  });
+  assert.deepEqual(formToSslKeySecretChange({ ...base, sslClientKey: "", sslKeySecret: "p" }), {
+    kind: "keep",
+  });
+});
+
+test("a client certificate and its key come together; only some modes look at the server's certificate", () => {
+  const filled = { ...emptyForm, user: "u", database: "d" };
+  assert.deepEqual(validateForm({ ...filled, sslClientCert: "/c" }), {
+    sslClientCert: "Both, or neither",
+  });
+  assert.deepEqual(validateForm({ ...filled, sslClientKey: "/k" }), {
+    sslClientCert: "Both, or neither",
+  });
+  assert.deepEqual(validateForm({ ...filled, sslClientCert: "/c", sslClientKey: "/k" }), {});
+  assert.deepEqual(
+    (["disable", "prefer", "require", "verify-ca", "verify-full"] as const).map(
+      verifiesCertificate,
+    ),
+    [false, false, false, true, true],
+  );
 });

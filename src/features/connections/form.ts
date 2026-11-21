@@ -43,6 +43,16 @@ export interface ConnectionForm {
   hasSshSecret: boolean;
   /** The user asked to remove the saved SSH secret. */
   removeSshSecret: boolean;
+  /** Certificate files for TLS: paths, as typed or picked. Empty: none. */
+  sslRootCert: string;
+  sslClientCert: string;
+  sslClientKey: string;
+  /** The passphrase of the client key, as typed. Empty: leave the saved one. */
+  sslKeySecret: string;
+  /** A passphrase for the client key is already saved in the Keychain. */
+  hasSslKeySecret: boolean;
+  /** The user asked to remove the saved passphrase. */
+  removeSslKeySecret: boolean;
 }
 
 export const emptyForm: ConnectionForm = {
@@ -69,6 +79,12 @@ export const emptyForm: ConnectionForm = {
   sshSecret: "",
   hasSshSecret: false,
   removeSshSecret: false,
+  sslRootCert: "",
+  sslClientCert: "",
+  sslClientKey: "",
+  sslKeySecret: "",
+  hasSslKeySecret: false,
+  removeSslKeySecret: false,
 };
 
 export const SSH_AUTH_METHODS: { value: SshAuth["kind"]; label: string }[] = [
@@ -76,6 +92,20 @@ export const SSH_AUTH_METHODS: { value: SshAuth["kind"]; label: string }[] = [
   { value: "password", label: "Password" },
   { value: "agent", label: "SSH agent" },
 ];
+
+/** What each SSL mode checks, in a line. They mean what they mean for `psql`. */
+export const SSL_MODE_HELP: Record<SslMode, string> = {
+  disable: "No encryption.",
+  prefer: "Encrypts if the server offers it. The server's certificate is not checked.",
+  require: "Always encrypts. The server's certificate is not checked.",
+  "verify-ca": "Always encrypts, and the certificate must be signed by a trusted authority.",
+  "verify-full":
+    "Always encrypts, the certificate must be signed by a trusted authority and be for this host.",
+};
+
+/** Does this mode look at the server's certificate (so a root certificate file matters)? */
+export const verifiesCertificate = (mode: SslMode) =>
+  mode === "verify-ca" || mode === "verify-full";
 
 export const SSL_MODES: { value: SslMode; label: string }[] = [
   { value: "disable", label: "Disable" },
@@ -126,7 +156,7 @@ export function formFromConnection(connection: ConnectionConfig): ConnectionForm
     statementTimeout: secondsText(connection.statementTimeoutMs),
     hasPassword: connection.hasPassword,
     removePassword: false,
-    useSsh: connection.ssh !== null,
+    useSsh: Boolean(connection.ssh),
     sshHost: connection.ssh?.host ?? "",
     sshPort: String(connection.ssh?.port ?? 22),
     sshUser: connection.ssh?.user ?? "",
@@ -135,6 +165,12 @@ export function formFromConnection(connection: ConnectionConfig): ConnectionForm
     sshSecret: "",
     hasSshSecret: connection.ssh?.hasSecret ?? false,
     removeSshSecret: false,
+    sslRootCert: connection.sslFiles?.rootCert ?? "",
+    sslClientCert: connection.sslFiles?.clientCert ?? "",
+    sslClientKey: connection.sslFiles?.clientKey ?? "",
+    sslKeySecret: "",
+    hasSslKeySecret: connection.sslFiles?.hasKeySecret ?? false,
+    removeSslKeySecret: false,
   };
 }
 
@@ -161,7 +197,26 @@ export function formToConfig(form: ConnectionForm): ConnectionConfig {
           hasSecret: form.hasSshSecret,
         }
       : null,
+    sslFiles: sslFilesOf(form),
   };
+}
+
+/** The files the form names, or none when every path is blank. */
+function sslFilesOf(form: ConnectionForm): ConnectionConfig["sslFiles"] {
+  const path = (text: string) => (text.trim() === "" ? null : text.trim());
+  const rootCert = path(form.sslRootCert);
+  const clientCert = path(form.sslClientCert);
+  const clientKey = path(form.sslClientKey);
+  if (!rootCert && !clientCert && !clientKey) return null;
+  return { rootCert, clientCert, clientKey, hasKeySecret: form.hasSslKeySecret };
+}
+
+/** What to do with the saved passphrase of the client key. */
+export function formToSslKeySecretChange(form: ConnectionForm): PasswordChange {
+  if (form.sslClientKey.trim() === "") return { kind: "keep" };
+  if (form.sslKeySecret !== "") return { kind: "set", value: form.sslKeySecret };
+  if (form.removeSslKeySecret) return { kind: "clear" };
+  return { kind: "keep" };
 }
 
 function sshAuthOf(form: ConnectionForm): SshAuth {
@@ -217,7 +272,8 @@ export type FormErrors = Partial<
     | "sshHost"
     | "sshPort"
     | "sshUser"
-    | "sshKeyPath",
+    | "sshKeyPath"
+    | "sslClientCert",
     string
   >
 >;
@@ -237,6 +293,9 @@ export function validateForm(form: ConnectionForm): FormErrors {
     }
     if (!form.sshUser.trim()) errors.sshUser = "Required";
     if (form.sshAuth === "privateKey" && !form.sshKeyPath.trim()) errors.sshKeyPath = "Required";
+  }
+  if ((form.sslClientCert.trim() === "") !== (form.sslClientKey.trim() === "")) {
+    errors.sslClientCert = "Both, or neither";
   }
   const timeout = form.statementTimeout.trim();
   if (timeout !== "") {

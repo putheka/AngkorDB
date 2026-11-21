@@ -31,12 +31,12 @@ export const commands = {
 	quitApp: (options?: InvokeOptions) => __TAURI_INVOKE<void>("quit_app", undefined, options),
 	listConnections: (options?: InvokeOptions) => __TAURI_INVOKE<ConnectionConfig[]>("list_connections", undefined, options),
 	/**  Create (empty `config.id`) or update a connection. Returns the saved connection. */
-	saveConnection: (config: ConnectionConfig, password: PasswordChange, sshSecret: PasswordChange | null, options?: InvokeOptions) => __TAURI_INVOKE<ConnectionConfig>("save_connection", { config, password, sshSecret }, options),
+	saveConnection: (config: ConnectionConfig, password: PasswordChange, sshSecret: PasswordChange | null, sslKeySecret: PasswordChange | null, options?: InvokeOptions) => __TAURI_INVOKE<ConnectionConfig>("save_connection", { config, password, sshSecret, sslKeySecret }, options),
 	/**  Delete a connection and its saved password; closes it first if it is open. */
 	deleteConnection: (id: string, options?: InvokeOptions) => __TAURI_INVOKE<null>("delete_connection", { id }, options),
 	duplicateConnection: (id: string, options?: InvokeOptions) => __TAURI_INVOKE<ConnectionConfig>("duplicate_connection", { id }, options),
 	/**  Try to connect with the form values, without saving. Fails after 6 seconds at the latest. */
-	testConnection: (config: ConnectionConfig, password: PasswordChange, sshSecret: PasswordChange | null, options?: InvokeOptions) => __TAURI_INVOKE<ConnectionInfo>("test_connection", { config, password, sshSecret }, options),
+	testConnection: (config: ConnectionConfig, password: PasswordChange, sshSecret: PasswordChange | null, sslKeySecret: PasswordChange | null, options?: InvokeOptions) => __TAURI_INVOKE<ConnectionInfo>("test_connection", { config, password, sshSecret, sslKeySecret }, options),
 	/**
 	 *  Try the SSH leg of the form alone: log in to the SSH server (checking its host key) and ask it
 	 *  to open the database's host and port. Nothing is saved.
@@ -396,6 +396,11 @@ export type ConnectionConfig = {
 	 *  files saved before ANG-43.
 	 */
 	ssh?: SshConfig | null,
+	/**
+	 *  Certificate files for TLS (ANG-44). `None`: the system's trusted roots, no client
+	 *  certificate. Missing in files saved before ANG-44.
+	 */
+	sslFiles?: SslFiles | null,
 };
 
 /**  Result of a successful connect or connection test. */
@@ -1084,6 +1089,24 @@ export type SshTestResult = {
 	reachesDatabase: boolean,
 	/**  Why not, when it could not. */
 	databaseProblem: string | null,
+};
+
+/**  Files for the TLS handshake. Only the paths are stored; the files are read when connecting. */
+export type SslFiles = {
+	/**
+	 *  The root certificate (CA) the server's certificate must be signed by, as PEM. When given,
+	 *  it is the only one trusted: the system's roots are not.
+	 */
+	rootCert: string | null,
+	/**  The certificate the server may ask the client for, as PEM. */
+	clientCert: string | null,
+	/**  Its private key, as PEM (PKCS#8, PKCS#1 or SEC1, plain or protected by a passphrase). */
+	clientKey: string | null,
+	/**
+	 *  True when the key's passphrase is saved in the Keychain. Maintained by the backend,
+	 *  ignored on input.
+	 */
+	hasKeySecret?: boolean,
 };
 
 export type SslMode = "disable" | "prefer" | "require" | "verify-ca" | "verify-full";

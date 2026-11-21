@@ -104,6 +104,9 @@ impl AppError {
         match self {
             Self::Postgres(e) => match (e.as_db_error(), std::error::Error::source(e)) {
                 (Some(db), _) => db.message().to_owned(),
+                _ if tls_explanation(e).is_some() => {
+                    tls_explanation(e).unwrap_or_else(|| e.to_string())
+                }
                 (None, Some(cause)) => format!("{e}: {cause}"),
                 (None, None) => e.to_string(),
             },
@@ -207,6 +210,36 @@ impl specta::Type for AppError {
 }
 
 pub type AppResult<T> = Result<T, AppError>;
+
+/// What went wrong in a TLS handshake, in words that say what to do. Looks through the causes of
+/// the driver's error for the rustls one (it sits inside an `io::Error`).
+fn tls_explanation(error: &tokio_postgres::Error) -> Option<String> {
+    let mut next: Option<&(dyn std::error::Error + 'static)> = std::error::Error::source(error);
+    while let Some(cause) = next {
+        if let Some(tls) = cause.downcast_ref::<rustls::Error>() {
+            return crate::db::tls::explain(tls)
+                .map(|text| format!("TLS: {text}"))
+                .or_else(|| Some(format!("TLS handshake failed: {tls}")));
+        }
+        if let Some(inner) = cause
+            .downcast_ref::<std::io::Error>()
+            .and_then(std::io::Error::get_ref)
+            && let Some(tls) = inner.downcast_ref::<rustls::Error>()
+        {
+            return crate::db::tls::explain(tls)
+                .map(|text| format!("TLS: {text}"))
+                .or_else(|| Some(format!("TLS handshake failed: {tls}")));
+        }
+        next = cause.source();
+    }
+    if error.to_string().contains("does not support TLS") {
+        return Some(
+            "The server does not support TLS. Set SSL to Disable or Prefer, or turn TLS on in the server."
+                .to_owned(),
+        );
+    }
+    None
+}
 
 #[cfg(test)]
 mod tests {

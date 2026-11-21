@@ -4,7 +4,7 @@ use std::fs;
 use std::sync::Arc;
 
 use angkordb_lib::models::connection::{
-    ColorTag, ConnectionConfig, PasswordChange, SafeMode, SshAuth, SshConfig, SslMode,
+    ColorTag, ConnectionConfig, PasswordChange, SafeMode, SshAuth, SshConfig, SslFiles, SslMode,
 };
 use angkordb_lib::storage::ConnectionManager;
 use angkordb_lib::storage::connections::FILE_NAME;
@@ -46,6 +46,7 @@ fn config(name: &str) -> ConnectionConfig {
         statement_timeout_ms: None,
         has_password: false,
         ssh: None,
+        ssl_files: None,
     }
 }
 
@@ -629,4 +630,276 @@ async fn testing_a_form_resolves_the_ssh_secret_like_the_password() {
     );
     assert_eq!(resolve(PasswordChange::Clear, &saved.id).await, None);
     assert_eq!(resolve(PasswordChange::Keep, "").await, None); // an unsaved form
+}
+
+// ---- TLS certificate files (ANG-44) ----------------------------------------------------------
+
+fn with_files(name: &str, files: SslFiles) -> ConnectionConfig {
+    ConnectionConfig {
+        ssl_mode: SslMode::VerifyFull,
+        ssl_files: Some(files),
+        ..config(name)
+    }
+}
+
+fn pair() -> SslFiles {
+    SslFiles {
+        root_cert: Some(" /certs/ca.crt ".into()),
+        client_cert: Some("/certs/client.crt".into()),
+        client_key: Some("/certs/client.key".into()),
+        has_key_secret: true, // ignored: the backend decides
+    }
+}
+
+#[tokio::test]
+async fn the_client_key_passphrase_lives_in_the_keychain_under_its_own_account() {
+    let f = fixture();
+    let saved = f
+        .manager
+        .save_with_secrets(
+            with_files("Managed", pair()),
+            PasswordChange::Keep,
+            PasswordChange::Keep,
+            set("key-passphrase"),
+        )
+        .await
+        .unwrap();
+    let files = saved.ssl_files.as_ref().unwrap();
+    assert_eq!(files.root_cert.as_deref(), Some("/certs/ca.crt")); // trimmed
+    assert!(files.has_key_secret);
+    let account = format!("{}:sslkey", saved.id);
+    assert_eq!(
+        f.secrets.get(&account).unwrap().as_deref(),
+        Some("key-passphrase")
+    );
+    assert_eq!(
+        f.manager
+            .ssl_key_secret(&saved.id)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("key-passphrase")
+    );
+    let file = fs::read_to_string(f.dir.path().join(FILE_NAME)).unwrap();
+    assert!(!file.contains("key-passphrase"), "{file}");
+    assert!(file.contains("/certs/client.key"));
+
+    // Keep leaves it; Clear removes it.
+    let again = |change: PasswordChange| {
+        let config = ConnectionConfig {
+            id: saved.id.clone(),
+            ..with_files("Managed", pair())
+        };
+        let manager = &f.manager;
+        async move {
+            manager
+                .save_with_secrets(config, PasswordChange::Keep, PasswordChange::Keep, change)
+                .await
+                .unwrap()
+        }
+    };
+    assert!(
+        again(PasswordChange::Keep)
+            .await
+            .ssl_files
+            .unwrap()
+            .has_key_secret
+    );
+    assert!(
+        !again(PasswordChange::Clear)
+            .await
+            .ssl_files
+            .unwrap()
+            .has_key_secret
+    );
+    assert_eq!(f.secrets.get(&account).unwrap(), None);
+}
+
+#[tokio::test]
+async fn dropping_the_client_key_or_the_files_drops_the_passphrase() {
+    let f = fixture();
+    let saved = f
+        .manager
+        .save_with_secrets(
+            with_files("Managed", pair()),
+            PasswordChange::Keep,
+            PasswordChange::Keep,
+            set("p"),
+        )
+        .await
+        .unwrap();
+    let account = format!("{}:sslkey", saved.id);
+
+    // Only a root certificate left: no client key, so no passphrase for it.
+    let root_only = f
+        .manager
+        .save_with_secrets(
+            ConnectionConfig {
+                id: saved.id.clone(),
+                ..with_files(
+                    "Managed",
+                    SslFiles {
+                        root_cert: Some("/certs/ca.crt".into()),
+                        ..SslFiles::default()
+                    },
+                )
+            },
+            PasswordChange::Keep,
+            PasswordChange::Keep,
+            PasswordChange::Keep,
+        )
+        .await
+        .unwrap();
+    assert!(!root_only.ssl_files.as_ref().unwrap().has_key_secret);
+    assert_eq!(f.secrets.get(&account).unwrap(), None);
+
+    // And with every path blank there are no files at all.
+    let none = f
+        .manager
+        .save(
+            ConnectionConfig {
+                id: saved.id.clone(),
+                ..with_files(
+                    "Managed",
+                    SslFiles {
+                        root_cert: Some("  ".into()),
+                        ..SslFiles::default()
+                    },
+                )
+            },
+            PasswordChange::Keep,
+        )
+        .await
+        .unwrap();
+    assert_eq!(none.ssl_files, None);
+}
+
+#[tokio::test]
+async fn the_passphrase_is_copied_with_a_duplicate_and_deleted_with_its_connection() {
+    let f = fixture();
+    let saved = f
+        .manager
+        .save_with_secrets(
+            with_files("Managed", pair()),
+            PasswordChange::Keep,
+            PasswordChange::Keep,
+            set("p"),
+        )
+        .await
+        .unwrap();
+    let copy = f.manager.duplicate(&saved.id).await.unwrap();
+    assert!(copy.ssl_files.as_ref().unwrap().has_key_secret);
+    assert_eq!(
+        f.secrets
+            .get(&format!("{}:sslkey", copy.id))
+            .unwrap()
+            .as_deref(),
+        Some("p")
+    );
+    f.manager.delete(&saved.id).await.unwrap();
+    assert_eq!(
+        f.secrets.get(&format!("{}:sslkey", saved.id)).unwrap(),
+        None
+    );
+    assert!(
+        f.secrets
+            .get(&format!("{}:sslkey", copy.id))
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[tokio::test]
+async fn a_client_certificate_and_its_key_go_together_and_an_empty_passphrase_is_refused() {
+    let f = fixture();
+    for files in [
+        SslFiles {
+            client_cert: Some("/c.crt".into()),
+            ..SslFiles::default()
+        },
+        SslFiles {
+            client_key: Some("/c.key".into()),
+            ..SslFiles::default()
+        },
+    ] {
+        let error = f
+            .manager
+            .save(with_files("Bad", files), PasswordChange::Keep)
+            .await
+            .unwrap_err();
+        assert!(
+            error.message().contains("go together"),
+            "{}",
+            error.message()
+        );
+    }
+    let error = f
+        .manager
+        .save_with_secrets(
+            with_files("Bad", pair()),
+            PasswordChange::Keep,
+            PasswordChange::Keep,
+            set(""),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        error.message().contains("passphrase is empty"),
+        "{}",
+        error.message()
+    );
+    assert!(f.manager.list().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn testing_a_form_resolves_every_secret() {
+    let f = fixture();
+    let saved = f
+        .manager
+        .save_with_secrets(
+            with_files("Managed", pair()),
+            set("db-password"),
+            PasswordChange::Keep,
+            set("saved-passphrase"),
+        )
+        .await
+        .unwrap();
+    let form = || ConnectionConfig {
+        id: saved.id.clone(),
+        ..with_files("Managed", pair())
+    };
+    let (_, kept) = f
+        .manager
+        .resolve_for_test_all(
+            form(),
+            PasswordChange::Keep,
+            PasswordChange::Keep,
+            PasswordChange::Keep,
+        )
+        .await
+        .unwrap();
+    assert_eq!(kept.password.as_deref(), Some("db-password"));
+    assert_eq!(kept.ssl_key.as_deref(), Some("saved-passphrase"));
+    let (_, typed) = f
+        .manager
+        .resolve_for_test_all(
+            form(),
+            PasswordChange::Keep,
+            PasswordChange::Keep,
+            set("typed"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(typed.ssl_key.as_deref(), Some("typed"));
+    let (_, cleared) = f
+        .manager
+        .resolve_for_test_all(
+            form(),
+            PasswordChange::Keep,
+            PasswordChange::Keep,
+            PasswordChange::Clear,
+        )
+        .await
+        .unwrap();
+    assert_eq!(cleared.ssl_key, None);
 }

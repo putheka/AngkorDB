@@ -2204,3 +2204,98 @@ fn an_ssh_tunnel_through_ipc_asks_about_the_host_key_then_connects() {
     ipc.call("delete_connection", json!({ "id": id })).unwrap();
     assert_eq!(ipc.secrets.get(&format!("{id}:ssh")).unwrap(), None);
 }
+
+/// The TLS test server (`npm run db:up`) and its certificates, or `None` to skip.
+fn tls_certs() -> Option<std::path::PathBuf> {
+    let port: u16 = ssh_env("ANGKORDB_TEST_TLS_PORT", "54330").parse().unwrap();
+    let addr: SocketAddr = format!("127.0.0.1:{port}").parse().unwrap();
+    let certs = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../dev/tls/certs");
+    if TcpStream::connect_timeout(&addr, Duration::from_secs(1)).is_ok()
+        && certs.join("ca.crt").exists()
+    {
+        return Some(certs);
+    }
+    assert!(
+        std::env::var("ANGKORDB_REQUIRE_DB").as_deref() != Ok("1"),
+        "the TLS test server is not reachable: run `npm run db:up`"
+    );
+    eprintln!("SKIPPED: TLS test server not reachable. Run `npm run db:up`.");
+    None
+}
+
+#[test]
+fn certificate_files_and_the_key_passphrase_through_ipc() {
+    let Some(certs) = tls_certs() else {
+        return;
+    };
+    let ipc = setup();
+    let path = |name: &str| certs.join(name).display().to_string();
+    let port: u16 = ssh_env("ANGKORDB_TEST_TLS_PORT", "54330").parse().unwrap();
+    let mut form = config("Managed", "localhost", port);
+    form["user"] = json!("certuser");
+    form["database"] = json!("angkordb_dev");
+    form["sslMode"] = json!("verify-full");
+    form["sslFiles"] = json!({
+        "rootCert": path("ca.crt"), "clientCert": path("client.crt"),
+        "clientKey": path("client-protected.key"), "hasKeySecret": false
+    });
+    let saved = ipc
+        .call(
+            "save_connection",
+            json!({ "config": form, "password": { "kind": "keep" }, "sshSecret": null,
+                    "sslKeySecret": { "kind": "set", "value": "angkor-key" } }),
+        )
+        .unwrap();
+    let id = saved["id"].as_str().unwrap();
+    assert_eq!(saved["sslFiles"]["hasKeySecret"], json!(true));
+    assert_eq!(
+        ipc.secrets.get(&format!("{id}:sslkey")).unwrap().as_deref(),
+        Some("angkor-key")
+    );
+
+    // Saved passphrase: the form's test and a real connection both use it.
+    let tested = ipc
+        .call(
+            "test_connection",
+            json!({ "config": saved, "password": { "kind": "keep" }, "sshSecret": null,
+                    "sslKeySecret": null }),
+        )
+        .unwrap();
+    assert!(tested["serverVersion"].as_str().unwrap().starts_with("16"));
+    // A passphrase typed in the form wins over the saved one.
+    let wrong = ipc
+        .call(
+            "test_connection",
+            json!({ "config": saved, "password": { "kind": "keep" }, "sshSecret": null,
+                    "sslKeySecret": { "kind": "set", "value": "nope" } }),
+        )
+        .unwrap_err();
+    assert_eq!(wrong["code"], "VALIDATION");
+    assert!(
+        wrong["message"]
+            .as_str()
+            .unwrap()
+            .contains("passphrase is wrong"),
+        "{wrong}"
+    );
+
+    ipc.call("connect_connection", json!({ "id": id })).unwrap();
+    let schemas = ipc
+        .call(
+            "list_schemas",
+            json!({ "connectionId": id, "includeSystem": false }),
+        )
+        .unwrap();
+    assert!(
+        schemas
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["name"] == "public")
+    );
+    ipc.call("disconnect_connection", json!({ "id": id }))
+        .unwrap();
+
+    ipc.call("delete_connection", json!({ "id": id })).unwrap();
+    assert_eq!(ipc.secrets.get(&format!("{id}:sslkey")).unwrap(), None);
+}

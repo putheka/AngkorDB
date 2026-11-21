@@ -5,13 +5,26 @@ use tokio::sync::Mutex;
 use uuid::Uuid;
 
 use crate::error::{AppError, AppResult};
-use crate::models::connection::{ConnectionConfig, PasswordChange, SshAuth, SshConfig};
+use crate::models::connection::{ConnectionConfig, PasswordChange, SshAuth, SshConfig, SslFiles};
 use crate::storage::connections::ConnectionStore;
 use crate::storage::secrets::SecretStore;
 
 /// The Keychain account of a connection's SSH password or key passphrase.
 fn ssh_account(id: &str) -> String {
     format!("{id}:ssh")
+}
+
+/// The Keychain account of the passphrase of a connection's TLS client key.
+fn ssl_key_account(id: &str) -> String {
+    format!("{id}:sslkey")
+}
+
+/// Everything a connection needs besides its settings, as the form resolved it for a test.
+#[derive(Default)]
+pub struct TestSecrets {
+    pub password: Option<String>,
+    pub ssh: Option<String>,
+    pub ssl_key: Option<String>,
 }
 
 /// Saved connections (JSON file) + their passwords (Keychain), kept in sync.
@@ -57,6 +70,14 @@ impl ConnectionManager {
         self.secret_get(&ssh_account(id)).await
     }
 
+    /// The saved passphrase of the TLS client key of a connection.
+    pub async fn ssl_key_secret(&self, id: &str) -> AppResult<Option<String>> {
+        if !self.get(id)?.ssl_files.is_some_and(|f| f.has_key_secret) {
+            return Ok(None);
+        }
+        self.secret_get(&ssl_key_account(id)).await
+    }
+
     /// Create (empty `id`) or update a connection. An SSH secret already saved is kept.
     pub async fn save(
         &self,
@@ -73,6 +94,19 @@ impl ConnectionManager {
         config: ConnectionConfig,
         password: PasswordChange,
         ssh_secret: PasswordChange,
+    ) -> AppResult<ConnectionConfig> {
+        self.save_with_secrets(config, password, ssh_secret, PasswordChange::Keep)
+            .await
+    }
+
+    /// [`ConnectionManager::save`], and what to do with the SSH password or key passphrase and
+    /// with the passphrase of the TLS client key.
+    pub async fn save_with_secrets(
+        &self,
+        config: ConnectionConfig,
+        password: PasswordChange,
+        ssh_secret: PasswordChange,
+        ssl_key_secret: PasswordChange,
     ) -> AppResult<ConnectionConfig> {
         let _guard = self.write_lock.lock().await;
         let mut config = normalize(config)?;
@@ -148,12 +182,54 @@ impl ConnectionManager {
             }
         }
 
+        let had_ssl_secret = previous
+            .as_ref()
+            .and_then(|p| p.ssl_files.as_ref())
+            .is_some_and(|f| f.has_key_secret);
+        match config.ssl_files.as_mut() {
+            // No client key (or no files at all): a passphrase kept for it would be for nothing.
+            None => {
+                if had_ssl_secret {
+                    self.secret_delete(&ssl_key_account(&config.id)).await?;
+                }
+            }
+            Some(files) if files.client_key.is_none() => {
+                if had_ssl_secret {
+                    self.secret_delete(&ssl_key_account(&config.id)).await?;
+                }
+                files.has_key_secret = false;
+            }
+            Some(files) => {
+                files.has_key_secret = match ssl_key_secret {
+                    PasswordChange::Keep => had_ssl_secret,
+                    PasswordChange::Set { value } => {
+                        if value.is_empty() {
+                            return Err(AppError::Validation(
+                                "The key passphrase is empty. Leave it unchanged or remove the saved one"
+                                    .into(),
+                            ));
+                        }
+                        self.secret_set(&ssl_key_account(&config.id), &value)
+                            .await?;
+                        true
+                    }
+                    PasswordChange::Clear => {
+                        self.secret_delete(&ssl_key_account(&config.id)).await?;
+                        false
+                    }
+                };
+            }
+        }
+
         match items.iter_mut().find(|c| c.id == config.id) {
             Some(slot) => *slot = config.clone(),
             None => items.push(config.clone()),
         }
         if let Err(e) = self.store.write(&items) {
             if is_new {
+                if config.ssl_files.as_ref().is_some_and(|f| f.has_key_secret) {
+                    let _ = self.secret_delete(&ssl_key_account(&config.id)).await;
+                }
                 // Don't leave a password behind for a connection that was never saved.
                 if config.has_password {
                     let _ = self.secret_delete(&config.id).await;
@@ -179,6 +255,9 @@ impl ConnectionManager {
         }
         if config.ssh.as_ref().is_some_and(|s| s.has_secret) {
             self.secret_delete(&ssh_account(id)).await?;
+        }
+        if config.ssl_files.as_ref().is_some_and(|f| f.has_key_secret) {
+            self.secret_delete(&ssl_key_account(id)).await?;
         }
         items.retain(|c| c.id != id);
         self.store.write(&items)
@@ -210,8 +289,20 @@ impl ConnectionManager {
             }
         }
 
+        if let Some(files) = copy.ssl_files.as_mut().filter(|f| f.has_key_secret) {
+            match self.secret_get(&ssl_key_account(&original.id)).await? {
+                Some(secret) => {
+                    self.secret_set(&ssl_key_account(&copy.id), &secret).await?;
+                }
+                None => files.has_key_secret = false,
+            }
+        }
+
         items.push(copy.clone());
         if let Err(e) = self.store.write(&items) {
+            if copy.ssl_files.as_ref().is_some_and(|f| f.has_key_secret) {
+                let _ = self.secret_delete(&ssl_key_account(&copy.id)).await;
+            }
             if copy.has_password {
                 let _ = self.secret_delete(&copy.id).await;
             }
@@ -243,7 +334,31 @@ impl ConnectionManager {
         password: PasswordChange,
         ssh_secret: PasswordChange,
     ) -> AppResult<(ConnectionConfig, Option<String>, Option<String>)> {
+        let (config, secrets) = self
+            .resolve_for_test_all(config, password, ssh_secret, PasswordChange::Keep)
+            .await?;
+        Ok((config, secrets.password, secrets.ssh))
+    }
+
+    /// [`ConnectionManager::resolve_for_test`], with every secret a connection can have.
+    pub async fn resolve_for_test_all(
+        &self,
+        config: ConnectionConfig,
+        password: PasswordChange,
+        ssh_secret: PasswordChange,
+        ssl_key_secret: PasswordChange,
+    ) -> AppResult<(ConnectionConfig, TestSecrets)> {
         let config = normalize(config)?;
+        let ssl_key = match ssl_key_secret {
+            PasswordChange::Set { value } => Some(value),
+            PasswordChange::Clear => None,
+            PasswordChange::Keep if config.id.is_empty() => None,
+            PasswordChange::Keep => match self.ssl_key_secret(&config.id).await {
+                Ok(secret) => secret,
+                Err(AppError::ConnectionNotFound(_)) => None,
+                Err(e) => return Err(e),
+            },
+        };
         let ssh_secret = match ssh_secret {
             PasswordChange::Set { value } => Some(value),
             PasswordChange::Clear => None,
@@ -264,7 +379,14 @@ impl ConnectionManager {
                 Err(e) => return Err(e),
             },
         };
-        Ok((config, password, ssh_secret))
+        Ok((
+            config,
+            TestSecrets {
+                password,
+                ssh: ssh_secret,
+                ssl_key,
+            },
+        ))
     }
 
     async fn secret_get(&self, id: &str) -> AppResult<Option<String>> {
@@ -323,10 +445,31 @@ fn normalize(mut config: ConnectionConfig) -> AppResult<ConnectionConfig> {
     if let Some(ssh) = config.ssh.take() {
         config.ssh = Some(normalize_ssh(ssh)?);
     }
+    if let Some(files) = config.ssl_files.take() {
+        config.ssl_files = normalize_ssl_files(files)?;
+    }
     if config.name.is_empty() {
         config.name = format!("{} @ {}", config.database, config.host);
     }
     Ok(config)
+}
+
+/// Trim the paths and drop the ones left empty; no files at all is the same as none. A client
+/// certificate and its key come together.
+fn normalize_ssl_files(mut files: SslFiles) -> AppResult<Option<SslFiles>> {
+    let clean = |path: Option<String>| path.map(|p| p.trim().to_owned()).filter(|p| !p.is_empty());
+    files.root_cert = clean(files.root_cert.take());
+    files.client_cert = clean(files.client_cert.take());
+    files.client_key = clean(files.client_key.take());
+    if files.client_cert.is_some() != files.client_key.is_some() {
+        return Err(AppError::Validation(
+            "A client certificate and its key go together: give both, or neither".into(),
+        ));
+    }
+    if files.root_cert.is_none() && files.client_cert.is_none() {
+        return Ok(None);
+    }
+    Ok(Some(files))
 }
 
 fn normalize_ssh(mut ssh: SshConfig) -> AppResult<SshConfig> {

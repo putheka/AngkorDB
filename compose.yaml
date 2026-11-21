@@ -40,5 +40,26 @@ services:
     volumes:
       - ./dev/sshd/authorized:/authorized:ro
 
+  # A Postgres that only accepts TLS, to test the SSL modes and certificate files against
+  # (ANG-44): localhost:54330, user angkor / angkor, or `certuser` with the client certificate.
+  # The certificates are made on first start into dev/tls/certs/.
+  postgres-tls:
+    build: ./dev/tls
+    container_name: angkordb-postgres-tls
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: angkor
+      POSTGRES_PASSWORD: angkor
+      POSTGRES_DB: angkordb_dev
+    ports:
+      - "54330:5432"
+    volumes:
+      - ./dev/tls/certs:/certs
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U angkor -d angkordb_dev"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+
 volumes:
   pgdata:

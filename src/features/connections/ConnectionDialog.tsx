@@ -31,11 +31,14 @@ import {
   formToConfig,
   formToPasswordChange,
   formToSshSecretChange,
+  formToSslKeySecretChange,
   SAFE_MODES,
   SSH_AUTH_METHODS,
   sshSecretLabel,
+  SSL_MODE_HELP,
   SSL_MODES,
   validateForm,
+  verifiesCertificate,
   type ConnectionForm,
 } from "@/features/connections/form";
 import { HostKeyDetails } from "@/features/connections/HostKeyDialog";
@@ -43,6 +46,7 @@ import { hostKeyStop, type HostKeyStop } from "@/features/connections/hostKey";
 import { useSaveConnection } from "@/features/connections/useConnections";
 import { errorDetails, errorMessage } from "@/lib/errors";
 import { commands } from "@/lib/ipc";
+import { pickFile } from "@/lib/pickFile";
 import { cn } from "@/lib/utils";
 
 interface ConnectionDialogProps {
@@ -84,6 +88,7 @@ function ConnectionFormBody({ connection, groups, onClose }: ConnectionDialogPro
         formToConfig(values),
         formToPasswordChange(values),
         formToSshSecretChange(values),
+        formToSslKeySecretChange(values),
       ),
   });
   const sshTest = useMutation({
@@ -163,6 +168,7 @@ function ConnectionFormBody({ connection, groups, onClose }: ConnectionDialogPro
         config: formToConfig(form),
         password: formToPasswordChange(form),
         sshSecret: formToSshSecretChange(form),
+        sslKeySecret: formToSslKeySecretChange(form),
       });
       onClose();
     } catch {
@@ -171,6 +177,11 @@ function ConnectionFormBody({ connection, groups, onClose }: ConnectionDialogPro
   }
 
   const busy = save.isPending || test.isPending || sshTest.isPending || trusting;
+  const keyPassphrasePlaceholder = form.removeSslKeySecret
+    ? "The saved passphrase will be removed"
+    : form.hasSslKeySecret
+      ? "Saved in Keychain. Type to replace"
+      : "Only if the key has one";
   const sshSecretPlaceholder = form.removeSshSecret
     ? "The saved secret will be removed"
     : form.hasSshSecret
@@ -316,6 +327,62 @@ function ConnectionFormBody({ connection, groups, onClose }: ConnectionDialogPro
             </SelectContent>
           </Select>
         </Field>
+
+        <div className="col-span-6 -mt-1 flex flex-col gap-3">
+          <p className="text-xs text-muted-foreground">{SSL_MODE_HELP[form.sslMode]}</p>
+          {form.sslMode !== "disable" && (
+            <div className="grid grid-cols-6 gap-x-3 gap-y-3 rounded-lg border p-3">
+              {verifiesCertificate(form.sslMode) && (
+                <FileField
+                  id="ssl-root"
+                  label="Root certificate (CA)"
+                  value={form.sslRootCert}
+                  placeholder="The system's trusted roots"
+                  help="When chosen, it is the only authority trusted."
+                  onChange={(sslRootCert) => update({ sslRootCert })}
+                />
+              )}
+              <FileField
+                id="ssl-cert"
+                label="Client certificate"
+                value={form.sslClientCert}
+                placeholder="Only if the server asks for one"
+                error={fieldError("sslClientCert")}
+                onChange={(sslClientCert) => update({ sslClientCert })}
+              />
+              <FileField
+                id="ssl-key"
+                label="Client key"
+                value={form.sslClientKey}
+                placeholder="The private key of that certificate"
+                onChange={(sslClientKey) => update({ sslClientKey })}
+              />
+              {form.sslClientKey.trim() !== "" && (
+                <Field label="Key passphrase" htmlFor="ssl-passphrase" className="col-span-6">
+                  <Input
+                    id="ssl-passphrase"
+                    type="password"
+                    value={form.sslKeySecret}
+                    onChange={(e) => update({ sslKeySecret: e.target.value })}
+                    placeholder={keyPassphrasePlaceholder}
+                    autoComplete="new-password"
+                  />
+                  {form.hasSslKeySecret && !form.sslKeySecret && (
+                    <button
+                      type="button"
+                      onClick={() => update({ removeSslKeySecret: !form.removeSslKeySecret })}
+                      className="self-start text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                    >
+                      {form.removeSslKeySecret
+                        ? "Keep the saved passphrase"
+                        : "Remove saved passphrase"}
+                    </button>
+                  )}
+                </Field>
+              )}
+            </div>
+          )}
+        </div>
 
         <div className="col-span-6 flex flex-col gap-3 rounded-lg border p-3">
           <label className="flex items-center gap-2 text-sm font-medium">
@@ -636,6 +703,45 @@ function ColorPicker({
         />
       ))}
     </div>
+  );
+}
+
+/** A path to a file: typed, or picked with the system's file dialog. */
+function FileField(props: {
+  id: string;
+  label: string;
+  value: string;
+  placeholder: string;
+  help?: string;
+  error?: string | undefined;
+  onChange: (path: string) => void;
+}) {
+  async function browse() {
+    try {
+      const chosen = await pickFile(props.label);
+      if (chosen) props.onChange(chosen);
+    } catch {
+      // No file dialog here (a plain browser): the path can still be typed.
+    }
+  }
+  return (
+    <Field label={props.label} htmlFor={props.id} error={props.error} className="col-span-6">
+      <div className="flex gap-2">
+        <Input
+          id={props.id}
+          value={props.value}
+          onChange={(e) => props.onChange(e.target.value)}
+          placeholder={props.placeholder}
+          aria-invalid={!!props.error}
+          autoComplete="off"
+          spellCheck={false}
+        />
+        <Button type="button" variant="outline" onClick={() => void browse()}>
+          Browse…
+        </Button>
+      </div>
+      {props.help && <p className="text-xs text-muted-foreground">{props.help}</p>}
+    </Field>
   );
 }
 

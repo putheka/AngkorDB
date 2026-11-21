@@ -2,6 +2,7 @@
 
 use tauri::State;
 
+use crate::db::session::Extras;
 use crate::db::ssh::{self, SshSetup};
 use crate::db::{session, url};
 use crate::error::{AppError, AppResult};
@@ -32,10 +33,16 @@ pub async fn save_connection(
     config: ConnectionConfig,
     password: PasswordChange,
     ssh_secret: Option<PasswordChange>,
+    ssl_key_secret: Option<PasswordChange>,
 ) -> AppResult<ConnectionConfig> {
     state
         .connections()
-        .save_with_ssh(config, password, ssh_secret.unwrap_or(PasswordChange::Keep))
+        .save_with_secrets(
+            config,
+            password,
+            ssh_secret.unwrap_or(PasswordChange::Keep),
+            ssl_key_secret.unwrap_or(PasswordChange::Keep),
+        )
         .await
 }
 
@@ -64,16 +71,25 @@ pub async fn test_connection(
     config: ConnectionConfig,
     password: PasswordChange,
     ssh_secret: Option<PasswordChange>,
+    ssl_key_secret: Option<PasswordChange>,
 ) -> AppResult<ConnectionInfo> {
-    let (config, password, ssh_secret) = state
+    let (config, secrets) = state
         .connections()
-        .resolve_for_test_with_ssh(config, password, ssh_secret.unwrap_or(PasswordChange::Keep))
+        .resolve_for_test_all(
+            config,
+            password,
+            ssh_secret.unwrap_or(PasswordChange::Keep),
+            ssl_key_secret.unwrap_or(PasswordChange::Keep),
+        )
         .await?;
-    let setup = SshSetup {
-        known_hosts: state.known_hosts().to_path_buf(),
-        ..SshSetup::new(ssh_secret)
+    let extras = Extras {
+        ssh: Some(SshSetup {
+            known_hosts: state.known_hosts().to_path_buf(),
+            ..SshSetup::new(secrets.ssh)
+        }),
+        ssl_key_passphrase: secrets.ssl_key,
     };
-    session::test_connection_with_ssh(&config, password.as_deref(), Some(setup))
+    session::test_connection_with(&config, secrets.password.as_deref(), extras)
         .await
         .map_err(|e| note_host_key(&state, e))
 }
@@ -147,11 +163,14 @@ pub async fn connect_connection(
 ) -> AppResult<ConnectionInfo> {
     let config = state.connections().get(&id)?;
     let password = state.connections().password(&id).await?;
-    let setup = SshSetup {
-        known_hosts: state.known_hosts().to_path_buf(),
-        ..SshSetup::new(state.connections().ssh_secret(&id).await?)
+    let extras = Extras {
+        ssh: Some(SshSetup {
+            known_hosts: state.known_hosts().to_path_buf(),
+            ..SshSetup::new(state.connections().ssh_secret(&id).await?)
+        }),
+        ssl_key_passphrase: state.connections().ssl_key_secret(&id).await?,
     };
-    let session = session::Session::open_with_ssh(config, password.as_deref(), Some(setup))
+    let session = session::Session::open_with(config, password.as_deref(), extras)
         .await
         .map_err(|e| note_host_key(&state, e))?;
     let info = session.info().clone();
