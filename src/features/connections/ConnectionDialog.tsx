@@ -284,6 +284,24 @@ function ConnectionFormBody({ connection, groups, onClose }: ConnectionDialogPro
           <ColorPicker value={form.color} onChange={(color) => update(colorPatch(form, color))} />
         </Field>
 
+        <Field
+          label="Statement timeout (seconds)"
+          htmlFor="conn-timeout"
+          error={fieldError("statementTimeout")}
+          className="col-span-6"
+        >
+          <Input
+            id="conn-timeout"
+            value={form.statementTimeout}
+            onChange={(e) => update({ statementTimeout: e.target.value })}
+            aria-invalid={!!fieldError("statementTimeout")}
+            placeholder="No limit"
+            inputMode="decimal"
+            autoComplete="off"
+            spellCheck={false}
+          />
+        </Field>
+
         <Field label="Safe mode" htmlFor="conn-safe" className="col-span-6">
           <Select value={form.safeMode} onValueChange={(v) => update({ safeMode: v as SafeMode })}>
             <SelectTrigger id="conn-safe" className="w-full">

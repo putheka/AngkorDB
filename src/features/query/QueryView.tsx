@@ -104,7 +104,23 @@ export function QueryView({ connectionId, tab }: { connectionId: string; tab: Qu
     [run, update, view.text],
   );
 
-  const stop = () => void commands.cancelQuery(connectionId, tab.id).catch(() => undefined);
+  const stop = useCallback(
+    () => void commands.cancelQuery(connectionId, tab.id).catch(() => undefined),
+    [connectionId, tab.id],
+  );
+
+  // ⌘. stops what is running, wherever the focus is (the editor included).
+  useEffect(() => {
+    if (!view.running) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey && !e.shiftKey && !e.altKey && !e.ctrlKey && e.code === "Period") {
+        e.preventDefault();
+        stop();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [view.running, stop]);
 
   // Elapsed time while a statement runs.
   const [now, setNow] = useState(() => Date.now());
@@ -149,9 +165,14 @@ export function QueryView({ connectionId, tab }: { connectionId: string; tab: Qu
     <div ref={container} className="flex h-full min-h-0 flex-col">
       <div className="flex h-9 shrink-0 items-center gap-2 border-b px-2">
         {view.running ? (
-          <Button size="xs" variant="destructive" onClick={stop}>
-            <SquareIcon /> Stop
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button size="xs" variant="destructive" onClick={stop}>
+                <SquareIcon /> Stop
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Stop the running statement (⌘.)</TooltipContent>
+          </Tooltip>
         ) : (
           <Tooltip>
             <TooltipTrigger asChild>

@@ -38,10 +38,16 @@ fn pg_ssl_mode(mode: SslMode) -> PgSslMode {
 }
 
 /// SQL run on every new connection of a session (pooled and per-tab alike).
-/// Read-only mode makes the server refuse writes (SQLSTATE 25006), not just the UI.
-pub fn init_sql(conn: &ConnectionConfig) -> Option<&'static str> {
-    match conn.safe_mode {
-        SafeMode::ReadOnly => Some("SET default_transaction_read_only = on"),
-        SafeMode::Off | SafeMode::Confirm | SafeMode::TouchId => None,
+/// Read-only mode makes the server refuse writes (SQLSTATE 25006), not just the UI; the statement
+/// timeout makes it cancel anything that runs too long (SQLSTATE 57014).
+pub fn init_sql(conn: &ConnectionConfig) -> Option<String> {
+    let mut statements = Vec::new();
+    if conn.safe_mode == SafeMode::ReadOnly {
+        statements.push("SET default_transaction_read_only = on".to_owned());
     }
+    if let Some(ms) = conn.statement_timeout_ms.filter(|ms| *ms > 0) {
+        // A number, never text from outside: nothing to escape.
+        statements.push(format!("SET statement_timeout = {ms}"));
+    }
+    (!statements.is_empty()).then(|| statements.join("; "))
 }

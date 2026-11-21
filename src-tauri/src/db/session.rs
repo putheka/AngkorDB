@@ -66,7 +66,10 @@ impl Session {
             .create_timeout(Some(config::CONNECT_TIMEOUT));
         if let Some(sql) = config::init_sql(&config) {
             pool = pool.post_create(Hook::async_fn(move |client, _| {
-                Box::pin(async move { client.batch_execute(sql).await.map_err(HookError::Backend) })
+                let sql = sql.clone();
+                Box::pin(
+                    async move { client.batch_execute(&sql).await.map_err(HookError::Backend) },
+                )
             }));
         }
         let meta_pool = pool.build().map_err(|e| AppError::Pool(e.to_string()))?;
@@ -116,7 +119,7 @@ impl Session {
             let _ = connection.await;
         });
         if let Some(sql) = config::init_sql(&self.config) {
-            client.batch_execute(sql).await?;
+            client.batch_execute(&sql).await?;
         }
 
         let client = Arc::new(client);

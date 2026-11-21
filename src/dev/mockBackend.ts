@@ -25,6 +25,7 @@ const base: Omit<ConnectionConfig, "id" | "name" | "host" | "port" | "user" | "d
   color: "none",
   group: null,
   safeMode: "off",
+  statementTimeoutMs: null,
   hasPassword: false,
 };
 

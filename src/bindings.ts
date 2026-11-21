@@ -206,6 +206,11 @@ export type ConnectionConfig = {
 	group: string | null,
 	safeMode: SafeMode,
 	/**
+	 *  Stop any statement that runs longer than this many milliseconds (`statement_timeout`).
+	 *  `None` or `0`: no limit. Missing in files saved before ANG-31.
+	 */
+	statementTimeoutMs?: number | null,
+	/**
 	 *  True when a password is saved in the Keychain. Maintained by the backend, ignored on input.
 	 *  Kept here so listing connections never has to touch the Keychain.
 	 */

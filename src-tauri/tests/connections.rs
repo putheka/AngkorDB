@@ -43,6 +43,7 @@ fn config(name: &str) -> ConnectionConfig {
         color: ColorTag::None,
         group: None,
         safe_mode: SafeMode::Off,
+        statement_timeout_ms: None,
         has_password: false,
     }
 }
@@ -337,4 +338,19 @@ async fn test_resolution_uses_the_saved_password_only_when_asked() {
 fn password_change_debug_hides_the_value() {
     let shown = format!("{:?}", set("top-secret"));
     assert!(!shown.contains("top-secret"));
+}
+
+#[test]
+fn connections_saved_before_the_statement_timeout_existed_still_load() {
+    let old = r#"{"id":"1","name":"Old","host":"h","port":5432,"user":"u","database":"d",
+        "sslMode":"prefer","color":"none","group":null,"safeMode":"off","hasPassword":false}"#;
+    let config: ConnectionConfig = serde_json::from_str(old).unwrap();
+    assert_eq!(config.statement_timeout_ms, None);
+
+    let with: ConnectionConfig = serde_json::from_str(&old.replace(
+        r#""hasPassword":false"#,
+        r#""statementTimeoutMs":5000,"hasPassword":false"#,
+    ))
+    .unwrap();
+    assert_eq!(with.statement_timeout_ms, Some(5000));
 }

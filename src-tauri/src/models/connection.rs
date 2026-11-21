@@ -17,6 +17,10 @@ pub struct ConnectionConfig {
     pub color: ColorTag,
     pub group: Option<String>,
     pub safe_mode: SafeMode,
+    /// Stop any statement that runs longer than this many milliseconds (`statement_timeout`).
+    /// `None` or `0`: no limit. Missing in files saved before ANG-31.
+    #[serde(default)]
+    pub statement_timeout_ms: Option<u32>,
     /// True when a password is saved in the Keychain. Maintained by the backend, ignored on input.
     /// Kept here so listing connections never has to touch the Keychain.
     pub has_password: bool,

@@ -22,6 +22,8 @@ export interface ConnectionForm {
   color: ColorTag;
   group: string;
   safeMode: SafeMode;
+  /** Seconds, as typed. Empty: no limit. */
+  statementTimeout: string;
   /** A password is already saved in the Keychain. */
   hasPassword: boolean;
   /** The user asked to remove the saved password. */
@@ -40,6 +42,7 @@ export const emptyForm: ConnectionForm = {
   color: "none",
   group: "",
   safeMode: "off",
+  statementTimeout: "",
   hasPassword: false,
   removePassword: false,
 };
@@ -90,6 +93,7 @@ export function formFromConnection(connection: ConnectionConfig): ConnectionForm
     color: connection.color,
     group: connection.group ?? "",
     safeMode: connection.safeMode,
+    statementTimeout: secondsText(connection.statementTimeoutMs),
     hasPassword: connection.hasPassword,
     removePassword: false,
   };
@@ -107,6 +111,7 @@ export function formToConfig(form: ConnectionForm): ConnectionConfig {
     color: form.color,
     group: form.group,
     safeMode: form.safeMode,
+    statementTimeoutMs: timeoutMs(form.statementTimeout),
     hasPassword: form.hasPassword,
   };
 }
@@ -117,7 +122,23 @@ export function formToPasswordChange(form: ConnectionForm): PasswordChange {
   return { kind: "keep" };
 }
 
-export type FormErrors = Partial<Record<"host" | "port" | "user" | "database", string>>;
+/** 30000 ms → "30", 500 ms → "0.5", none → "". */
+export function secondsText(ms: number | null | undefined): string {
+  return ms === null || ms === undefined || ms === 0 ? "" : String(ms / 1000);
+}
+
+const MAX_TIMEOUT_SECONDS = 86_400; // a day
+
+/** What was typed (seconds) as milliseconds; blank, 0 and anything unreadable mean no limit. */
+export function timeoutMs(text: string): number | null {
+  const seconds = Number(text.trim());
+  if (text.trim() === "" || !Number.isFinite(seconds) || seconds <= 0) return null;
+  return Math.min(Math.round(seconds * 1000), MAX_TIMEOUT_SECONDS * 1000);
+}
+
+export type FormErrors = Partial<
+  Record<"host" | "port" | "user" | "database" | "statementTimeout", string>
+>;
 
 export function validateForm(form: ConnectionForm): FormErrors {
   const errors: FormErrors = {};
@@ -126,6 +147,13 @@ export function validateForm(form: ConnectionForm): FormErrors {
   if (!/^\d+$/.test(form.port.trim()) || port < 1 || port > 65535) errors.port = "1 to 65535";
   if (!form.user.trim()) errors.user = "Required";
   if (!form.database.trim()) errors.database = "Required";
+  const timeout = form.statementTimeout.trim();
+  if (timeout !== "") {
+    const seconds = Number(timeout);
+    if (!Number.isFinite(seconds) || seconds < 0 || seconds > MAX_TIMEOUT_SECONDS) {
+      errors.statementTimeout = "0 to 86400";
+    }
+  }
   return errors;
 }
 

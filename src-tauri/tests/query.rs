@@ -288,7 +288,7 @@ async fn a_huge_result_is_cut_at_the_cap_and_the_tab_stays_usable() {
 }
 
 #[tokio::test]
-async fn cancelling_a_running_script_ends_it_with_an_error_result() {
+async fn cancelling_a_minute_long_query_takes_under_a_second_and_the_tab_is_reusable() {
     let Some(session) = open_or_skip().await else {
         return;
     };
@@ -296,17 +296,24 @@ async fn cancelling_a_running_script_ends_it_with_an_error_result() {
     let runner = {
         let session = std::sync::Arc::clone(&session);
         tokio::spawn(async move {
-            run_script(&session, "slow", "SELECT 1; SELECT pg_sleep(30); SELECT 3").await
+            run_script(&session, "slow", "SELECT 1; SELECT pg_sleep(60); SELECT 3").await
         })
     };
     tokio::time::sleep(Duration::from_millis(500)).await;
-    assert!(session.cancel_tab("slow").await.unwrap());
 
+    let asked = std::time::Instant::now();
+    assert!(session.cancel_tab("slow").await.unwrap());
     let result = tokio::time::timeout(Duration::from_secs(5), runner)
         .await
         .expect("script did not stop within 5 s")
         .unwrap()
         .unwrap();
+    let took = asked.elapsed();
+    assert!(
+        took < Duration::from_secs(1),
+        "cancelling pg_sleep(60) took {took:?}"
+    );
+
     assert_eq!(
         result.statements.len(),
         2,
@@ -322,6 +329,96 @@ async fn cancelling_a_running_script_ends_it_with_an_error_result() {
         rows_of(&run(&session, "slow", "SELECT 'ok'").await, 0),
         &vec![vec![cell("ok")]]
     );
+}
+
+#[tokio::test]
+async fn a_long_query_in_one_tab_does_not_block_the_others() {
+    let Some(session) = open_or_skip().await else {
+        return;
+    };
+    let session = std::sync::Arc::new(session);
+    let slow = {
+        let session = std::sync::Arc::clone(&session);
+        tokio::spawn(async move { run_script(&session, "busy", "SELECT pg_sleep(30)").await })
+    };
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    // Another tab, and the shared pool the grid uses, answer at once while "busy" is sleeping.
+    let started = std::time::Instant::now();
+    assert_eq!(
+        rows_of(&run(&session, "other", "SELECT 'quick'").await, 0),
+        &vec![vec![cell("quick")]]
+    );
+    let client = session.meta().await.unwrap();
+    client.simple_query("SELECT 1").await.unwrap();
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "{:?}",
+        started.elapsed()
+    );
+
+    session.cancel_tab("busy").await.unwrap();
+    slow.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn a_statement_timeout_on_the_connection_stops_slow_statements_everywhere() {
+    if open_or_skip().await.is_none() {
+        return;
+    }
+    let mut config = dev_config();
+    config.statement_timeout_ms = Some(400);
+    let session = Session::open(config, Some(DEV_PASSWORD)).await.unwrap();
+
+    // The SQL tab: the slow statement ends with "statement timeout" and the script stops there.
+    let started = std::time::Instant::now();
+    let result = run(
+        &session,
+        "limited",
+        "SELECT 1; SELECT pg_sleep(30); SELECT 3",
+    )
+    .await;
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "{:?}",
+        started.elapsed()
+    );
+    assert_eq!(result.statements.len(), 2);
+    let StatementOutcome::Error { error, .. } = &result.statements[1].outcome else {
+        panic!("{:?}", result.statements[1].outcome);
+    };
+    assert_eq!(error.pg_code.as_deref(), Some("57014"));
+    assert!(
+        error.message.contains("statement timeout"),
+        "{}",
+        error.message
+    );
+    // Fast statements are not affected, and the tab is still usable.
+    assert_eq!(
+        rows_of(&run(&session, "limited", "SELECT 'fine'").await, 0),
+        &vec![vec![cell("fine")]]
+    );
+
+    // The pool (grid, introspection) has the same limit.
+    let client = session.meta().await.unwrap();
+    let setting: String = client
+        .query_one("SELECT current_setting('statement_timeout')", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(setting, "400ms");
+
+    // Without a timeout (or 0) nothing is set.
+    let plain = Session::open(dev_config(), Some(DEV_PASSWORD))
+        .await
+        .unwrap();
+    let client = plain.meta().await.unwrap();
+    let setting: String = client
+        .query_one("SELECT current_setting('statement_timeout')", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(setting, "0");
 }
 
 #[tokio::test]

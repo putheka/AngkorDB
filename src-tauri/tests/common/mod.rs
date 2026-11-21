@@ -27,6 +27,7 @@ pub fn dev_config() -> ConnectionConfig {
         color: ColorTag::None,
         group: None,
         safe_mode: SafeMode::Off,
+        statement_timeout_ms: None,
         has_password: false,
     }
 }
