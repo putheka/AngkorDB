@@ -770,3 +770,120 @@ async fn partitions_inheritance_generated_columns_and_other_types_round_trip() {
     source.drop_it(&dev).await;
     target.drop_it(&dev).await;
 }
+
+/// Names and text built to break out of generated SQL: dots, quotes, backslashes, line breaks,
+/// `--`, `;`, and an enum label and comments that try to end their own string literal.
+const HOSTILE: &str = r##"
+CREATE SCHEMA "we""ird.sch";
+CREATE TYPE "we""ird.sch"."mo""od" AS ENUM ('it''s', 'back\slash', E'quote\\''; DROP TABLE y;--');
+CREATE TABLE "we""ird.sch"."evil
+DROP TABLE victim;--" (id integer PRIMARY KEY);
+CREATE TABLE "we""ird.sch"."t.a""b\c" (
+  "col; DROP TABLE x --" "we""ird.sch"."mo""od" DEFAULT 'it''s',
+  "a
+b" integer,
+  holder "we""ird.sch"."evil
+DROP TABLE victim;--"
+);
+COMMENT ON TABLE "we""ird.sch"."t.a""b\c" IS 'back\slash and ''quote'' \''; DROP TABLE z; --';
+COMMENT ON COLUMN "we""ird.sch"."t.a""b\c"."a
+b" IS E'tricky \\ \'; DROP TABLE v;--';
+CREATE INDEX "idx.with""dot" ON "we""ird.sch"."t.a""b\c" ("a
+b");
+COMMENT ON INDEX "we""ird.sch"."idx.with""dot" IS E'tricky \\ \'; DROP TABLE w;--';
+"##;
+
+/// Every statement of `sql` has to be a CREATE, ALTER or COMMENT: nothing else got in.
+fn only_creates(sql: &str, what: &str) {
+    for statement in script::split(sql) {
+        let text = &sql[statement.start..statement.end];
+        let first = text
+            .split_whitespace()
+            .next()
+            .unwrap_or("")
+            .to_ascii_uppercase();
+        assert!(
+            ["CREATE", "ALTER", "COMMENT"].contains(&first.as_str()),
+            "{what}: unexpected statement {text:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn hostile_names_and_text_cannot_break_out_of_the_ddl() {
+    let Some(dev) = open_or_skip().await else {
+        return;
+    };
+    let source = Scratch::create(&dev, "evil_src").await;
+    let from = source.open().await;
+    run_all(&from, HOSTILE, &[])
+        .await
+        .unwrap_or_else(|e| panic!("setup: {e}"));
+
+    let evil_name = "evil\nDROP TABLE victim;--";
+    let table_name = "t.a\"b\\c";
+    let evil = structure(&from, "we\"ird.sch", evil_name).await;
+    let table = structure(&from, "we\"ird.sch", table_name).await;
+
+    for (what, s) in [("evil", &evil), ("table", &table)] {
+        only_creates(&s.prerequisites, &format!("{what} prerequisites"));
+        only_creates(&s.ddl, &format!("{what} ddl"));
+        // The row type of another table can't be created from here: it is said in a comment,
+        // and the comment stays one line.
+        for line in s.prerequisites.lines().filter(|l| l.starts_with("--")) {
+            assert!(line.ends_with("must already exist."), "{line:?}");
+        }
+    }
+    // Strings that try to end themselves are written so they can't.
+    assert!(
+        table.ddl.contains(r"IS E'tricky \\ ''; DROP TABLE v;--';"),
+        "{}",
+        table.ddl
+    );
+    assert!(
+        table
+            .ddl
+            .contains(r#""idx.with""dot" IS E'tricky \\ ''; DROP TABLE w;--';"#),
+        "{}",
+        table.ddl
+    );
+    assert!(
+        table
+            .ddl
+            .contains(r"E'back\\slash and ''quote'' \\''; DROP TABLE z; --'"),
+        "{}",
+        table.ddl
+    );
+    assert!(
+        table
+            .prerequisites
+            .contains(r"E'quote\\''; DROP TABLE y;--'"),
+        "{}",
+        table.prerequisites
+    );
+
+    // And it builds the same thing again somewhere else.
+    let target = Scratch::create(&dev, "evil_dst").await;
+    let to = target.open().await;
+    let duplicates = ["42710", "42P07", "42723"];
+    for s in [&evil, &table] {
+        run_all(&to, &s.prerequisites, &duplicates)
+            .await
+            .unwrap_or_else(|e| panic!("{}: {e}", s.name));
+        run_all(&to, &s.ddl, &[])
+            .await
+            .unwrap_or_else(|e| panic!("{}: {e}\n{}", s.name, s.ddl));
+    }
+    let rebuilt = structure(&to, "we\"ird.sch", table_name).await;
+    assert_eq!(rebuilt.ddl, table.ddl);
+    // The comment text came through intact, including the part that looks like SQL.
+    assert_eq!(
+        rebuilt.info.comment.as_deref(),
+        Some("back\\slash and 'quote' \\'; DROP TABLE z; --")
+    );
+
+    drop(from);
+    drop(to);
+    source.drop_it(&dev).await;
+    target.drop_it(&dev).await;
+}

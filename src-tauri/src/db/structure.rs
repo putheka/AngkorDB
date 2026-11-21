@@ -15,6 +15,7 @@ use std::collections::{BTreeSet, HashSet};
 use tokio_postgres::Client;
 
 use crate::db::introspect::{fetch_foreign_keys, fetch_primary_key};
+use crate::db::rows::quote_ident;
 use crate::error::{AppError, AppResult};
 use crate::models::schema::{ColumnIdentity, ForeignKeyRef, ObjectKind};
 use crate::models::structure::{
@@ -25,9 +26,20 @@ use crate::models::structure::{
 /// A future that can call itself (a type that is made of other types).
 type BoxFuture<'a, T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send + 'a>>;
 
-/// `'text'` as an SQL string literal.
+/// `'text'` as an SQL string literal that means the same whatever `standard_conforming_strings`
+/// is: text with a backslash is written as `E'…'` with the backslashes doubled too (as
+/// `pg_dump` does), so a `\'` in it can never end the string early.
 fn literal(text: &str) -> String {
-    format!("'{}'", text.replace('\'', "''"))
+    if text.contains('\\') {
+        format!("E'{}'", text.replace('\\', "\\\\").replace('\'', "''"))
+    } else {
+        format!("'{}'", text.replace('\'', "''"))
+    }
+}
+
+/// A name for a `--` comment: a line break in it would end the comment and start SQL.
+fn one_line(text: &str) -> String {
+    text.replace(['\n', '\r'], " ")
 }
 
 /// A column with everything the DDL needs, before it is turned into the UI's shape.
@@ -711,7 +723,7 @@ async fn build_ddl(
                     .iter()
                     .map(|o| {
                         let (key, value) = o.split_once('=').unwrap_or((o, ""));
-                        format!("{key} {}", literal(value))
+                        format!("{} {}", quote_ident(key), literal(value))
                     })
                     .collect();
                 format!("\nOPTIONS ({})", pairs.join(", "))
@@ -819,11 +831,10 @@ async fn build_ddl(
                 .query_one("SELECT quote_ident($1::text)", &[&i.info.name])
                 .await?
                 .get(0);
-            let schema_dot = q
-                .rsplit_once('.')
-                .map_or(String::new(), |(s, _)| format!("{s}."));
+            // The index is in the table's schema; that one comes quoted from the catalog.
             comments.push(format!(
-                "COMMENT ON INDEX {schema_dot}{quoted} IS {};",
+                "COMMENT ON INDEX {}.{quoted} IS {};",
+                rel.schema,
                 literal(text)
             ));
         }
@@ -1010,7 +1021,8 @@ fn type_prerequisites<'a>(
                            JOIN pg_namespace en ON en.oid = e.extnamespace
                           WHERE d.classid = 'pg_type'::regclass AND d.objid = t.oid
                             AND d.deptype = 'e' LIMIT 1),
-                        (SELECT c.relkind::text FROM pg_class c WHERE c.oid = t.typrelid)
+                        (SELECT c.relkind::text FROM pg_class c WHERE c.oid = t.typrelid),
+                        quote_ident(n.nspname)
                    FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
                   WHERE t.oid = $1",
                 &[&oid],
@@ -1025,9 +1037,7 @@ fn type_prerequisites<'a>(
         }
         let qualified: String = row.get(1);
         let typtype: String = row.get(2);
-        let schema_quoted = qualified
-            .rsplit_once('.')
-            .map_or_else(|| qualified.clone(), |(schema, _)| schema.to_owned());
+        let schema_quoted: String = row.get(12);
         let base_type: u32 = row.get(3);
         let not_null: bool = row.get(4);
         let default: Option<String> = row.get(5);
@@ -1137,7 +1147,7 @@ fn type_prerequisites<'a>(
                 ));
             }
             // A table's row type, or a base type from somewhere we can't see: say so.
-            _ => out.push(format!("-- {qualified} must already exist.")),
+            _ => out.push(format!("-- {} must already exist.", one_line(&qualified))),
         }
         Ok(())
     })
