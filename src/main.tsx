@@ -2,8 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
 import { App } from "@/app/App";
-import { Providers } from "@/app/Providers";
-import { SettingsApp } from "@/features/settings/SettingsApp";
+import { SettingsEntry } from "@/app/SettingsEntry";
 import { syncSettingsAcrossWindows } from "@/lib/syncSettings";
 import { startAppearance } from "@/lib/theme";
 import "@/styles/globals.css";
@@ -24,17 +23,7 @@ async function start() {
   const root = document.getElementById("root");
   if (!root) throw new Error("#root element missing in index.html");
 
-  createRoot(root).render(
-    <StrictMode>
-      {settings ? (
-        <Providers>
-          <SettingsApp />
-        </Providers>
-      ) : (
-        <App />
-      )}
-    </StrictMode>,
-  );
+  createRoot(root).render(<StrictMode>{settings ? <SettingsEntry /> : <App />}</StrictMode>);
 }
 
 void start();

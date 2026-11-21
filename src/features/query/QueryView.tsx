@@ -8,7 +8,15 @@ import {
   PlayIcon,
   SquareIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
+import {
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent,
+} from "react";
 
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -27,11 +35,11 @@ import {
   type PinnedResult,
 } from "@/features/query/queryViews";
 import { pickTab } from "@/features/query/resultTabs";
-import { ExportDialog } from "@/features/export/ExportDialog";
 import { ResultsPane } from "@/features/query/ResultsPane";
 import { SqlEditor, type RunMode, type SqlEditorHandle } from "@/features/query/SqlEditor";
 import { useShortcut } from "@/features/shortcuts/registry";
 import { errorMessage } from "@/lib/errors";
+import { lazyNamed } from "@/lib/lazyNamed";
 import { cn } from "@/lib/utils";
 import { commands } from "@/lib/ipc";
 import { useStatusStore } from "@/stores/status";
@@ -41,6 +49,8 @@ import { Shortcut } from "@/features/shortcuts/Shortcut";
 const MIN_EDITOR = 96;
 const MIN_RESULTS = 120;
 const MIN_RESULTS_WIDTH = 240;
+
+const ExportDialog = lazyNamed(() => import("@/features/export/ExportDialog"), "ExportDialog");
 
 /** A SQL editor over its results, on a connection of its own. */
 export function QueryView({ connectionId, tab }: { connectionId: string; tab: QueryTab }) {
@@ -298,11 +308,13 @@ export function QueryView({ connectionId, tab }: { connectionId: string; tab: Qu
   return (
     <div className="flex h-full min-h-0 flex-col">
       {exportSql !== null && (
-        <ExportDialog
-          connectionId={connectionId}
-          seed={{ kind: "query", sql: exportSql }}
-          onClose={() => setExportSql(null)}
-        />
+        <Suspense fallback={null}>
+          <ExportDialog
+            connectionId={connectionId}
+            seed={{ kind: "query", sql: exportSql }}
+            onClose={() => setExportSql(null)}
+          />
+        </Suspense>
       )}
       <div className="flex h-9 shrink-0 items-center gap-2 border-b px-2">
         {view.running ? (

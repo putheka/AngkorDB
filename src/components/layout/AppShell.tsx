@@ -1,6 +1,6 @@
 import { KeyboardIcon, PanelLeftIcon } from "lucide-react";
+import { lazy, Suspense } from "react";
 
-import { Sidebar } from "@/components/layout/Sidebar";
 import { StatusBar } from "@/components/layout/StatusBar";
 import { TabBar } from "@/components/layout/TabBar";
 import { Button } from "@/components/ui/button";
@@ -8,16 +8,13 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { AppearanceMenu } from "@/features/appearance/AppearanceMenu";
 import { useTabShortcuts } from "@/features/tabs/useTabShortcuts";
 import { QuitConfirmDialog } from "@/features/settings/quitConfirm";
-import { ShortcutsDialog } from "@/features/shortcuts/ShortcutsDialog";
 import { Shortcut } from "@/features/shortcuts/Shortcut";
 import { commands } from "@/lib/ipc";
 import { useShortcut, useShortcutDispatcher } from "@/features/shortcuts/registry";
 import { useWorkspacePersistence } from "@/features/workspace/useWorkspacePersistence";
 import { refreshData } from "@/features/grid/useTableData";
 import { refreshSchema } from "@/features/sidebar/useSchema";
-import { ConnectedView } from "@/features/connections/ConnectedView";
 import { WelcomeScreen } from "@/features/connections/WelcomeScreen";
-import { CommandPalette } from "@/features/palette/CommandPalette";
 import { UnsavedChangesDialog } from "@/features/grid/editing/UnsavedChangesDialog";
 import { useUnsavedSync } from "@/features/grid/editing/useUnsavedSync";
 import { WriteApprovalDialog } from "@/features/safety/WriteApprovalDialog";
@@ -25,6 +22,21 @@ import { useLayoutStore } from "@/stores/layout";
 import { usePaletteStore } from "@/stores/palette";
 import { useSessionStore } from "@/stores/session";
 import { useShortcuts } from "@/stores/shortcuts";
+
+// What only a connected window needs is loaded when the first connection opens, so the welcome
+// screen starts without the sidebar, the editor, the grid and the palette.
+const Sidebar = lazy(() =>
+  import("@/components/layout/Sidebar").then((m) => ({ default: m.Sidebar })),
+);
+const ConnectedView = lazy(() =>
+  import("@/features/connections/ConnectedView").then((m) => ({ default: m.ConnectedView })),
+);
+const CommandPalette = lazy(() =>
+  import("@/features/palette/CommandPalette").then((m) => ({ default: m.CommandPalette })),
+);
+const ShortcutsDialog = lazy(() =>
+  import("@/features/shortcuts/ShortcutsDialog").then((m) => ({ default: m.ShortcutsDialog })),
+);
 
 /** Window layout: title bar · (welcome screen | sidebar + tabs) · status bar. */
 export function AppShell() {
@@ -108,10 +120,16 @@ export function AppShell() {
       <div className="flex min-h-0 flex-1">
         {connected ? (
           <>
-            {!sidebarCollapsed && <Sidebar />}
+            {!sidebarCollapsed && (
+              <Suspense fallback={null}>
+                <Sidebar />
+              </Suspense>
+            )}
             <main className="flex min-w-0 flex-1 flex-col">
               <TabBar />
-              <ConnectedView />
+              <Suspense fallback={null}>
+                <ConnectedView />
+              </Suspense>
             </main>
           </>
         ) : (
@@ -121,10 +139,16 @@ export function AppShell() {
         )}
       </div>
 
-      {activeId && <CommandPalette connectionId={activeId} />}
+      {activeId && (
+        <Suspense fallback={null}>
+          <CommandPalette connectionId={activeId} />
+        </Suspense>
+      )}
       <UnsavedChangesDialog />
       <WriteApprovalDialog />
-      <ShortcutsDialog />
+      <Suspense fallback={null}>
+        <ShortcutsDialog />
+      </Suspense>
       <QuitConfirmDialog />
       <StatusBar />
     </div>

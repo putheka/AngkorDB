@@ -1,15 +1,36 @@
 import { TableIcon } from "lucide-react";
 
-import { ActivityView } from "@/features/admin/ActivityView";
-import { RolesView } from "@/features/admin/RolesView";
-import { TableTabView } from "@/features/structure/TableTabView";
-import { QueryView } from "@/features/query/QueryView";
+import { lazy, Suspense } from "react";
+
 import { useSessionStore } from "@/stores/session";
 import { useTabsStore } from "@/stores/tabs";
 import { Shortcut } from "@/features/shortcuts/Shortcut";
 
+// Each kind of tab is its own chunk, loaded when the first tab of that kind is shown: the SQL editor
+// and the data grid are most of the app's code, and neither is needed to show the welcome screen.
+const ActivityView = lazy(() =>
+  import("@/features/admin/ActivityView").then((m) => ({ default: m.ActivityView })),
+);
+const RolesView = lazy(() =>
+  import("@/features/admin/RolesView").then((m) => ({ default: m.RolesView })),
+);
+const TableTabView = lazy(() =>
+  import("@/features/structure/TableTabView").then((m) => ({ default: m.TableTabView })),
+);
+const QueryView = lazy(() =>
+  import("@/features/query/QueryView").then((m) => ({ default: m.QueryView })),
+);
+
 /** The main pane: whatever the front tab shows. */
 export function ConnectedView() {
+  return (
+    <Suspense fallback={<div className="min-h-0 flex-1" />}>
+      <FrontTab />
+    </Suspense>
+  );
+}
+
+function FrontTab() {
   const tab = useTabsStore((s) => s.tabs.find((t) => t.id === s.activeId));
   const connectionId = useSessionStore((s) => s.activeConnectionId);
 

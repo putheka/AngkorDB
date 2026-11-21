@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { RowCount } from "@/bindings";
 import { Button } from "@/components/ui/button";
@@ -37,7 +37,6 @@ import {
 import { PreviewDialog } from "@/features/grid/editing/PreviewDialog";
 import { useCommitChanges } from "@/features/grid/editing/useCommit";
 import { useImportDialog } from "@/stores/importDialog";
-import { ExportDialog } from "@/features/export/ExportDialog";
 import { FilterBar } from "@/features/grid/FilterBar";
 import {
   appliedCount,
@@ -57,9 +56,12 @@ import {
 import { errorDetails, errorMessage } from "@/lib/errors";
 import { useShortcut } from "@/features/shortcuts/registry";
 import { commands } from "@/lib/ipc";
+import { lazyNamed } from "@/lib/lazyNamed";
 import { useLayoutStore } from "@/stores/layout";
 import { useStatusStore } from "@/stores/status";
 import type { TableTab } from "@/stores/tabs";
+
+const ExportDialog = lazyNamed(() => import("@/features/export/ExportDialog"), "ExportDialog");
 
 /** `count` arrives as null when Postgres reports no number (it can't, but JSON can't say NaN). */
 function estimateOf(count: RowCount | undefined) {
@@ -500,18 +502,20 @@ export function TableView({ connectionId, tab }: { connectionId: string; tab: Ta
   return (
     <div className="flex h-full min-h-0 flex-col">
       {exporting && (
-        <ExportDialog
-          connectionId={connectionId}
-          seed={{
-            kind: "table",
-            schema: tab.schema,
-            table: tab.name,
-            filters: filter.applied.filters,
-            rawWhere: filter.applied.rawWhere,
-            sort: view.sort,
-          }}
-          onClose={() => setExporting(false)}
-        />
+        <Suspense fallback={null}>
+          <ExportDialog
+            connectionId={connectionId}
+            seed={{
+              kind: "table",
+              schema: tab.schema,
+              table: tab.name,
+              filters: filter.applied.filters,
+              rawWhere: filter.applied.rawWhere,
+              sort: view.sort,
+            }}
+            onClose={() => setExporting(false)}
+          />
+        </Suspense>
       )}
       {filter.open && (
         <FilterBar

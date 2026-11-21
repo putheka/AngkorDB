@@ -1,6 +1,6 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { DatabaseZapIcon, PlusIcon, RefreshCwIcon, SearchIcon, XIcon } from "lucide-react";
-import { useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { Suspense, useMemo, useRef, useState, type KeyboardEvent } from "react";
 
 import type { DbObject } from "@/bindings";
 
@@ -19,9 +19,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { CreateTableDialog } from "@/features/objects/CreateTableDialog";
-import { DatabaseDialog } from "@/features/objects/DatabaseDialog";
-import { SchemaDialog, type SchemaMode } from "@/features/objects/SchemaDialog";
+import type { SchemaMode } from "@/features/objects/SchemaDialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -30,16 +28,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { EnumDialog } from "@/features/objects/EnumDialog";
-import { SequenceDialog } from "@/features/objects/SequenceDialog";
 import { openSavedQuery } from "@/features/query/history/openSavedQuery";
+import { lazyNamed } from "@/lib/lazyNamed";
 import { useShortcutLabel } from "@/features/shortcuts/labels";
 import { useShortcut } from "@/features/shortcuts/registry";
 import { commands } from "@/lib/ipc";
 import { useBackupDialog } from "@/stores/backupDialog";
 import { useImportDialog } from "@/stores/importDialog";
-import { ExportDialog } from "@/features/export/ExportDialog";
-import { ObjectActionDialog, type ObjectAction } from "@/features/objects/ObjectActionDialog";
+import type { ObjectAction } from "@/features/objects/ObjectActionDialog";
 import { useTableViews } from "@/features/grid/tableViews";
 import { ObjectRow } from "@/features/sidebar/ObjectRow";
 import { GroupRow } from "@/features/sidebar/GroupRow";
@@ -58,6 +54,27 @@ import { Shortcut } from "@/features/shortcuts/Shortcut";
 const ROW_HEIGHT = 26;
 
 /** Database and schema pickers, a filter box, and the virtualized list of objects. */
+// The dialogs are loaded when one is first opened: they bring the SQL highlighter with them.
+const DatabaseDialog = lazyNamed(
+  () => import("@/features/objects/DatabaseDialog"),
+  "DatabaseDialog",
+);
+const SchemaDialog = lazyNamed(() => import("@/features/objects/SchemaDialog"), "SchemaDialog");
+const CreateTableDialog = lazyNamed(
+  () => import("@/features/objects/CreateTableDialog"),
+  "CreateTableDialog",
+);
+const SequenceDialog = lazyNamed(
+  () => import("@/features/objects/SequenceDialog"),
+  "SequenceDialog",
+);
+const EnumDialog = lazyNamed(() => import("@/features/objects/EnumDialog"), "EnumDialog");
+const ExportDialog = lazyNamed(() => import("@/features/export/ExportDialog"), "ExportDialog");
+const ObjectActionDialog = lazyNamed(
+  () => import("@/features/objects/ObjectActionDialog"),
+  "ObjectActionDialog",
+);
+
 export function ObjectTree({ connectionId }: { connectionId: string }) {
   const databases = useDatabases(connectionId);
   const { schema, schemas, setSchema } = useCurrentSchema(connectionId);
@@ -416,53 +433,59 @@ export function ObjectTree({ connectionId }: { connectionId: string }) {
         </div>
       )}
 
-      {manage?.kind === "database" && (
-        <DatabaseDialog
-          connectionId={connectionId}
-          mode={manage.mode}
-          onClose={() => setManage(null)}
-        />
-      )}
-      {manage?.kind === "schema" && (
-        <SchemaDialog
-          connectionId={connectionId}
-          mode={manage.mode}
-          current={schema}
-          onClose={() => setManage(null)}
-        />
-      )}
-      {creating && schema && (
-        <CreateTableDialog
-          connectionId={connectionId}
-          schema={schema}
-          onClose={() => setCreating(false)}
-        />
-      )}
-      {details?.kind === "sequence" && (
-        <SequenceDialog
-          connectionId={connectionId}
-          object={details}
-          onClose={() => setDetails(null)}
-        />
-      )}
-      {details?.kind === "enumType" && (
-        <EnumDialog connectionId={connectionId} object={details} onClose={() => setDetails(null)} />
-      )}
-      {exporting && (
-        <ExportDialog
-          connectionId={connectionId}
-          seed={{ kind: "tables", schema: exporting.schema, first: exporting.name }}
-          onClose={() => setExporting(null)}
-        />
-      )}
-      {action && (
-        <ObjectActionDialog
-          connectionId={connectionId}
-          action={action.kind}
-          object={action.object}
-          onClose={() => setAction(null)}
-        />
-      )}
+      <Suspense fallback={null}>
+        {manage?.kind === "database" && (
+          <DatabaseDialog
+            connectionId={connectionId}
+            mode={manage.mode}
+            onClose={() => setManage(null)}
+          />
+        )}
+        {manage?.kind === "schema" && (
+          <SchemaDialog
+            connectionId={connectionId}
+            mode={manage.mode}
+            current={schema}
+            onClose={() => setManage(null)}
+          />
+        )}
+        {creating && schema && (
+          <CreateTableDialog
+            connectionId={connectionId}
+            schema={schema}
+            onClose={() => setCreating(false)}
+          />
+        )}
+        {details?.kind === "sequence" && (
+          <SequenceDialog
+            connectionId={connectionId}
+            object={details}
+            onClose={() => setDetails(null)}
+          />
+        )}
+        {details?.kind === "enumType" && (
+          <EnumDialog
+            connectionId={connectionId}
+            object={details}
+            onClose={() => setDetails(null)}
+          />
+        )}
+        {exporting && (
+          <ExportDialog
+            connectionId={connectionId}
+            seed={{ kind: "tables", schema: exporting.schema, first: exporting.name }}
+            onClose={() => setExporting(null)}
+          />
+        )}
+        {action && (
+          <ObjectActionDialog
+            connectionId={connectionId}
+            action={action.kind}
+            object={action.object}
+            onClose={() => setAction(null)}
+          />
+        )}
+      </Suspense>
     </div>
   );
 }

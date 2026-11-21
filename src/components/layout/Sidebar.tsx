@@ -1,17 +1,22 @@
 import { ActivityIcon, PlugZapIcon, ShieldIcon } from "lucide-react";
+import { Suspense } from "react";
 
 import { SidebarResizer } from "@/components/layout/SidebarResizer";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ColorDot } from "@/features/connections/ColorDot";
-import { BackupDialog } from "@/features/backup/BackupDialog";
-import { ImportHost } from "@/features/import/ImportHost";
 import { SavedQueries } from "@/features/query/history/SavedQueries";
 import { ObjectTree } from "@/features/sidebar/ObjectTree";
 import { useConnections } from "@/features/connections/useConnections";
+import { lazyNamed } from "@/lib/lazyNamed";
+import { useBackupDialog } from "@/stores/backupDialog";
+import { useImportDialog } from "@/stores/importDialog";
 import { useLayoutStore } from "@/stores/layout";
 import { useSessionStore } from "@/stores/session";
 import { useTabsStore } from "@/stores/tabs";
+
+const ImportHost = lazyNamed(() => import("@/features/import/ImportHost"), "ImportHost");
+const BackupDialog = lazyNamed(() => import("@/features/backup/BackupDialog"), "BackupDialog");
 
 /** The open connection on top, then its databases, schemas and objects. */
 export function Sidebar() {
@@ -20,6 +25,8 @@ export function Sidebar() {
   const disconnect = useSessionStore((s) => s.disconnect);
   const { data: connections = [] } = useConnections();
   const active = connections.find((c) => c.id === activeId);
+  const importing = useImportDialog((s) => s.seed !== null);
+  const backing = useBackupDialog((s) => s.open);
 
   return (
     <aside
@@ -72,8 +79,11 @@ export function Sidebar() {
       </div>
 
       {activeId && <ObjectTree key={activeId} connectionId={activeId} />}
-      {activeId && <ImportHost connectionId={activeId} />}
-      {activeId && <BackupDialog connectionId={activeId} />}
+      {/* Loaded when something asks for them (a menu item, ⌘K, a dropped file). */}
+      <Suspense fallback={null}>
+        {activeId && importing && <ImportHost connectionId={activeId} />}
+        {activeId && backing && <BackupDialog connectionId={activeId} />}
+      </Suspense>
       {activeId && (
         <SavedQueries key={activeId} connectionId={activeId} connectionName={active?.name ?? ""} />
       )}
