@@ -74,6 +74,16 @@ export const commands = {
 	 *  the transaction's changes are already saved and the result says which statement failed.
 	 */
 	applyStructureChanges: (connectionId: string, schema: string, table: string, changes: StructureChange[], options?: InvokeOptions) => __TAURI_INVOKE<StructureApplyResult>("apply_structure_changes", { connectionId, schema, table, changes }, options),
+	/**
+	 *  The SQL the operation would run. Nothing is executed. A mistake (an empty name, a type that
+	 *  is not one) is an error that says what is wrong.
+	 */
+	previewObjectOperation: (connectionId: string, operation: ObjectOperation, options?: InvokeOptions) => __TAURI_INVOKE<StructurePreview>("preview_object_operation", { connectionId, operation }, options),
+	/**
+	 *  Run the operation in one transaction (with a lock timeout). Refused on a read-only
+	 *  connection. Returns how many statements ran.
+	 */
+	applyObjectOperation: (connectionId: string, operation: ObjectOperation, options?: InvokeOptions) => __TAURI_INVOKE<number>("apply_object_operation", { connectionId, operation }, options),
 	/**  The SQL that `apply_changes` would run, values written in. Nothing is executed. */
 	previewChanges: (connectionId: string, schema: string, table: string, changes: TableChanges, options?: InvokeOptions) => __TAURI_INVOKE<string>("preview_changes", { connectionId, schema, table, changes }, options),
 	/**
@@ -328,6 +338,13 @@ export type CreateIndex = {
 	concurrently: boolean,
 };
 
+export type CreateTable = {
+	schema: string,
+	name: string,
+	comment: string | null,
+	columns: NewTableColumn[],
+};
+
 export type DatabaseInfo = {
 	name: string,
 	/**  The database this session is connected to. */
@@ -369,6 +386,14 @@ export type DropConstraint = {
 export type DropIndex = {
 	name: string,
 	concurrently: boolean,
+};
+
+export type DropObject = {
+	objectKind: ObjectKind,
+	schema: string,
+	name: string,
+	/**  Also drop what depends on it (views, foreign keys of other tables). */
+	cascade: boolean,
 };
 
 /**  What `EXPLAIN` gave back. */
@@ -499,6 +524,18 @@ export type LimitedCount = {
 	capped: boolean,
 };
 
+export type NewTableColumn = {
+	name: string,
+	/**  As SQL: `text`, `bigint`, `numeric(10,2)`, `timestamp with time zone`. */
+	typeName: string,
+	nullable: boolean,
+	defaultValue: string | null,
+	/**  `GENERATED … AS IDENTITY`; the type has to be an integer type. */
+	identity: ColumnIdentity | null,
+	primaryKey: boolean,
+	comment: string | null,
+};
+
 /**  A message from the server that is not an error (ANG-32). */
 export type Notice = {
 	/**  `NOTICE`, `WARNING`, `INFO`, `LOG`, `DEBUG`. */
@@ -511,6 +548,16 @@ export type Notice = {
 };
 
 export type ObjectKind = "table" | "partitionedTable" | "foreignTable" | "view" | "materializedView" | "sequence" | "function" | "procedure" | "enumType";
+
+export type ObjectOperation = {
+	kind: "createTable",
+} & CreateTable | {
+	kind: "rename",
+} & RenameObject | {
+	kind: "truncate",
+} & TruncateTable | {
+	kind: "drop",
+} & DropObject;
 
 /**  Fields extracted from a `postgres://` URL, used to fill the connection form. */
 export type ParsedConnectionUrl = {
@@ -559,6 +606,14 @@ export type QueryRun = {
 };
 
 export type RefAction = "noAction" | "restrict" | "cascade" | "setNull" | "setDefault";
+
+export type RenameObject = {
+	/**  Not `kind`: that is what tells the operations apart. */
+	objectKind: ObjectKind,
+	schema: string,
+	name: string,
+	newName: string,
+};
 
 export type ResultColumn = {
 	name: string,
@@ -870,3 +925,12 @@ export type TriggerState = "enabled" | "disabled" |
 "replica" | 
 /**  Fires always, also while replicating. */
 "always";
+
+export type TruncateTable = {
+	schema: string,
+	name: string,
+	/**  Start the sequences of its identity and serial columns over. */
+	restartIdentity: boolean,
+	/**  Also empty the tables that have a foreign key to this one. */
+	cascade: boolean,
+};

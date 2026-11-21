@@ -393,6 +393,16 @@ fn schema_commands_need_an_open_connection() {
             json!({ "connectionId": "nope", "tabId": "query:1" }),
         ),
         (
+            "preview_object_operation",
+            json!({ "connectionId": "nope", "operation": { "kind": "truncate", "schema": "public",
+                    "name": "t", "restartIdentity": false, "cascade": false } }),
+        ),
+        (
+            "apply_object_operation",
+            json!({ "connectionId": "nope", "operation": { "kind": "truncate", "schema": "public",
+                    "name": "t", "restartIdentity": false, "cascade": false } }),
+        ),
+        (
             "preview_structure_changes",
             json!({ "connectionId": "nope", "schema": "public", "table": "t", "changes": [] }),
         ),
@@ -1398,4 +1408,144 @@ fn a_read_only_connection_refuses_structure_changes() {
         )
         .unwrap();
     assert_eq!(preview["statements"][0]["destructive"], true);
+}
+
+#[test]
+fn object_operations_through_ipc() {
+    if !dev_db_available() {
+        return;
+    }
+    let ipc = setup();
+    let mut form = config("Dev", "localhost", 54329);
+    form["user"] = json!("angkor");
+    form["database"] = json!("angkordb_dev");
+    let saved = ipc
+        .call(
+            "save_connection",
+            json!({ "config": form, "password": { "kind": "set", "value": "angkor" } }),
+        )
+        .unwrap();
+    let id = saved["id"].as_str().unwrap();
+    ipc.call("connect_connection", json!({ "id": id })).unwrap();
+    let run = |sql: &str| {
+        ipc.call(
+            "run_query",
+            json!({ "connectionId": id, "tabId": "query:1", "sql": sql }),
+        )
+        .unwrap()
+    };
+    run("DROP TABLE IF EXISTS public.ang38_a, public.ang38_b");
+
+    let create = json!({ "kind": "createTable", "schema": "public", "name": "ang38_a", "comment": null,
+        "columns": [
+            { "name": "id", "typeName": "bigint", "nullable": false, "defaultValue": null,
+              "identity": "always", "primaryKey": true, "comment": null },
+            { "name": "at", "typeName": "timestamp with time zone", "nullable": false,
+              "defaultValue": "now()", "identity": null, "primaryKey": false, "comment": "When" }
+        ] });
+    let preview = ipc
+        .call(
+            "preview_object_operation",
+            json!({ "connectionId": id, "operation": create }),
+        )
+        .unwrap();
+    assert_eq!(preview["statements"].as_array().unwrap().len(), 2);
+    assert_eq!(preview["statements"][0]["destructive"], false);
+    assert!(
+        preview["sql"]
+            .as_str()
+            .unwrap()
+            .contains("GENERATED ALWAYS AS IDENTITY")
+    );
+    assert_eq!(
+        ipc.call(
+            "apply_object_operation",
+            json!({ "connectionId": id, "operation": create })
+        )
+        .unwrap(),
+        2
+    );
+
+    let rename = json!({ "kind": "rename", "objectKind": "table", "schema": "public",
+        "name": "ang38_a", "newName": "ang38_b" });
+    ipc.call(
+        "apply_object_operation",
+        json!({ "connectionId": id, "operation": rename }),
+    )
+    .unwrap();
+    let truncate = json!({ "kind": "truncate", "schema": "public", "name": "ang38_b",
+        "restartIdentity": true, "cascade": false });
+    let preview = ipc
+        .call(
+            "preview_object_operation",
+            json!({ "connectionId": id, "operation": truncate }),
+        )
+        .unwrap();
+    assert_eq!(preview["statements"][0]["destructive"], true);
+    assert!(
+        preview["sql"]
+            .as_str()
+            .unwrap()
+            .contains("RESTART IDENTITY")
+    );
+    ipc.call(
+        "apply_object_operation",
+        json!({ "connectionId": id, "operation": truncate }),
+    )
+    .unwrap();
+
+    // A mistake is a validation error.
+    let bad = ipc
+        .call(
+            "preview_object_operation",
+            json!({ "connectionId": id, "operation": { "kind": "createTable", "schema": "public",
+                "name": "x", "comment": null, "columns": [] } }),
+        )
+        .unwrap_err();
+    assert_eq!(bad["code"], "VALIDATION");
+
+    let drop = json!({ "kind": "drop", "objectKind": "table", "schema": "public",
+        "name": "ang38_b", "cascade": false });
+    ipc.call(
+        "apply_object_operation",
+        json!({ "connectionId": id, "operation": drop }),
+    )
+    .unwrap();
+    // Gone: a second drop fails with the server's message.
+    let gone = ipc
+        .call(
+            "apply_object_operation",
+            json!({ "connectionId": id, "operation": drop }),
+        )
+        .unwrap_err();
+    assert_eq!(gone["code"], "POSTGRES");
+}
+
+#[test]
+fn a_read_only_connection_refuses_object_operations() {
+    if !dev_db_available() {
+        return;
+    }
+    let ipc = setup();
+    let mut form = config("Dev", "localhost", 54329);
+    form["user"] = json!("angkor");
+    form["database"] = json!("angkordb_dev");
+    form["safeMode"] = json!("read-only");
+    let saved = ipc
+        .call(
+            "save_connection",
+            json!({ "config": form, "password": { "kind": "set", "value": "angkor" } }),
+        )
+        .unwrap();
+    let id = saved["id"].as_str().unwrap();
+    ipc.call("connect_connection", json!({ "id": id })).unwrap();
+    let err = ipc
+        .call(
+            "apply_object_operation",
+            json!({ "connectionId": id, "operation": { "kind": "drop", "objectKind": "table",
+                "schema": "public", "name": "users", "cascade": true } }),
+        )
+        .unwrap_err();
+    assert_eq!(err["code"], "VALIDATION");
+    assert!(err["message"].as_str().unwrap().contains("read-only"));
 }

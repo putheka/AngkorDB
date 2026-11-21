@@ -10,6 +10,7 @@
 //! - `classify` — tell reads from writes, and find statements that unlock a read-only session
 //! - `rows`   — page, sort, filter and count the rows of a table
 //! - `script` — split SQL text into statements
+//! - `objects` — create, rename, truncate and drop a table or view
 //! - `query`  — run a script on a tab's own connection
 //! - `structure` — columns, indexes, constraints, triggers and the DDL of one table
 //! - `session` — one open connection: metadata pool + dedicated client per query tab
@@ -20,6 +21,7 @@ pub mod classify;
 pub mod config;
 pub mod explain;
 pub mod introspect;
+pub mod objects;
 pub mod query;
 pub mod rows;
 pub mod script;

@@ -1,6 +1,6 @@
 //! What the sidebar, data grid and autocomplete learn about a database.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -19,7 +19,7 @@ pub struct SchemaInfo {
     pub is_system: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, specta::Type)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub enum ObjectKind {
     Table,
@@ -67,7 +67,7 @@ pub struct DbObject {
     pub detail: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, specta::Type)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub enum ColumnIdentity {
     /// `GENERATED ALWAYS AS IDENTITY`

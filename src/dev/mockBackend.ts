@@ -8,6 +8,7 @@ import type {
   ConnectionInfo,
   ParsedConnectionUrl,
   PasswordChange,
+  ObjectOperation,
   SslMode,
   StructureChange,
 } from "@/bindings";
@@ -17,6 +18,7 @@ import { createHistoryHandlers } from "@/dev/mockHistory";
 import { createQueryHandlers } from "@/dev/mockQuery";
 import { createRowHandlers } from "@/dev/mockRows";
 import { createSchemaHandlers } from "@/dev/mockSchema";
+import { mockObjectApply, mockObjectPreview } from "@/dev/mockObjects";
 import { mockApply, mockPreview, mockTableStructure } from "@/dev/mockStructure";
 import { appError, sleep, type Handler } from "@/dev/mockSupport";
 
@@ -206,6 +208,19 @@ const handlers: Record<string, Handler> = {
   table_structure: (args) => {
     requireOpen(String(args["connectionId"]));
     return mockTableStructure(String(args["schema"]), String(args["table"]));
+  },
+  preview_object_operation: (args) => {
+    requireOpen(String(args["connectionId"]));
+    return mockObjectPreview(args["operation"] as ObjectOperation);
+  },
+  apply_object_operation: async (args) => {
+    requireOpen(String(args["connectionId"]));
+    await sleep(120);
+    const target = connections.find((c) => c.id === String(args["connectionId"]));
+    if (target?.safeMode === "read-only") {
+      throw appError("VALIDATION", "This connection is read-only (safe mode).");
+    }
+    return mockObjectApply(args["operation"] as ObjectOperation);
   },
   preview_structure_changes: (args) => {
     requireOpen(String(args["connectionId"]));

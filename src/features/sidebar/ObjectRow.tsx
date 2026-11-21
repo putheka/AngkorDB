@@ -1,5 +1,7 @@
 import type { CSSProperties } from "react";
 
+import type { ObjectKind } from "@/bindings";
+
 import {
   ContextMenu,
   ContextMenuContent,
@@ -29,9 +31,25 @@ interface ObjectRowProps {
   onOpen: () => void;
   /** Double click or the menu: a permanent tab. */
   onPin: () => void;
+  /** Open it on its Structure view. */
+  onStructure: () => void;
+  /** Rename, truncate or drop it (the menu). */
+  onAction: (action: "rename" | "truncate" | "drop") => void;
 }
 
-export function ObjectRow({ row, style, isActive, isCursor, onOpen, onPin }: ObjectRowProps) {
+const TABLES: ObjectKind[] = ["table", "partitionedTable"];
+const RENAMEABLE: ObjectKind[] = [...TABLES, "foreignTable", "view", "materializedView"];
+
+export function ObjectRow({
+  row,
+  style,
+  isActive,
+  isCursor,
+  onOpen,
+  onPin,
+  onStructure,
+  onAction,
+}: ObjectRowProps) {
   const { object, indices } = row;
   const Icon = OBJECT_ICONS[object.kind];
   const openable = isOpenable(object.kind);
@@ -72,17 +90,25 @@ export function ObjectRow({ row, style, isActive, isCursor, onOpen, onPin }: Obj
       </ContextMenuTrigger>
       <ContextMenuContent>
         {openable && <ContextMenuItem onSelect={onPin}>Open in new tab</ContextMenuItem>}
+        {openable && <ContextMenuItem onSelect={onStructure}>Open structure</ContextMenuItem>}
         <ContextMenuItem onSelect={() => copy(object.name)}>Copy name</ContextMenuItem>
         <ContextMenuItem onSelect={() => copy(qualifiedName(object.schema, object.name))}>
           Copy as schema.name
         </ContextMenuItem>
         <ContextMenuSeparator />
-        {/* Filled in by the structure and export work (M2, M4). */}
+        {/* Export comes with the import / export work (M5). */}
         <ContextMenuItem disabled>Export…</ContextMenuItem>
-        <ContextMenuItem disabled>Truncate…</ContextMenuItem>
-        <ContextMenuItem variant="destructive" disabled>
-          Drop…
-        </ContextMenuItem>
+        {RENAMEABLE.includes(object.kind) && (
+          <ContextMenuItem onSelect={() => onAction("rename")}>Rename…</ContextMenuItem>
+        )}
+        {TABLES.includes(object.kind) && (
+          <ContextMenuItem onSelect={() => onAction("truncate")}>Truncate…</ContextMenuItem>
+        )}
+        {RENAMEABLE.includes(object.kind) && (
+          <ContextMenuItem variant="destructive" onSelect={() => onAction("drop")}>
+            Drop…
+          </ContextMenuItem>
+        )}
       </ContextMenuContent>
     </ContextMenu>
   );

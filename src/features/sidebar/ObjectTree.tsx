@@ -1,6 +1,8 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { RefreshCwIcon, SearchIcon, XIcon } from "lucide-react";
+import { PlusIcon, RefreshCwIcon, SearchIcon, XIcon } from "lucide-react";
 import { useMemo, useRef, useState, type KeyboardEvent } from "react";
+
+import type { DbObject } from "@/bindings";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -17,6 +19,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { CreateTableDialog } from "@/features/objects/CreateTableDialog";
+import { ObjectActionDialog, type ObjectAction } from "@/features/objects/ObjectActionDialog";
+import { useTableViews } from "@/features/grid/tableViews";
 import { ObjectRow } from "@/features/sidebar/ObjectRow";
 import { GroupRow } from "@/features/sidebar/GroupRow";
 import { buildRows, isOpenable, type GroupId } from "@/features/sidebar/treeRows";
@@ -42,6 +47,8 @@ export function ObjectTree({ connectionId }: { connectionId: string }) {
   const [query, setQuery] = useState("");
   const [collapsed, setCollapsed] = useState<ReadonlySet<GroupId>>(new Set());
   const [cursorKey, setCursorKey] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [action, setAction] = useState<{ kind: ObjectAction; object: DbObject } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -170,6 +177,20 @@ export function ObjectTree({ connectionId }: { connectionId: string }) {
               <Button
                 variant="ghost"
                 size="icon-sm"
+                aria-label="New table"
+                disabled={!schema}
+                onClick={() => setCreating(true)}
+              >
+                <PlusIcon />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>New table</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
                 aria-label="Refresh"
                 onClick={() => void refreshSchema(connectionId)}
               >
@@ -274,11 +295,40 @@ export function ObjectTree({ connectionId }: { connectionId: string }) {
                     setCursorKey(row.key);
                     open(item.index, false);
                   }}
+                  onStructure={() => {
+                    setCursorKey(row.key);
+                    openTable(
+                      { schema: row.object.schema, name: row.object.name, kind: row.object.kind },
+                      true,
+                    );
+                    useTableViews
+                      .getState()
+                      .update(tableTabId(row.object.schema, row.object.name), {
+                        mode: "structure",
+                      });
+                  }}
+                  onAction={(kind) => setAction({ kind, object: row.object })}
                 />
               );
             })}
           </div>
         </div>
+      )}
+
+      {creating && schema && (
+        <CreateTableDialog
+          connectionId={connectionId}
+          schema={schema}
+          onClose={() => setCreating(false)}
+        />
+      )}
+      {action && (
+        <ObjectActionDialog
+          connectionId={connectionId}
+          action={action.kind}
+          object={action.object}
+          onClose={() => setAction(null)}
+        />
       )}
     </div>
   );

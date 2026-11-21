@@ -346,3 +346,74 @@ export function createSchemaHandlers(requireOpen: (id: string) => void): Record<
     },
   };
 }
+
+// ---- Changing the object list (ANG-38) ---------------------------------------------------------
+
+const unknownObject = (schema: string, name: string) =>
+  appError("POSTGRES", `relation "${schema}.${name}" does not exist`, { pgCode: "42P01" });
+
+/** A table made by the wizard: listed in the sidebar and described like the hand-written ones. */
+export function mockCreateTable(
+  schema: string,
+  name: string,
+  columns: {
+    name: string;
+    typeName: string;
+    nullable: boolean;
+    defaultValue: string | null;
+    identity: ColumnIdentity | null;
+    primaryKey: boolean;
+  }[],
+): void {
+  const list = (OBJECTS[schema] ??= []);
+  if (list.some((o) => o.name === name)) {
+    throw appError("POSTGRES", `relation "${name}" already exists`, { pgCode: "42P07" });
+  }
+  list.push(object(schema, name, "table", 0));
+  const key = columns.filter((c) => c.primaryKey).map((c) => c.name);
+  TABLES[`${schema}.${name}`] = {
+    kind: "table",
+    identity: key.length > 0 ? { kind: "primaryKey", columns: key } : { kind: "ctid" },
+    columns: Object.fromEntries(
+      columns.map((c): [string, ColumnSpec] => [
+        c.name,
+        {
+          type: c.typeName,
+          pk: c.primaryKey,
+          notNull: !c.nullable || c.primaryKey,
+          ...(c.defaultValue ? { default: c.defaultValue } : {}),
+          ...(c.identity ? { identity: c.identity } : {}),
+        },
+      ]),
+    ),
+  };
+}
+
+export function mockRenameObject(schema: string, name: string, newName: string): void {
+  const list = OBJECTS[schema] ?? [];
+  const index = list.findIndex((o) => o.name === name);
+  const found = list[index];
+  if (!found) throw unknownObject(schema, name);
+  if (list.some((o) => o.name === newName)) {
+    throw appError("POSTGRES", `relation "${newName}" already exists`, { pgCode: "42P07" });
+  }
+  list[index] = { ...found, name: newName };
+  const spec = TABLES[`${schema}.${name}`];
+  if (spec) {
+    TABLES[`${schema}.${newName}`] = spec;
+    // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+    delete TABLES[`${schema}.${name}`];
+  }
+}
+
+export function mockDropObject(schema: string, name: string): void {
+  const list = OBJECTS[schema] ?? [];
+  if (!list.some((o) => o.name === name)) throw unknownObject(schema, name);
+  OBJECTS[schema] = list.filter((o) => o.name !== name);
+  // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+  delete TABLES[`${schema}.${name}`];
+}
+
+export function mockHasObject(schema: string, name: string): boolean {
+  return (OBJECTS[schema] ?? []).some((o) => o.name === name);
+}

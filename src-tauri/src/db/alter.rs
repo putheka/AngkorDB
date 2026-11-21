@@ -76,7 +76,7 @@ pub fn check_fragment(text: &str, what: &str) -> AppResult<()> {
 
 /// A type as the person writes it: `numeric(10, 2)`, `timestamp with time zone`, `"My Type"`,
 /// `public.status`, `int[]`. Nothing else is allowed in one.
-fn check_type(text: &str) -> AppResult<()> {
+pub(crate) fn check_type(text: &str) -> AppResult<()> {
     let allowed = |c: char| {
         c.is_alphanumeric()
             || matches!(c, '_' | '$' | '"' | '.' | ',' | '(' | ')' | '[' | ']' | ' ')
