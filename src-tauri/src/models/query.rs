@@ -60,13 +60,42 @@ pub struct Notice {
     pub code: String,
 }
 
+/// Longest text kept per notice field (bytes); a function can raise notices of any size.
+const MAX_NOTICE_TEXT: usize = 4096;
+/// Most notices kept for one tab between two runs; the rest are dropped.
+pub const MAX_NOTICES: usize = 200;
+
+fn clip(text: &str) -> String {
+    if text.len() <= MAX_NOTICE_TEXT {
+        return text.to_owned();
+    }
+    let mut end = MAX_NOTICE_TEXT;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…", &text[..end])
+}
+
+impl Notice {
+    /// Stands in for the notices that did not fit.
+    pub fn overflow() -> Self {
+        Self {
+            severity: "NOTICE".into(),
+            message: format!("More than {MAX_NOTICES} messages: the rest were not kept."),
+            detail: None,
+            hint: None,
+            code: "00000".into(),
+        }
+    }
+}
+
 impl From<&tokio_postgres::error::DbError> for Notice {
     fn from(e: &tokio_postgres::error::DbError) -> Self {
         Self {
             severity: e.severity().to_owned(),
-            message: e.message().to_owned(),
-            detail: e.detail().map(str::to_owned),
-            hint: e.hint().map(str::to_owned),
+            message: clip(e.message()),
+            detail: e.detail().map(clip),
+            hint: e.hint().map(clip),
             code: e.code().code().to_owned(),
         }
     }

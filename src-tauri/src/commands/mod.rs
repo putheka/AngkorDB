@@ -3,6 +3,7 @@
 pub mod app;
 pub mod changes;
 pub mod connections;
+pub mod history;
 pub mod query;
 pub mod rows;
 pub mod safety;

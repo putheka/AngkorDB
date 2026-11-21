@@ -7,6 +7,7 @@ use tokio::sync::RwLock;
 use crate::db::session::Session;
 use crate::error::{AppError, AppResult};
 use crate::storage::ConnectionManager;
+use crate::storage::history::HistoryStore;
 
 /// What the app can do to its own window, for commands that must not take a `Window` or
 /// `AppHandle` themselves (see CLAUDE.md). Installed at startup; tests run without it.
@@ -26,6 +27,7 @@ pub struct AppState {
     /// while this is above zero.
     unsaved: AtomicU32,
     hooks: Mutex<Option<WindowHooks>>,
+    history: HistoryStore,
 }
 
 impl AppState {
@@ -35,7 +37,19 @@ impl AppState {
             sessions: RwLock::new(HashMap::new()),
             unsaved: AtomicU32::new(0),
             hooks: Mutex::new(None),
+            // Without a file (tests): history that lasts as long as the app does.
+            history: HistoryStore::in_memory().expect("an in-memory SQLite database"),
         }
+    }
+
+    /// Keep query history and saved queries in this store (a file) instead of in memory.
+    pub fn with_history(mut self, history: HistoryStore) -> Self {
+        self.history = history;
+        self
+    }
+
+    pub fn history(&self) -> &HistoryStore {
+        &self.history
     }
 
     pub fn set_window_hooks(&self, hooks: WindowHooks) {

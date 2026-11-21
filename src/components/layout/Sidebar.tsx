@@ -4,6 +4,7 @@ import { SidebarResizer } from "@/components/layout/SidebarResizer";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ColorDot } from "@/features/connections/ColorDot";
+import { SavedQueries } from "@/features/query/history/SavedQueries";
 import { ObjectTree } from "@/features/sidebar/ObjectTree";
 import { useConnections } from "@/features/connections/useConnections";
 import { useLayoutStore } from "@/stores/layout";
@@ -41,6 +42,9 @@ export function Sidebar() {
       </div>
 
       {activeId && <ObjectTree key={activeId} connectionId={activeId} />}
+      {activeId && (
+        <SavedQueries key={activeId} connectionId={activeId} connectionName={active?.name ?? ""} />
+      )}
 
       <SidebarResizer />
     </aside>

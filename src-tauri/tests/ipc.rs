@@ -942,3 +942,109 @@ fn unsaved_changes_are_remembered_and_drive_the_window_hooks() {
     ipc.call("quit_app", json!({})).unwrap();
     assert_eq!(quits.load(Ordering::SeqCst), 1);
 }
+
+#[test]
+fn history_and_saved_queries_through_ipc() {
+    let ipc = setup();
+
+    // Nothing yet; the arguments are the ones the UI sends.
+    let none = ipc
+        .call(
+            "list_history",
+            json!({ "query": "", "connectionId": null, "limit": 50, "offset": 0 }),
+        )
+        .unwrap();
+    assert_eq!(none, json!([]));
+
+    let saved = ipc
+        .call(
+            "save_query",
+            json!({ "input": { "id": null, "connectionId": "c1", "name": "Orders",
+                               "folder": "Reports", "sql": "SELECT * FROM orders" } }),
+        )
+        .unwrap();
+    assert!(saved["id"].is_u64());
+    assert_eq!(saved["connectionId"], "c1");
+    assert_eq!(saved["folder"], "Reports");
+    assert!(saved["createdAt"].is_number());
+
+    let renamed = ipc
+        .call(
+            "save_query",
+            json!({ "input": { "id": saved["id"], "connectionId": null, "name": "Orders 2",
+                               "folder": "", "sql": "SELECT 2" } }),
+        )
+        .unwrap();
+    assert_eq!(renamed["connectionId"], Value::Null);
+
+    let listed = ipc
+        .call("list_saved_queries", json!({ "connectionId": "other" }))
+        .unwrap();
+    assert_eq!(listed.as_array().unwrap().len(), 1);
+    assert_eq!(listed[0]["name"], "Orders 2");
+
+    let invalid = ipc
+        .call(
+            "save_query",
+            json!({ "input": { "id": null, "connectionId": null, "name": " ",
+                               "folder": "", "sql": "SELECT 1" } }),
+        )
+        .unwrap_err();
+    assert_eq!(invalid["code"], "VALIDATION");
+
+    ipc.call("delete_saved_query", json!({ "id": saved["id"] }))
+        .unwrap();
+    let after = ipc
+        .call("list_saved_queries", json!({ "connectionId": null }))
+        .unwrap();
+    assert_eq!(after, json!([]));
+
+    ipc.call("clear_history", json!({ "connectionId": null }))
+        .unwrap();
+    ipc.call("delete_history_entry", json!({ "id": 1 }))
+        .unwrap();
+}
+
+#[test]
+fn running_queries_is_recorded_in_the_history_through_ipc() {
+    if !dev_db_available() {
+        return;
+    }
+    let ipc = setup();
+    let mut form = config("Dev", "localhost", 54329);
+    form["user"] = json!("angkor");
+    form["database"] = json!("angkordb_dev");
+    let saved = ipc
+        .call(
+            "save_connection",
+            json!({ "config": form, "password": { "kind": "set", "value": "angkor" } }),
+        )
+        .unwrap();
+    let id = saved["id"].as_str().unwrap();
+    ipc.call("connect_connection", json!({ "id": id })).unwrap();
+
+    ipc.call(
+        "run_query",
+        json!({ "connectionId": id, "tabId": "query:1",
+                "sql": "SELECT 'é' AS first;\n  SELECT 2 AS second; SELEC 3" }),
+    )
+    .unwrap();
+
+    let history = ipc
+        .call(
+            "list_history",
+            json!({ "query": "", "connectionId": id, "limit": 50, "offset": 0 }),
+        )
+        .unwrap();
+    let entries = history.as_array().unwrap();
+    assert_eq!(entries.len(), 3);
+    // Newest first, each statement on its own (not the whole script), with how it went.
+    assert_eq!(entries[0]["sql"], "SELEC 3");
+    assert_eq!(entries[0]["ok"], false);
+    assert_eq!(entries[1]["sql"], "SELECT 2 AS second");
+    assert_eq!(entries[1]["ok"], true);
+    assert_eq!(entries[2]["sql"], "SELECT 'é' AS first");
+    assert_eq!(entries[2]["connectionId"], id);
+    assert!(entries[2]["durationMs"].is_u64());
+    assert!(entries[2]["ranAt"].as_f64().unwrap() > 1.0e12);
+}

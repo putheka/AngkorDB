@@ -377,6 +377,32 @@ async fn notices_and_warnings_come_back_with_the_statement_that_raised_them() {
 }
 
 #[tokio::test]
+async fn a_flood_of_notices_is_capped_and_long_ones_are_clipped() {
+    use angkordb_lib::models::query::MAX_NOTICES;
+    let Some(session) = open_or_skip().await else {
+        return;
+    };
+    let result = run(
+        &session,
+        "flood",
+        "DO $$ BEGIN
+           FOR i IN 1..1000 LOOP RAISE NOTICE 'n %', i; END LOOP;
+         END $$;
+         DO $$ BEGIN RAISE NOTICE '%', repeat('x', 100000); END $$",
+    )
+    .await;
+
+    let flood = &result.statements[0].notices;
+    assert_eq!(flood.len(), MAX_NOTICES + 1);
+    assert_eq!(flood[MAX_NOTICES - 1].message, format!("n {MAX_NOTICES}"));
+    assert!(flood[MAX_NOTICES].message.contains("not kept"));
+
+    let long = &result.statements[1].notices[0].message;
+    assert!(long.len() < 5000, "kept {} bytes", long.len());
+    assert!(long.ends_with('…'));
+}
+
+#[tokio::test]
 async fn a_long_query_in_one_tab_does_not_block_the_others() {
     let Some(session) = open_or_skip().await else {
         return;

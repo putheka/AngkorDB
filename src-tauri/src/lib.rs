@@ -21,6 +21,7 @@ use std::path::Path;
 
 use specta_typescript::Typescript;
 use state::{AppState, WindowHooks};
+use storage::history::HistoryStore;
 use storage::{ConnectionManager, secrets::default_secret_store};
 use tauri::Manager;
 use tauri_specta::{Builder, collect_commands};
@@ -66,6 +67,12 @@ pub fn specta_builder<R: tauri::Runtime>() -> Builder<R> {
             commands::query::cancel_query,
             commands::query::close_query_tab,
             commands::query::statement_at,
+            commands::history::list_history,
+            commands::history::delete_history_entry,
+            commands::history::clear_history,
+            commands::history::list_saved_queries,
+            commands::history::save_query,
+            commands::history::delete_saved_query,
             commands::safety::classify_sql,
             commands::safety::authenticate_user,
         ])
@@ -94,7 +101,16 @@ pub fn run() {
             // Settings live in ~/Library/Application Support/com.angkordb.app/.
             let dir = app.path().app_data_dir()?;
             let connections = ConnectionManager::new(&dir, default_secret_store()?);
-            app.manage(AppState::new(connections));
+            // History and saved queries: a file next to the connections. If it can't be opened
+            // the app still works, with history that lasts until it quits.
+            let history = std::fs::create_dir_all(&dir)
+                .map_err(|e| error::AppError::Storage(e.to_string()))
+                .and_then(|()| HistoryStore::open(&dir.join("history.sqlite")))
+                .unwrap_or_else(|e| {
+                    eprintln!("query history is not saved: {e}");
+                    HistoryStore::in_memory().expect("an in-memory SQLite database")
+                });
+            app.manage(AppState::new(connections).with_history(history));
 
             // What commands may not do themselves: touch the window and quit (ANG-29).
             let window = app.handle().clone();

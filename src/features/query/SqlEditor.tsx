@@ -24,6 +24,8 @@ export interface SqlEditorHandle {
   focus: () => void;
   /** Move the cursor to `offset`, scroll to it and underline the word there. */
   showError: (offset: number) => void;
+  /** Replace the selection (or insert at the cursor) with `text`, and focus the editor. */
+  insertText: (text: string) => void;
   /** The text as it is now, and where the cursor or selection is. */
   snapshot: () => { text: string; from: number; to: number };
 }
@@ -96,6 +98,18 @@ export function SqlEditor({
         selection: { anchor: from },
         effects: [setErrorMark.of({ from, to }), EditorView.scrollIntoView(from, { y: "center" })],
       });
+    },
+    insertText: (text) => {
+      const editor = view.current;
+      if (!editor) return;
+      const { from, to } = editor.state.selection.main;
+      editor.dispatch({
+        changes: { from, to, insert: text },
+        selection: { anchor: from + text.length },
+        scrollIntoView: true,
+        userEvent: "input.paste",
+      });
+      editor.focus();
     },
     snapshot: () => {
       const editor = view.current;

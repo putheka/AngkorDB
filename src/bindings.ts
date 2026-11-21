@@ -83,6 +83,19 @@ export const commands = {
 	 */
 	statementAt: (sql: string, cursor: number, options?: InvokeOptions) => __TAURI_INVOKE<TextRange | null>("statement_at", { sql, cursor }, options),
 	/**
+	 *  Statements that were run, newest first. Every word of `query` must be in the statement.
+	 *  `connection_id: None` looks across all connections.
+	 */
+	listHistory: (query: string, connectionId: string | null, limit: number, offset: number, options?: InvokeOptions) => __TAURI_INVOKE<HistoryEntry[]>("list_history", { query, connectionId, limit, offset }, options),
+	deleteHistoryEntry: (id: number, options?: InvokeOptions) => __TAURI_INVOKE<null>("delete_history_entry", { id }, options),
+	/**  Forget the history of one connection, or all of it. */
+	clearHistory: (connectionId: string | null, options?: InvokeOptions) => __TAURI_INVOKE<null>("clear_history", { connectionId }, options),
+	/**  Saved queries of a connection plus those for every connection; all of them for `None`. */
+	listSavedQueries: (connectionId: string | null, options?: InvokeOptions) => __TAURI_INVOKE<SavedQuery[]>("list_saved_queries", { connectionId }, options),
+	/**  Save a query, or change one that was saved (the input has its `id`). */
+	saveQuery: (input: SavedQueryInput, options?: InvokeOptions) => __TAURI_INVOKE<SavedQuery>("save_query", { input }, options),
+	deleteSavedQuery: (id: number, options?: InvokeOptions) => __TAURI_INVOKE<null>("delete_saved_query", { id }, options),
+	/**
 	 *  What each statement of `sql` does, so the UI can ask before running the ones that change
 	 *  something. Needs no connection.
 	 */
@@ -268,6 +281,18 @@ export type ForeignKeyRef = {
 	column: string,
 };
 
+/**  A statement that was run, newest first in listings. */
+export type HistoryEntry = {
+	id: number,
+	connectionId: string,
+	sql: string,
+	/**  Unix time in milliseconds. */
+	ranAt: number | null,
+	durationMs: number,
+	/**  The statement succeeded. */
+	ok: boolean,
+};
+
 /**
  *  A foreign key of another table that points at this one ("referenced by"). The two column
  *  lists are in constraint order: `columns[i]` of `schema.table` references `referenced_columns[i]`
@@ -403,6 +428,27 @@ export type RowUpdate = {
 };
 
 export type SafeMode = "off" | "confirm" | "touch-id" | "read-only";
+
+/**  A query the person kept, with a name and an optional folder. */
+export type SavedQuery = {
+	id: number,
+	/**  `None`: usable on every connection. */
+	connectionId: string | null,
+	name: string,
+	/**  `""` for none. */
+	folder: string,
+	sql: string,
+	createdAt: number | null,
+};
+
+/**  What the form sends to save (a new query without an `id`, or changes to one with). */
+export type SavedQueryInput = {
+	id: number | null,
+	connectionId: string | null,
+	name: string,
+	folder: string,
+	sql: string,
+};
 
 export type SchemaInfo = {
 	name: string,

@@ -12,7 +12,7 @@ use tokio_postgres_rustls::MakeRustlsConnect;
 use crate::db::{config, tls};
 use crate::error::{AppError, AppResult};
 use crate::models::connection::{ConnectionConfig, ConnectionInfo};
-use crate::models::query::Notice;
+use crate::models::query::{MAX_NOTICES, Notice};
 
 /// Pooled connections for introspection, grid fetches and `apply_changes` (ANG-8 D3).
 const META_POOL_SIZE: usize = 3;
@@ -130,7 +130,11 @@ impl Session {
                 if let AsyncMessage::Notice(notice) = message
                     && let Ok(mut list) = sink.lock()
                 {
-                    list.push(Notice::from(&notice));
+                    match list.len().cmp(&MAX_NOTICES) {
+                        std::cmp::Ordering::Less => list.push(Notice::from(&notice)),
+                        std::cmp::Ordering::Equal => list.push(Notice::overflow()),
+                        std::cmp::Ordering::Greater => {}
+                    }
                 }
             }
         });

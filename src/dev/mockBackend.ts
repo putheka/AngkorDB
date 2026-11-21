@@ -12,6 +12,7 @@ import type {
 } from "@/bindings";
 
 import { createChangeHandlers } from "@/dev/mockChanges";
+import { createHistoryHandlers } from "@/dev/mockHistory";
 import { createQueryHandlers } from "@/dev/mockQuery";
 import { createRowHandlers } from "@/dev/mockRows";
 import { createSchemaHandlers } from "@/dev/mockSchema";
@@ -203,6 +204,7 @@ const handlers: Record<string, Handler> = {
   ...createRowHandlers(requireOpen),
   ...createChangeHandlers(requireOpen, (id) => connections.find((c) => c.id === id)?.safeMode),
   ...createQueryHandlers(requireOpen),
+  ...createHistoryHandlers(),
 };
 
 export function installMockBackend() {

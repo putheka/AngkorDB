@@ -4,8 +4,9 @@ use tauri::State;
 
 use crate::db::{query, script};
 use crate::error::AppResult;
-use crate::models::query::{QueryRun, TextRange};
+use crate::models::query::{QueryRun, StatementOutcome, TextRange};
 use crate::state::AppState;
+use crate::storage::history;
 
 /// Run the statements of `sql` one after another on the query tab's own connection. A
 /// statement that fails ends the run and is reported as the last result.
@@ -18,7 +19,34 @@ pub async fn run_query(
     sql: String,
 ) -> AppResult<QueryRun> {
     let session = state.session(&connection_id).await?;
-    query::run_script(&session, &tab_id, &sql).await
+    let run = query::run_script(&session, &tab_id, &sql).await?;
+    remember(&state, &connection_id, &sql, &run);
+    Ok(run)
+}
+
+/// Put every statement that was run into the history. Never fails the run: a history that
+/// can't be written is not worth an error on a query that worked.
+fn remember(state: &AppState, connection_id: &str, sql: &str, run: &QueryRun) {
+    let ran_at = history::now_ms();
+    let statements = script::split(sql);
+    for result in &run.statements {
+        let Some(statement) = statements
+            .iter()
+            .find(|s| s.utf16_start == result.range.start)
+        else {
+            continue;
+        };
+        let ok = !matches!(result.outcome, StatementOutcome::Error { .. });
+        if let Err(error) = state.history().add(
+            connection_id,
+            &sql[statement.start..statement.end],
+            ran_at,
+            result.duration_ms,
+            ok,
+        ) {
+            eprintln!("could not record query history: {error}");
+        }
+    }
 }
 
 /// Ask the server to stop what the tab is running. `false` if the tab has no connection yet.

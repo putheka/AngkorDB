@@ -1,11 +1,23 @@
-import { useQuery } from "@tanstack/react-query";
-import { PanelBottomIcon, PanelRightIcon, PlayIcon, SquareIcon } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  BookmarkPlusIcon,
+  HistoryIcon,
+  PanelBottomIcon,
+  PanelRightIcon,
+  PlayIcon,
+  SquareIcon,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useWriteApproval } from "@/features/safety/approval";
 import { buildIndex } from "@/features/query/completion/suggest";
+import { HistoryPanel } from "@/features/query/history/HistoryPanel";
+import { suggestName } from "@/features/query/history/historyText";
+import { SaveQueryDialog } from "@/features/query/history/SaveQueryDialog";
+import type { SaveQueryDraft } from "@/features/query/history/saveDraft";
+import { historyKey, useSavedQueries } from "@/features/query/history/useHistory";
 import {
   nextRunId,
   useQueryView,
@@ -33,6 +45,13 @@ export function QueryView({ connectionId, tab }: { connectionId: string; tab: Qu
   const drag = useRef<{ start: number; size: number } | null>(null);
 
   const { mode: safeMode, name: connectionName, approve } = useWriteApproval(connectionId);
+  const queryClient = useQueryClient();
+  const [saving, setSaving] = useState<SaveQueryDraft | null>(null);
+  const savedQueries = useSavedQueries(connectionId);
+  const folders = useMemo(
+    () => [...new Set((savedQueries.data ?? []).map((q) => q.folder).filter(Boolean))],
+    [savedQueries.data],
+  );
 
   // Names to complete: tables, columns and functions of the whole database, loaded once and
   // reloaded with the schema (⌘R). It is under "schema", so a reload refreshes it too.
@@ -73,6 +92,8 @@ export function QueryView({ connectionId, tab }: { connectionId: string; tab: Qu
       update({ running: true, startedAt: Date.now(), runError: null });
       try {
         const result = await commands.runQuery(connectionId, tab.id, sql);
+        // What was run is in the history now.
+        void queryClient.invalidateQueries({ queryKey: historyKey });
         update({
           running: false,
           startedAt: null,
@@ -88,7 +109,7 @@ export function QueryView({ connectionId, tab }: { connectionId: string; tab: Qu
         update({ running: false, startedAt: null, runError: errorMessage(error) });
       }
     },
-    [connectionId, tab.id, update, safeMode, connectionName, approve],
+    [connectionId, tab.id, update, safeMode, connectionName, approve, queryClient],
   );
 
   const onRun = useCallback(
@@ -109,6 +130,35 @@ export function QueryView({ connectionId, tab }: { connectionId: string; tab: Qu
     () => void commands.cancelQuery(connectionId, tab.id).catch(() => undefined),
     [connectionId, tab.id],
   );
+
+  // Save what is selected, or else everything in the editor.
+  const saveQuery = useCallback(() => {
+    const { text, from, to } = editor.current?.snapshot() ?? { text: "", from: 0, to: 0 };
+    const sql = to > from ? text.slice(from, to) : text;
+    if (!sql.trim()) {
+      update({ runError: "There is no SQL to save: write something in the editor first." });
+      return;
+    }
+    setSaving({
+      id: null,
+      name: suggestName(sql),
+      folder: "",
+      sql: sql.trim(),
+      forThisConnection: true,
+    });
+  }, [update]);
+
+  // ⌘⇧S saves the query, wherever the focus is.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey && e.shiftKey && !e.altKey && !e.ctrlKey && e.code === "KeyS") {
+        e.preventDefault();
+        saveQuery();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [saveQuery]);
 
   // ⌘. stops what is running, wherever the focus is (the editor included).
   useEffect(() => {
@@ -242,8 +292,30 @@ export function QueryView({ connectionId, tab }: { connectionId: string; tab: Qu
           <TooltipTrigger asChild>
             <Button
               size="icon-xs"
-              variant="ghost"
+              variant={view.historyOpen ? "secondary" : "ghost"}
               className="ml-auto"
+              aria-label="History"
+              aria-pressed={view.historyOpen}
+              onClick={() => update({ historyOpen: !view.historyOpen })}
+            >
+              <HistoryIcon />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Statements you ran before</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button size="icon-xs" variant="ghost" aria-label="Save query" onClick={saveQuery}>
+              <BookmarkPlusIcon />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Save the query: the selection, or all of it (⌘⇧S)</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              size="icon-xs"
+              variant="ghost"
               aria-label={horizontal ? "Show results below" : "Show results on the right"}
               onClick={() => update({ layout: horizontal ? "below" : "right" })}
             >
@@ -256,61 +328,87 @@ export function QueryView({ connectionId, tab }: { connectionId: string; tab: Qu
         </Tooltip>
       </div>
 
-      <div ref={body} className={cn("flex min-h-0 flex-1", horizontal ? "flex-row" : "flex-col")}>
+      <div className="flex min-h-0 flex-1">
+        {view.historyOpen && (
+          <HistoryPanel
+            connectionId={connectionId}
+            connectionName={connectionName}
+            onInsert={(sql) => editor.current?.insertText(sql)}
+            onClose={() => update({ historyOpen: false })}
+          />
+        )}
         <div
-          style={horizontal ? { width: view.editorWidth } : { height: view.editorHeight }}
-          className="shrink-0 overflow-hidden"
+          ref={body}
+          className={cn("flex min-h-0 min-w-0 flex-1", horizontal ? "flex-row" : "flex-col")}
         >
-          <SqlEditor
-            ref={editor}
-            initialText={view.text}
-            initialSelection={view.selection}
-            onTextChange={(text) => update({ text })}
-            onSelectionChange={(selection) => update({ selection })}
-            onRun={(mode) => void onRun(mode)}
-            completion={completion}
-          />
-        </div>
+          <div
+            style={horizontal ? { width: view.editorWidth } : { height: view.editorHeight }}
+            className="shrink-0 overflow-hidden"
+          >
+            <SqlEditor
+              ref={editor}
+              initialText={view.text}
+              initialSelection={view.selection}
+              onTextChange={(text) => update({ text })}
+              onSelectionChange={(selection) => update({ selection })}
+              onRun={(mode) => void onRun(mode)}
+              completion={completion}
+            />
+          </div>
 
-        <div
-          role="separator"
-          aria-orientation={horizontal ? "vertical" : "horizontal"}
-          aria-label="Resize editor"
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={endDrag}
-          onPointerCancel={endDrag}
-          onDoubleClick={() => update(horizontal ? { editorWidth: 560 } : { editorHeight: 240 })}
-          className={cn(
-            "group relative shrink-0 touch-none bg-muted/40 hover:bg-ring/30",
-            horizontal ? "w-1.5 cursor-col-resize border-x" : "h-1.5 cursor-row-resize border-y",
-          )}
-        />
-
-        <div className="min-h-0 min-w-0 flex-1">
-          <ResultsPane
-            run={view.lastRun}
-            pinned={view.pinned}
-            tab={view.resultTab}
-            running={view.running}
-            runError={view.runError}
-            onTab={(resultTab) => update({ resultTab })}
-            onPin={pin}
-            onUnpin={unpin}
-            onGoToError={(index) => {
-              const statement = view.lastRun?.result.statements[index];
-              if (
-                view.lastRun &&
-                statement?.outcome.kind === "error" &&
-                statement.outcome.offset !== null
-              ) {
-                editor.current?.showError(view.lastRun.base + statement.outcome.offset);
-                editor.current?.focus();
-              }
-            }}
+          <div
+            role="separator"
+            aria-orientation={horizontal ? "vertical" : "horizontal"}
+            aria-label="Resize editor"
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={endDrag}
+            onPointerCancel={endDrag}
+            onDoubleClick={() => update(horizontal ? { editorWidth: 560 } : { editorHeight: 240 })}
+            className={cn(
+              "group relative shrink-0 touch-none bg-muted/40 hover:bg-ring/30",
+              horizontal ? "w-1.5 cursor-col-resize border-x" : "h-1.5 cursor-row-resize border-y",
+            )}
           />
+
+          <div className="min-h-0 min-w-0 flex-1">
+            <ResultsPane
+              run={view.lastRun}
+              pinned={view.pinned}
+              tab={view.resultTab}
+              running={view.running}
+              runError={view.runError}
+              onTab={(resultTab) => update({ resultTab })}
+              onPin={pin}
+              onUnpin={unpin}
+              onGoToError={(index) => {
+                const statement = view.lastRun?.result.statements[index];
+                if (
+                  view.lastRun &&
+                  statement?.outcome.kind === "error" &&
+                  statement.outcome.offset !== null
+                ) {
+                  editor.current?.showError(view.lastRun.base + statement.outcome.offset);
+                  editor.current?.focus();
+                }
+              }}
+            />
+          </div>
         </div>
       </div>
+
+      {saving && (
+        <SaveQueryDialog
+          draft={saving}
+          connectionId={connectionId}
+          connectionName={connectionName}
+          folders={folders}
+          onClose={() => {
+            setSaving(null);
+            editor.current?.focus();
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -47,6 +47,8 @@ export interface QueryView {
   layout: "below" | "right";
   /** Width of the editor in pixels when the results are to its right. */
   editorWidth: number;
+  /** The history list beside the editor is showing. */
+  historyOpen: boolean;
   /** The run itself could not happen (lost connection, ...), as opposed to a statement failing. */
   runError: string | null;
 }
@@ -62,6 +64,7 @@ export const DEFAULT_QUERY_VIEW: QueryView = {
   pinned: [],
   layout: "below",
   editorWidth: 560,
+  historyOpen: false,
   runError: null,
 };
 

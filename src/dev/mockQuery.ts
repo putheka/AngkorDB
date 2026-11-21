@@ -11,6 +11,7 @@ import type {
   StatementResult,
   TextRange,
 } from "@/bindings";
+import { recordHistory } from "@/dev/mockHistory";
 import { mockTableData } from "@/dev/mockRows";
 import { appError, sleep, type Handler } from "@/dev/mockSupport";
 
@@ -268,6 +269,12 @@ export function createQueryHandlers(requireOpen: (id: string) => void): Record<s
         const t0 = Date.now();
         await sleep(30); // a little latency, so the running state is visible
         const outcome = await execute(tabId, sql.slice(span.start, span.end), span.start);
+        recordHistory(
+          String(args["connectionId"]),
+          sql.slice(span.start, span.end),
+          Date.now() - t0,
+          outcome.kind !== "error",
+        );
         statements.push({
           range: { start: span.start, end: span.end },
           durationMs: Date.now() - t0,
