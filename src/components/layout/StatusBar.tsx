@@ -82,7 +82,7 @@ export function StatusBar() {
       <span className="flex shrink-0 items-center gap-3 tabular-nums">
         {rowCount && <span>{formatRowCount(rowCount.count, rowCount.exact)}</span>}
         {queryMs !== null && <span>{formatDuration(queryMs)}</span>}
-        <span>
+        <span title={info.data ? `Build ${info.data.build}` : undefined}>
           {info.data ? `${info.data.name} v${info.data.version}` : info.isError ? "IPC error" : "…"}
         </span>
       </span>

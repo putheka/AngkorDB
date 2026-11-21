@@ -334,7 +334,10 @@ export type AppError = {
 
 export type AppInfo = {
 	name: string,
+	/**  From `tauri.conf.json`. */
 	version: string,
+	/**  The git commit the program was built from (`-dirty` when it had uncommitted changes). */
+	build: string,
 };
 
 /**  What a committed change set did. */

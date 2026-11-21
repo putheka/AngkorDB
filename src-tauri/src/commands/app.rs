@@ -8,7 +8,10 @@ use crate::state::AppState;
 #[serde(rename_all = "camelCase")]
 pub struct AppInfo {
     pub name: String,
+    /// From `tauri.conf.json`.
     pub version: String,
+    /// The git commit the program was built from (`-dirty` when it had uncommitted changes).
+    pub build: String,
 }
 
 /// Smoke-test command: proves the React ⇄ Rust bridge works.
@@ -20,7 +23,8 @@ pub struct AppInfo {
 pub fn app_info() -> AppInfo {
     AppInfo {
         name: env!("CARGO_PKG_NAME").to_owned(),
-        version: env!("CARGO_PKG_VERSION").to_owned(),
+        version: env!("ANGKORDB_VERSION").to_owned(),
+        build: env!("ANGKORDB_BUILD").to_owned(),
     }
 }
 
@@ -60,4 +64,18 @@ pub fn set_confirm_on_quit(state: State<'_, AppState>, confirm: bool) {
 #[specta::specta]
 pub fn update_menu(state: State<'_, AppState>, updates: Vec<MenuUpdate>) {
     state.update_menu(updates);
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_build_names_a_commit() {
+        let build = env!("ANGKORDB_BUILD");
+        let commit = build.strip_suffix("-dirty").unwrap_or(build);
+        assert!(
+            commit == "unknown"
+                || (commit.len() >= 7 && commit.chars().all(|c| c.is_ascii_hexdigit())),
+            "{build}"
+        );
+    }
 }

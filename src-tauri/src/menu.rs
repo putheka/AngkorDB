@@ -10,6 +10,7 @@
 //! window instead of the front tab, and ⌘, would be lost: those two keys are fixed in the menu.
 
 use serde::Deserialize;
+use tauri::image::Image;
 use tauri::menu::{AboutMetadata, Menu, MenuItem, MenuItemKind, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Emitter, Runtime};
 
@@ -36,6 +37,28 @@ fn item<R: Runtime>(app: &AppHandle<R>, id: &str, label: &str) -> tauri::Result<
     MenuItem::with_id(app, id, label, false, None::<&str>)
 }
 
+/// Where the project lives, for the About window.
+pub const REPOSITORY: &str = "https://github.com/putheka/AngkorDB";
+
+/// What the About window says: the name, the version and the commit it was built from, who made
+/// it, and where it is. No license has been chosen for the project yet, so none is claimed.
+fn about<R: Runtime>(app: &AppHandle<R>) -> AboutMetadata<'static> {
+    AboutMetadata {
+        name: Some("AngkorDB".to_owned()),
+        version: Some(env!("ANGKORDB_VERSION").to_owned()),
+        short_version: Some(env!("ANGKORDB_BUILD").to_owned()),
+        copyright: Some("Copyright © 2026 Bob. All rights reserved.".to_owned()),
+        credits: Some(format!(
+            "A native PostgreSQL client for the Mac.\n{REPOSITORY}\nBuild {}",
+            env!("ANGKORDB_BUILD")
+        )),
+        website: Some(REPOSITORY.to_owned()),
+        website_label: Some("AngkorDB on GitHub".to_owned()),
+        icon: app.default_window_icon().cloned().map(Image::to_owned),
+        ..AboutMetadata::default()
+    }
+}
+
 pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     let name = app.package_info().name.clone();
     let sep = || PredefinedMenuItem::separator(app);
@@ -49,7 +72,7 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         &name,
         true,
         &[
-            &PredefinedMenuItem::about(app, None, Some(AboutMetadata::default()))?,
+            &PredefinedMenuItem::about(app, None, Some(about(app)))?,
             &sep()?,
             &settings,
             &item(app, "app.checkUpdates", "Check for Updates…")?,

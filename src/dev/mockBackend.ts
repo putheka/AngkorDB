@@ -313,7 +313,7 @@ const mockConnectionFile: SharedConnection[] = [
 ];
 
 const handlers: Record<string, Handler> = {
-  app_info: () => ({ name: "AngkorDB", version: "0.1.0 (browser mock)" }),
+  app_info: () => ({ name: "AngkorDB", version: "0.1.0 (browser mock)", build: "mock" }),
 
   // Quitting and the window's edited dot only exist in the native app.
   set_unsaved_changes: (args) => {

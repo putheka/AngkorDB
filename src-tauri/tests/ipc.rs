@@ -313,9 +313,13 @@ fn test_connect_and_disconnect_against_the_dev_database() {
 fn app_info_reports_name_and_version() {
     let ipc = setup();
     let info = ipc.call("app_info", json!({})).unwrap();
-    assert_eq!(
-        info,
-        json!({ "name": "angkordb", "version": env!("CARGO_PKG_VERSION") })
+    assert_eq!(info["name"], "angkordb");
+    assert_eq!(info["version"], env!("CARGO_PKG_VERSION"));
+    // The commit the test binary was built from (the About window shows the same).
+    let build = info["build"].as_str().unwrap();
+    assert!(
+        !build.is_empty() && build == env!("ANGKORDB_BUILD"),
+        "{build}"
     );
 }
 
