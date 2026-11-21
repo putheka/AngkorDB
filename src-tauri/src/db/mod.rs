@@ -5,6 +5,7 @@
 //! - `url`     — parse `postgres://` URLs into connection form fields
 //! - `explain` — EXPLAIN / EXPLAIN ANALYZE of one statement, analyzed ones rolled back
 //! - `introspect` — databases, schemas, objects, columns and row identity from `pg_catalog`
+//! - `alter`  — change the structure of a table: plan the statements, run them
 //! - `changes` — apply staged edits in one transaction, or show the SQL they would run
 //! - `classify` — tell reads from writes, and find statements that unlock a read-only session
 //! - `rows`   — page, sort, filter and count the rows of a table
@@ -13,6 +14,7 @@
 //! - `structure` — columns, indexes, constraints, triggers and the DDL of one table
 //! - `session` — one open connection: metadata pool + dedicated client per query tab
 
+pub mod alter;
 pub mod changes;
 pub mod classify;
 pub mod config;

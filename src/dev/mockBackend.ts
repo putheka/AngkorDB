@@ -9,6 +9,7 @@ import type {
   ParsedConnectionUrl,
   PasswordChange,
   SslMode,
+  StructureChange,
 } from "@/bindings";
 
 import { createChangeHandlers } from "@/dev/mockChanges";
@@ -16,7 +17,7 @@ import { createHistoryHandlers } from "@/dev/mockHistory";
 import { createQueryHandlers } from "@/dev/mockQuery";
 import { createRowHandlers } from "@/dev/mockRows";
 import { createSchemaHandlers } from "@/dev/mockSchema";
-import { mockTableStructure } from "@/dev/mockStructure";
+import { mockApply, mockPreview, mockTableStructure } from "@/dev/mockStructure";
 import { appError, sleep, type Handler } from "@/dev/mockSupport";
 
 /** Connections opened with `connect_connection`; schema commands need one. */
@@ -205,6 +206,27 @@ const handlers: Record<string, Handler> = {
   table_structure: (args) => {
     requireOpen(String(args["connectionId"]));
     return mockTableStructure(String(args["schema"]), String(args["table"]));
+  },
+  preview_structure_changes: (args) => {
+    requireOpen(String(args["connectionId"]));
+    return mockPreview(
+      String(args["schema"]),
+      String(args["table"]),
+      args["changes"] as StructureChange[],
+    );
+  },
+  apply_structure_changes: async (args) => {
+    requireOpen(String(args["connectionId"]));
+    await sleep(150);
+    const target = connections.find((c) => c.id === String(args["connectionId"]));
+    if (target?.safeMode === "read-only") {
+      throw appError("VALIDATION", "This connection is read-only (safe mode).");
+    }
+    return mockApply(
+      String(args["schema"]),
+      String(args["table"]),
+      args["changes"] as StructureChange[],
+    );
   },
   ...createRowHandlers(requireOpen),
   ...createChangeHandlers(requireOpen, (id) => connections.find((c) => c.id === id)?.safeMode),

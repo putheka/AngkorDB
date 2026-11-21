@@ -8,7 +8,7 @@ use angkordb_lib::db::session::Session;
 use angkordb_lib::db::structure::table_structure;
 use angkordb_lib::models::schema::{ColumnIdentity, ObjectKind};
 use angkordb_lib::models::structure::{ConstraintKind, Persistence, TableStructure, TriggerState};
-use common::{DEV_PASSWORD, dev_config, open_or_skip};
+use common::{Scratch, open_or_skip, run_all};
 
 async fn structure(session: &Session, schema: &str, table: &str) -> TableStructure {
     table_structure(&session.meta().await.unwrap(), schema, table)
@@ -300,78 +300,6 @@ async fn a_missing_table_is_not_found() {
 }
 
 // ---- The DDL, run on empty databases ----------------------------------------------------------
-
-const PREFIX: &str = "angkordb_ddl_";
-
-/// A database that exists for one test and is dropped at the end.
-struct Scratch {
-    name: String,
-}
-
-impl Scratch {
-    async fn create(admin: &Session, label: &str) -> Self {
-        let pid = std::process::id();
-        let name = format!("{PREFIX}{pid}_{label}");
-        let client = admin.meta().await.unwrap();
-        // Leftovers of an earlier run that was killed (not those of the tests running now).
-        let old = client
-            .query(
-                "SELECT datname::text FROM pg_database
-                  WHERE datname LIKE $1 AND datname NOT LIKE $2",
-                &[&format!("{PREFIX}%"), &format!("{PREFIX}{pid}\\_%")],
-            )
-            .await
-            .unwrap();
-        for row in old {
-            let stale: String = row.get(0);
-            let _ = client
-                .batch_execute(&format!("DROP DATABASE IF EXISTS \"{stale}\" WITH (FORCE)"))
-                .await;
-        }
-        client
-            .batch_execute(&format!("DROP DATABASE IF EXISTS \"{name}\" WITH (FORCE)"))
-            .await
-            .unwrap();
-        client
-            .batch_execute(&format!("CREATE DATABASE \"{name}\" TEMPLATE template0"))
-            .await
-            .unwrap();
-        Self { name }
-    }
-
-    async fn open(&self) -> Session {
-        let mut config = dev_config();
-        config.database = self.name.clone();
-        Session::open(config, Some(DEV_PASSWORD)).await.unwrap()
-    }
-
-    async fn drop_it(self, admin: &Session) {
-        let client = admin.meta().await.unwrap();
-        client
-            .batch_execute(&format!(
-                "DROP DATABASE IF EXISTS \"{}\" WITH (FORCE)",
-                self.name
-            ))
-            .await
-            .unwrap();
-    }
-}
-
-/// Run every statement of `sql`; the ones that fail with a code in `tolerate` are skipped.
-/// Returns the first other failure as a message.
-async fn run_all(session: &Session, sql: &str, tolerate: &[&str]) -> Result<(), String> {
-    let client = session.meta().await.unwrap();
-    for statement in script::split(sql) {
-        let text = &sql[statement.start..statement.end];
-        if let Err(e) = client.batch_execute(text).await {
-            let code = e.code().map(|c| c.code().to_owned()).unwrap_or_default();
-            if !tolerate.contains(&code.as_str()) {
-                return Err(format!("{e}\n  in: {text}"));
-            }
-        }
-    }
-    Ok(())
-}
 
 /// Tables of the dev database, referenced tables first.
 async fn seed_tables(session: &Session) -> Vec<(String, String)> {

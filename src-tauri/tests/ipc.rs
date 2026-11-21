@@ -393,6 +393,14 @@ fn schema_commands_need_an_open_connection() {
             json!({ "connectionId": "nope", "tabId": "query:1" }),
         ),
         (
+            "preview_structure_changes",
+            json!({ "connectionId": "nope", "schema": "public", "table": "t", "changes": [] }),
+        ),
+        (
+            "apply_structure_changes",
+            json!({ "connectionId": "nope", "schema": "public", "table": "t", "changes": [] }),
+        ),
+        (
             "table_structure",
             json!({ "connectionId": "nope", "schema": "public", "table": "users" }),
         ),
@@ -1204,4 +1212,190 @@ fn table_structure_through_ipc() {
         )
         .unwrap_err();
     assert_eq!(err["code"], "NOT_FOUND");
+}
+
+#[test]
+fn structure_changes_through_ipc() {
+    if !dev_db_available() {
+        return;
+    }
+    let ipc = setup();
+    let mut form = config("Dev", "localhost", 54329);
+    form["user"] = json!("angkor");
+    form["database"] = json!("angkordb_dev");
+    let saved = ipc
+        .call(
+            "save_connection",
+            json!({ "config": form, "password": { "kind": "set", "value": "angkor" } }),
+        )
+        .unwrap();
+    let id = saved["id"].as_str().unwrap();
+    ipc.call("connect_connection", json!({ "id": id })).unwrap();
+
+    // A throwaway table in the dev database, removed at the end.
+    let table = "ang37_ipc_scratch";
+    let run = |sql: &str| {
+        ipc.call(
+            "run_query",
+            json!({ "connectionId": id, "tabId": "query:1", "sql": sql }),
+        )
+        .unwrap()
+    };
+    run(&format!(
+        "DROP TABLE IF EXISTS public.{table}; CREATE TABLE public.{table} (id integer PRIMARY KEY, label text)"
+    ));
+
+    // The JSON the editor sends: a tagged change with camelCase fields.
+    let changes = json!([
+        { "kind": "addColumn", "name": "added", "typeName": "integer", "nullable": false,
+          "defaultValue": "0", "comment": null },
+        { "kind": "alterColumn", "column": "label", "newName": "title", "typeName": null,
+          "using": null, "nullable": null,
+          "defaultValue": { "kind": "set", "expression": "'x'" },
+          "comment": { "kind": "set", "text": "A title" } },
+        { "kind": "createIndex", "name": "ang37_idx", "method": "btree",
+          "columns": [{ "text": "added", "isExpression": false, "descending": true }],
+          "unique": false, "whereClause": null, "concurrently": true },
+        { "kind": "addForeignKey", "name": null, "columns": ["id"], "refSchema": "public",
+          "refTable": table, "refColumns": ["id"], "onDelete": "cascade", "onUpdate": "noAction",
+          "notValid": true },
+    ]);
+    let args =
+        json!({ "connectionId": id, "schema": "public", "table": table, "changes": changes });
+
+    let preview = ipc.call("preview_structure_changes", args.clone()).unwrap();
+    let statements = preview["statements"].as_array().unwrap();
+    assert_eq!(statements.len(), 6);
+    assert_eq!(
+        statements[0]["sql"],
+        format!(
+            "ALTER TABLE \"public\".\"{table}\" ADD COLUMN \"added\" integer DEFAULT 0 NOT NULL;"
+        )
+    );
+    assert_eq!(statements[0]["change"], 1);
+    assert_eq!(statements[0]["concurrent"], false);
+    assert_eq!(statements[0]["destructive"], false);
+    assert!(
+        statements[3]["sql"]
+            .as_str()
+            .unwrap()
+            .starts_with("COMMENT ON COLUMN")
+    );
+    assert!(
+        statements[5]["sql"]
+            .as_str()
+            .unwrap()
+            .ends_with("NOT VALID;")
+    );
+    let index = statements.iter().find(|s| s["concurrent"] == true).unwrap();
+    assert!(
+        index["sql"]
+            .as_str()
+            .unwrap()
+            .starts_with("CREATE INDEX CONCURRENTLY \"ang37_idx\"")
+    );
+    let text = preview["sql"].as_str().unwrap();
+    assert!(
+        text.contains("In one transaction") && text.contains("CONCURRENTLY can't run"),
+        "{text}"
+    );
+
+    let applied = ipc.call("apply_structure_changes", args).unwrap();
+    assert_eq!(applied["statements"], 6);
+    assert_eq!(applied["failedConcurrent"], Value::Null);
+
+    let structure = ipc
+        .call(
+            "table_structure",
+            json!({ "connectionId": id, "schema": "public", "table": table }),
+        )
+        .unwrap();
+    let names: Vec<&str> = structure["columns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["id", "title", "added"]);
+    assert!(
+        structure["indexes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["name"] == "ang37_idx")
+    );
+    let fk = structure["constraints"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["kind"] == "foreignKey")
+        .unwrap();
+    assert_eq!(fk["validated"], false);
+
+    // A mistake in a change is a validation error that names the change.
+    let bad = ipc
+        .call(
+            "preview_structure_changes",
+            json!({ "connectionId": id, "schema": "public", "table": table, "changes": [
+                { "kind": "addColumn", "name": "ok", "typeName": "text", "nullable": true,
+                  "defaultValue": null, "comment": null },
+                { "kind": "addColumn", "name": "x", "typeName": "text; DROP TABLE users",
+                  "nullable": true, "defaultValue": null, "comment": null },
+            ]}),
+        )
+        .unwrap_err();
+    assert_eq!(bad["code"], "VALIDATION");
+    assert!(
+        bad["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("Change 2 of 2:"),
+        "{bad}"
+    );
+
+    run(&format!("DROP TABLE public.{table}"));
+}
+
+#[test]
+fn a_read_only_connection_refuses_structure_changes() {
+    if !dev_db_available() {
+        return;
+    }
+    let ipc = setup();
+    let mut form = config("Dev", "localhost", 54329);
+    form["user"] = json!("angkor");
+    form["database"] = json!("angkordb_dev");
+    form["safeMode"] = json!("read-only");
+    let saved = ipc
+        .call(
+            "save_connection",
+            json!({ "config": form, "password": { "kind": "set", "value": "angkor" } }),
+        )
+        .unwrap();
+    let id = saved["id"].as_str().unwrap();
+    ipc.call("connect_connection", json!({ "id": id })).unwrap();
+
+    let err = ipc
+        .call(
+            "apply_structure_changes",
+            json!({ "connectionId": id, "schema": "public", "table": "users", "changes": [
+                { "kind": "dropColumn", "column": "bio", "cascade": false }
+            ]}),
+        )
+        .unwrap_err();
+    assert_eq!(err["code"], "VALIDATION");
+    assert!(
+        err["message"].as_str().unwrap().contains("read-only"),
+        "{err}"
+    );
+    // The preview is only text: it still works.
+    let preview = ipc
+        .call(
+            "preview_structure_changes",
+            json!({ "connectionId": id, "schema": "public", "table": "users", "changes": [
+                { "kind": "dropColumn", "column": "bio", "cascade": false }
+            ]}),
+        )
+        .unwrap();
+    assert_eq!(preview["statements"][0]["destructive"], true);
 }

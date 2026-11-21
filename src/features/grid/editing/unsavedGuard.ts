@@ -3,9 +3,11 @@ import { create } from "zustand";
 import type { ConnectionConfig } from "@/bindings";
 import { connectionsKey } from "@/features/connections/useConnections";
 import { describePending } from "@/features/grid/editing/changes";
+import { saveStructureStaged } from "@/features/structure/edit/saveStructure";
+import { useStructureEditStore } from "@/features/structure/edit/structureEditStore";
 import { useChangesStore } from "@/features/grid/editing/changeStore";
 import { saveStaged } from "@/features/grid/editing/saveStaged";
-import { dirtyTabs, type DirtyTab } from "@/features/grid/editing/unsaved";
+import { describeDirty, dirtyTabs, type DirtyTab } from "@/features/grid/editing/unsaved";
 import { approveWrite } from "@/features/safety/approval";
 import { queryClient } from "@/lib/queryClient";
 
@@ -54,7 +56,10 @@ export async function guardUnsaved(
   if (tabs.length === 0) return true;
   // Staged edits belong to an open connection; with none there is nothing to save to.
   if (!connectionId) {
-    for (const { tab } of tabs) useChangesStore.getState().discard(tab.id);
+    for (const { tab } of tabs) {
+      useChangesStore.getState().discard(tab.id);
+      useStructureEditStore.getState().discard(tab.id);
+    }
     return true;
   }
   return useUnsavedGuard.getState().ask({ connectionId, tabs, verb });
@@ -66,16 +71,31 @@ export async function saveAll({ connectionId, tabs }: UnsavedRequest): Promise<b
   const connection = connections.find((c) => c.id === connectionId);
   const approved = await approveWrite(connection?.safeMode ?? "off", {
     title: `Save changes to ${connection?.name ?? "this database"}?`,
-    lines: tabs.map(({ tab, summary }) => `${tab.schema}.${tab.name}: ${describePending(summary)}`),
+    lines: tabs.map(
+      (dirty) => `${dirty.tab.schema}.${dirty.tab.name}: ${describeDirty(dirty, describePending)}`,
+    ),
     reason: `save changes to ${connection?.name ?? "the database"}`,
   });
   if (!approved) return false;
-  // One table after the other; the first failure stops, and what was saved stays saved.
-  for (const { tab } of tabs) await saveStaged(connectionId, tab);
+  // One table after the other; the first failure stops, and what was saved stays saved. The rows
+  // go first: their edits name columns, which the structure changes could rename or drop.
+  const notices: string[] = [];
+  for (const { tab, summary, structure } of tabs) {
+    if (summary.total > 0) await saveStaged(connectionId, tab);
+    if (structure) {
+      const notice = await saveStructureStaged(connectionId, tab);
+      if (notice) notices.push(`${tab.schema}.${tab.name}: ${notice}`);
+    }
+  }
+  // Part of a save that could not run: it is said, and the dialog stays so it can be read.
+  if (notices.length > 0) throw new Error(notices.join("\n"));
   return true;
 }
 
 /** Throw the staged edits of these tabs away. */
 export function discardAll({ tabs }: UnsavedRequest) {
-  for (const { tab } of tabs) useChangesStore.getState().discard(tab.id);
+  for (const { tab } of tabs) {
+    useChangesStore.getState().discard(tab.id);
+    useStructureEditStore.getState().discard(tab.id);
+  }
 }

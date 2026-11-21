@@ -37,8 +37,7 @@ export function TableTabView({ connectionId, tab }: { connectionId: string; tab:
         ) : (
           <StructureView
             connectionId={connectionId}
-            schema={tab.schema}
-            table={tab.name}
+            tab={tab}
             section={view.section}
             onSection={(section) => update({ section })}
           />

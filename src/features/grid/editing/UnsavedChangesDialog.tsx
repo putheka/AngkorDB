@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { describePending } from "@/features/grid/editing/changes";
+import { describeDirty } from "@/features/grid/editing/unsaved";
 import {
   discardAll,
   saveAll,
@@ -65,12 +66,15 @@ function Body({ request }: { request: UnsavedRequest }) {
         </AlertDialogDescription>
       </AlertDialogHeader>
       <ul className="max-h-48 list-disc space-y-1 overflow-y-auto rounded-md border bg-muted/30 py-2 pr-3 pl-6 text-xs">
-        {request.tabs.map(({ tab, summary }) => (
-          <li key={tab.id}>
+        {request.tabs.map((dirty) => (
+          <li key={dirty.tab.id}>
             <span className="font-mono">
-              {tab.schema}.{tab.name}
+              {dirty.tab.schema}.{dirty.tab.name}
             </span>
-            <span className="text-muted-foreground"> · {describePending(summary)}</span>
+            <span className="text-muted-foreground">
+              {" "}
+              · {describeDirty(dirty, describePending)}
+            </span>
           </li>
         ))}
       </ul>

@@ -62,6 +62,18 @@ export const commands = {
 	countRows: (connectionId: string, schema: string, table: string, filters: Filter[], rawWhere: string | null, exact: boolean, options?: InvokeOptions) => __TAURI_INVOKE<RowCount>("count_rows", { connectionId, schema, table, filters, rawWhere, exact }, options),
 	/**  How many rows match `filters`, up to `cap` (so a table without an index can't make it slow). */
 	countMatching: (connectionId: string, schema: string, table: string, filters: Filter[], cap: number, options?: InvokeOptions) => __TAURI_INVOKE<LimitedCount>("count_matching", { connectionId, schema, table, filters, cap }, options),
+	/**
+	 *  The `ALTER TABLE` / `CREATE INDEX` / … statements the staged changes would run. Nothing is
+	 *  executed. A mistake in a change (an empty name, SQL that is not one piece) is an error that
+	 *  says which change it is.
+	 */
+	previewStructureChanges: (connectionId: string, schema: string, table: string, changes: StructureChange[], options?: InvokeOptions) => __TAURI_INVOKE<StructurePreview>("preview_structure_changes", { connectionId, schema, table, changes }, options),
+	/**
+	 *  Run the staged changes: everything that can be in a transaction goes in one (all or nothing,
+	 *  with a lock timeout), then each `CONCURRENTLY` statement on its own. If one of those fails,
+	 *  the transaction's changes are already saved and the result says which statement failed.
+	 */
+	applyStructureChanges: (connectionId: string, schema: string, table: string, changes: StructureChange[], options?: InvokeOptions) => __TAURI_INVOKE<StructureApplyResult>("apply_structure_changes", { connectionId, schema, table, changes }, options),
 	/**  The SQL that `apply_changes` would run, values written in. Nothing is executed. */
 	previewChanges: (connectionId: string, schema: string, table: string, changes: TableChanges, options?: InvokeOptions) => __TAURI_INVOKE<string>("preview_changes", { connectionId, schema, table, changes }, options),
 	/**
@@ -115,6 +127,27 @@ export const commands = {
 };
 
 /* Types */
+export type AddColumn = {
+	name: string,
+	/**  As SQL: `text`, `numeric(10,2)`, `timestamp with time zone`, `public.my_enum`, `int[]`. */
+	typeName: string,
+	nullable: boolean,
+	defaultValue: string | null,
+	comment: string | null,
+};
+
+/**  Everything about one existing column that is to change; `None` leaves it as it is. */
+export type AlterColumn = {
+	column: string,
+	newName: string | null,
+	typeName: string | null,
+	/**  How to turn the old values into the new type: `col::integer`. Only with `type_name`. */
+	using: string | null,
+	nullable: boolean | null,
+	defaultValue: DefaultChange | null,
+	comment: CommentChange | null,
+};
+
 /**  What the UI receives when a command fails (ANG-8 D9). Absent details are `null`. */
 export type AppError = {
 	code: string,
@@ -153,6 +186,13 @@ export type CellValue = { kind: "value"; text: string } |
 /**  The keyword `DEFAULT`: the column's own default (a serial, `now()`, …). */
 { kind: "default" };
 
+export type CheckSpec = {
+	name: string | null,
+	expression: string,
+	/**  Check new rows only; the old ones are not looked at (and can be validated later). */
+	notValid: boolean,
+};
+
 export type ColorTag = "none" | "green" | "yellow" | "red";
 
 export type ColumnIdentity = 
@@ -180,6 +220,10 @@ export type ColumnInfo = {
 	comment: string | null,
 	foreignKeys: ForeignKeyRef[],
 };
+
+export type CommentChange = { kind: "set"; text: string } | 
+/**  `COMMENT … IS NULL` */
+{ kind: "clear" };
 
 export type CompletionColumn = {
 	name: string,
@@ -210,6 +254,13 @@ export type CompletionTable = {
 	name: string,
 	kind: ObjectKind,
 	columns: CompletionColumn[],
+};
+
+/**  A `CONCURRENTLY` statement that failed after the rest was already saved. */
+export type ConcurrentFailure = {
+	label: string,
+	sql: string,
+	error: AppError,
 };
 
 /**  Saved connection settings. The password is NOT stored here — it lives in the macOS Keychain. */
@@ -265,6 +316,18 @@ export type ConstraintInfo = {
 
 export type ConstraintKind = "primaryKey" | "foreignKey" | "unique" | "check" | "exclusion";
 
+export type CreateIndex = {
+	/**  `None`: the server picks one. */
+	name: string | null,
+	method: IndexMethod,
+	columns: IndexColumn[],
+	unique: boolean,
+	/**  A partial index: only rows where this is true are in it. */
+	whereClause: string | null,
+	/**  Does not lock writes while it builds, but can't run inside the transaction. */
+	concurrently: boolean,
+};
+
 export type DatabaseInfo = {
 	name: string,
 	/**  The database this session is connected to. */
@@ -285,6 +348,27 @@ export type DbObject = {
 	rowEstimate: number | null,
 	/**  Functions: `(arguments) → result type`. */
 	detail: string | null,
+};
+
+export type DefaultChange = 
+/**  `SET DEFAULT expression` */
+{ kind: "set"; expression: string } | 
+/**  `DROP DEFAULT` */
+{ kind: "drop" };
+
+export type DropColumn = {
+	column: string,
+	cascade: boolean,
+};
+
+export type DropConstraint = {
+	name: string,
+	cascade: boolean,
+};
+
+export type DropIndex = {
+	name: string,
+	concurrently: boolean,
 };
 
 /**  What `EXPLAIN` gave back. */
@@ -331,6 +415,17 @@ export type ForeignKeyRef = {
 	column: string,
 };
 
+export type ForeignKeySpec = {
+	name: string | null,
+	columns: string[],
+	refSchema: string,
+	refTable: string,
+	refColumns: string[],
+	onDelete: RefAction,
+	onUpdate: RefAction,
+	notValid: boolean,
+};
+
 export type GeneratedKind = 
 /**  `GENERATED ALWAYS AS (…) STORED` */
 "stored" | 
@@ -362,6 +457,13 @@ export type IncomingForeignKey = {
 	referencedColumns: string[],
 };
 
+/**  One thing an index is on: a column, or an expression like `lower(email)`. */
+export type IndexColumn = {
+	text: string,
+	isExpression: boolean,
+	descending: boolean,
+};
+
 export type IndexInfo = {
 	name: string,
 	/**  `CREATE INDEX …` as the server prints it. */
@@ -380,6 +482,13 @@ export type IndexInfo = {
 	/**  The constraint this index backs (primary key, unique or exclusion), if any. */
 	constraint: string | null,
 	comment: string | null,
+};
+
+export type IndexMethod = "btree" | "hash" | "gin" | "gist" | "spgist" | "brin";
+
+export type KeySpec = {
+	name: string | null,
+	columns: string[],
 };
 
 /**  How many rows match, counting at most `cap` of them (so a huge table can't make it slow). */
@@ -427,6 +536,19 @@ export type Persistence = "permanent" |
 /**  Not written to the write-ahead log: fast, and empty after a crash. */
 "unlogged" | "temporary";
 
+/**  One statement of the plan. */
+export type PlannedStatement = {
+	sql: string,
+	/**  "alter column status": what to call it when it fails. */
+	label: string,
+	/**  1-based: which of the staged changes it comes from. */
+	change: number,
+	/**  `CONCURRENTLY`: runs after the transaction, on its own. */
+	concurrent: boolean,
+	/**  Throws something away: a column, an index, a constraint. */
+	destructive: boolean,
+};
+
 /**
  *  The result of running a script: one entry per statement that was run. After a statement
  *  fails, the ones behind it are not run, so the last entry is the error.
@@ -435,6 +557,8 @@ export type QueryRun = {
 	statements: StatementResult[],
 	durationMs: number,
 };
+
+export type RefAction = "noAction" | "restrict" | "cascade" | "setNull" | "setDefault";
 
 export type ResultColumn = {
 	name: string,
@@ -592,6 +716,38 @@ export type StatementResult = {
 	notices: Notice[],
 };
 
+export type StructureApplyResult = {
+	/**  How many statements ran. */
+	statements: number,
+	/**
+	 *  Set when a statement that runs outside the transaction failed. The transaction's changes
+	 *  were saved; this one and the ones after it were not run.
+	 */
+	failedConcurrent: ConcurrentFailure | null,
+};
+
+export type StructureChange = {
+	kind: "addColumn",
+} & AddColumn | {
+	kind: "alterColumn",
+} & AlterColumn | {
+	kind: "dropColumn",
+} & DropColumn | {
+	kind: "createIndex",
+} & CreateIndex | {
+	kind: "dropIndex",
+} & DropIndex | {
+	kind: "addPrimaryKey",
+} & KeySpec | {
+	kind: "addUnique",
+} & KeySpec | {
+	kind: "addCheck",
+} & CheckSpec | {
+	kind: "addForeignKey",
+} & ForeignKeySpec | {
+	kind: "dropConstraint",
+} & DropConstraint;
+
 export type StructureColumn = {
 	/**  1-based position in the table. */
 	position: number,
@@ -608,6 +764,13 @@ export type StructureColumn = {
 	comment: string | null,
 	isPrimaryKey: boolean,
 	foreignKeys: ForeignKeyRef[],
+};
+
+/**  What the staged changes would run, for the preview. */
+export type StructurePreview = {
+	statements: PlannedStatement[],
+	/**  The same, as text to read: the transaction first, then what runs outside it. */
+	sql: string,
 };
 
 /**

@@ -29,7 +29,7 @@ type BoxFuture<'a, T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + 
 /// `'text'` as an SQL string literal that means the same whatever `standard_conforming_strings`
 /// is: text with a backslash is written as `E'…'` with the backslashes doubled too (as
 /// `pg_dump` does), so a `\'` in it can never end the string early.
-fn literal(text: &str) -> String {
+pub(crate) fn literal(text: &str) -> String {
     if text.contains('\\') {
         format!("E'{}'", text.replace('\\', "\\\\").replace('\'', "''"))
     } else {

@@ -47,3 +47,79 @@ pub async fn open_or_skip() -> Option<Session> {
         Err(e) => panic!("could not open session: {e:?}"),
     }
 }
+
+// ---- Scratch databases ----------------------------------------------------------------------
+
+use angkordb_lib::db::script;
+
+pub const PREFIX: &str = "angkordb_ddl_";
+
+/// A database that exists for one test and is dropped at the end.
+pub struct Scratch {
+    pub name: String,
+}
+
+impl Scratch {
+    pub async fn create(admin: &Session, label: &str) -> Self {
+        let pid = std::process::id();
+        let name = format!("{PREFIX}{pid}_{label}");
+        let client = admin.meta().await.unwrap();
+        // Leftovers of an earlier run that was killed (not those of the tests running now).
+        let old = client
+            .query(
+                "SELECT datname::text FROM pg_database
+                  WHERE datname LIKE $1 AND datname NOT LIKE $2",
+                &[&format!("{PREFIX}%"), &format!("{PREFIX}{pid}\\_%")],
+            )
+            .await
+            .unwrap();
+        for row in old {
+            let stale: String = row.get(0);
+            let _ = client
+                .batch_execute(&format!("DROP DATABASE IF EXISTS \"{stale}\" WITH (FORCE)"))
+                .await;
+        }
+        client
+            .batch_execute(&format!("DROP DATABASE IF EXISTS \"{name}\" WITH (FORCE)"))
+            .await
+            .unwrap();
+        client
+            .batch_execute(&format!("CREATE DATABASE \"{name}\" TEMPLATE template0"))
+            .await
+            .unwrap();
+        Self { name }
+    }
+
+    pub async fn open(&self) -> Session {
+        let mut config = dev_config();
+        config.database = self.name.clone();
+        Session::open(config, Some(DEV_PASSWORD)).await.unwrap()
+    }
+
+    pub async fn drop_it(self, admin: &Session) {
+        let client = admin.meta().await.unwrap();
+        client
+            .batch_execute(&format!(
+                "DROP DATABASE IF EXISTS \"{}\" WITH (FORCE)",
+                self.name
+            ))
+            .await
+            .unwrap();
+    }
+}
+
+/// Run every statement of `sql`; the ones that fail with a code in `tolerate` are skipped.
+/// Returns the first other failure as a message.
+pub async fn run_all(session: &Session, sql: &str, tolerate: &[&str]) -> Result<(), String> {
+    let client = session.meta().await.unwrap();
+    for statement in script::split(sql) {
+        let text = &sql[statement.start..statement.end];
+        if let Err(e) = client.batch_execute(text).await {
+            let code = e.code().map(|c| c.code().to_owned()).unwrap_or_default();
+            if !tolerate.contains(&code.as_str()) {
+                return Err(format!("{e}\n  in: {text}"));
+            }
+        }
+    }
+    Ok(())
+}
