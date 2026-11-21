@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   BookmarkPlusIcon,
   HistoryIcon,
+  WandSparklesIcon,
   PanelBottomIcon,
   PanelRightIcon,
   PlayIcon,
@@ -13,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useWriteApproval } from "@/features/safety/approval";
 import { buildIndex } from "@/features/query/completion/suggest";
+import { EditorSettingsMenu } from "@/features/query/EditorSettingsMenu";
 import { HistoryPanel } from "@/features/query/history/HistoryPanel";
 import { suggestName } from "@/features/query/history/historyText";
 import { SaveQueryDialog } from "@/features/query/history/SaveQueryDialog";
@@ -291,9 +293,23 @@ export function QueryView({ connectionId, tab }: { connectionId: string; tab: Qu
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
+              size="xs"
+              variant="ghost"
+              className="ml-auto"
+              aria-label="Format SQL"
+              onClick={() => editor.current?.format()}
+            >
+              <WandSparklesIcon /> Format
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Format the selection, or all of it (⌘⇧F)</TooltipContent>
+        </Tooltip>
+        <EditorSettingsMenu />
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
               size="icon-xs"
               variant={view.historyOpen ? "secondary" : "ghost"}
-              className="ml-auto"
               aria-label="History"
               aria-pressed={view.historyOpen}
               onClick={() => update({ historyOpen: !view.historyOpen })}
@@ -353,6 +369,7 @@ export function QueryView({ connectionId, tab }: { connectionId: string; tab: Qu
               onSelectionChange={(selection) => update({ selection })}
               onRun={(mode) => void onRun(mode)}
               completion={completion}
+              onFormatError={(message) => update({ runError: message })}
             />
           </div>
 

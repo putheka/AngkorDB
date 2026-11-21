@@ -1,21 +1,43 @@
-import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
+import {
+  copyLineDown,
+  defaultKeymap,
+  history,
+  historyKeymap,
+  indentWithTab,
+  toggleComment,
+} from "@codemirror/commands";
 import { PostgreSQL, sql } from "@codemirror/lang-sql";
-import { bracketMatching, syntaxHighlighting } from "@codemirror/language";
-import { EditorState, StateEffect, StateField, type Range } from "@codemirror/state";
+import { bracketMatching, indentUnit, syntaxHighlighting } from "@codemirror/language";
+import { selectNextOccurrence } from "@codemirror/search";
+import {
+  Compartment,
+  EditorState,
+  Prec,
+  StateEffect,
+  StateField,
+  type Extension,
+  type Range,
+} from "@codemirror/state";
 import {
   Decoration,
   EditorView,
+  crosshairCursor,
   drawSelection,
   highlightActiveLine,
   highlightActiveLineGutter,
   keymap,
   lineNumbers,
+  rectangularSelection,
   type DecorationSet,
 } from "@codemirror/view";
+import { vim } from "@replit/codemirror-vim";
 import { sqlAutocomplete } from "@/features/query/completion/source";
 import type { SchemaIndex } from "@/features/query/completion/suggest";
 import { editorTheme, highlightStyle } from "@/features/query/editorTheme";
-import { useEffect, useImperativeHandle, useRef, type Ref } from "react";
+import { FormatError, formatSql } from "@/features/query/format";
+import { FONT_CHOICES } from "@/features/query/prefs";
+import { useEditorPrefs } from "@/stores/editorPrefs";
+import { useEffect, useImperativeHandle, useRef, type CSSProperties, type Ref } from "react";
 
 export type RunMode = "current" | "all";
 
@@ -26,6 +48,8 @@ export interface SqlEditorHandle {
   showError: (offset: number) => void;
   /** Replace the selection (or insert at the cursor) with `text`, and focus the editor. */
   insertText: (text: string) => void;
+  /** Lay out the selection, or everything when nothing is selected. */
+  format: () => void;
   /** The text as it is now, and where the cursor or selection is. */
   snapshot: () => { text: string; from: number; to: number };
 }
@@ -40,7 +64,18 @@ interface SqlEditorProps {
   onRun: (mode: RunMode) => void;
   /** The schema to complete names from (ANG-30); `null` until it has loaded. */
   completion: SchemaIndex | null;
+  /** The text could not be formatted; this says why. */
+  onFormatError?: (message: string) => void;
 }
+
+/** Vim keys on or off. High precedence: vim has to see keys before the other bindings. */
+const vimExtension = (on: boolean): Extension => (on ? Prec.high(vim({ status: true })) : []);
+const numbersExtension = (on: boolean): Extension => (on ? lineNumbers() : []);
+const wrapExtension = (on: boolean): Extension => (on ? EditorView.lineWrapping : []);
+const tabExtension = (size: number): Extension => [
+  EditorState.tabSize.of(size),
+  indentUnit.of(" ".repeat(size)),
+];
 
 const setErrorMark = StateEffect.define<{ from: number; to: number } | null>();
 
@@ -76,13 +111,61 @@ export function SqlEditor({
   onSelectionChange,
   onRun,
   completion,
+  onFormatError,
 }: SqlEditorProps) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
   // The editor is created once; these always point at the latest props.
-  const callbacks = useRef({ onTextChange, onSelectionChange, onRun, completion });
+  const callbacks = useRef({ onTextChange, onSelectionChange, onRun, completion, onFormatError });
   useEffect(() => {
-    callbacks.current = { onTextChange, onSelectionChange, onRun, completion };
+    callbacks.current = { onTextChange, onSelectionChange, onRun, completion, onFormatError };
+  });
+
+  // The preferences (ANG-34). The parts CodeMirror owns are swapped in place, without recreating
+  // the editor (that would lose the undo history); the font goes through CSS variables.
+  const prefs = useEditorPrefs();
+  const latestPrefs = useRef(prefs);
+  useEffect(() => {
+    latestPrefs.current = prefs;
+  });
+  const parts = useRef({
+    vim: new Compartment(),
+    numbers: new Compartment(),
+    wrap: new Compartment(),
+    tabs: new Compartment(),
+  });
+
+  /** Format the selection, or all of the text; the cursor stays about where it was. */
+  const formatText = () => {
+    const editor = view.current;
+    if (!editor) return;
+    const { from, to } = editor.state.selection.main;
+    const whole = from === to;
+    const start = whole ? 0 : from;
+    const end = whole ? editor.state.doc.length : to;
+    const before = editor.state.sliceDoc(start, end);
+    try {
+      const after = formatSql(before, {
+        keywordCase: latestPrefs.current.keywordCase,
+        tabWidth: latestPrefs.current.tabSize,
+      });
+      if (after === before) return;
+      editor.dispatch({
+        changes: { from: start, to: end, insert: after },
+        selection: whole
+          ? { anchor: Math.min(from, after.length) }
+          : { anchor: start, head: start + after.length },
+        scrollIntoView: true,
+        userEvent: "input.format",
+      });
+    } catch (error) {
+      const message = error instanceof FormatError ? error.message : "Could not format this SQL.";
+      callbacks.current.onFormatError?.(message);
+    }
+  };
+  const formatRef = useRef(formatText);
+  useEffect(() => {
+    formatRef.current = formatText;
   });
 
   useImperativeHandle(ref, () => ({
@@ -99,6 +182,7 @@ export function SqlEditor({
         effects: [setErrorMark.of({ from, to }), EditorView.scrollIntoView(from, { y: "center" })],
       });
     },
+    format: () => formatRef.current(),
     insertText: (text) => {
       const editor = view.current;
       if (!editor) return;
@@ -132,7 +216,14 @@ export function SqlEditor({
         head: Math.min(initialSelection.head, length),
       },
       extensions: [
-        lineNumbers(),
+        parts.current.vim.of(vimExtension(latestPrefs.current.vim)),
+        parts.current.numbers.of(numbersExtension(latestPrefs.current.lineNumbers)),
+        parts.current.wrap.of(wrapExtension(latestPrefs.current.wordWrap)),
+        parts.current.tabs.of(tabExtension(latestPrefs.current.tabSize)),
+        // Several cursors: ⌘-click adds one, ⌥-drag makes a column, ⌘D picks the next match.
+        EditorState.allowMultipleSelections.of(true),
+        rectangularSelection(),
+        crosshairCursor(),
         highlightActiveLineGutter(),
         highlightActiveLine(),
         drawSelection(),
@@ -143,13 +234,26 @@ export function SqlEditor({
         syntaxHighlighting(highlightStyle),
         errorMarks,
         editorTheme,
-        keymap.of([
-          { key: "Mod-Enter", run: runKey("current"), preventDefault: true },
-          { key: "Mod-Shift-Enter", run: runKey("all"), preventDefault: true },
-          ...defaultKeymap,
-          ...historyKeymap,
-          indentWithTab,
-        ]),
+        // The app's own shortcuts come before vim, which would swallow ⌘-keys in normal mode.
+        Prec.highest(
+          keymap.of([
+            { key: "Mod-Enter", run: runKey("current"), preventDefault: true },
+            { key: "Mod-Shift-Enter", run: runKey("all"), preventDefault: true },
+            {
+              key: "Mod-Shift-f",
+              run: () => {
+                formatRef.current();
+                return true;
+              },
+              preventDefault: true,
+            },
+            { key: "Mod-/", run: toggleComment, preventDefault: true },
+            // ⌥⇧↓ copies a line down (default keymap), so does ⌘⇧D.
+            { key: "Mod-Shift-d", run: copyLineDown, preventDefault: true },
+            { key: "Mod-d", run: selectNextOccurrence, preventDefault: true },
+          ]),
+        ),
+        keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) callbacks.current.onTextChange(update.state.doc.toString());
           if (update.selectionSet || update.docChanged) {
@@ -169,5 +273,26 @@ export function SqlEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return <div ref={host} className="h-full min-h-0" />;
+  // Preferences that change while the editor is open.
+  useEffect(() => {
+    const editor = view.current;
+    if (!editor) return;
+    editor.dispatch({
+      effects: [
+        parts.current.vim.reconfigure(vimExtension(prefs.vim)),
+        parts.current.numbers.reconfigure(numbersExtension(prefs.lineNumbers)),
+        parts.current.wrap.reconfigure(wrapExtension(prefs.wordWrap)),
+        parts.current.tabs.reconfigure(tabExtension(prefs.tabSize)),
+      ],
+    });
+  }, [prefs.vim, prefs.lineNumbers, prefs.wordWrap, prefs.tabSize]);
+  useEffect(() => {
+    view.current?.requestMeasure();
+  }, [prefs.fontFamily, prefs.fontSize]);
+
+  const fonts = {
+    "--editor-font": FONT_CHOICES[prefs.fontFamily].css,
+    "--editor-font-size": `${prefs.fontSize}px`,
+  } as CSSProperties;
+  return <div ref={host} style={fonts} className="h-full min-h-0" />;
 }

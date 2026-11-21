@@ -14,12 +14,17 @@ export const highlightStyle = HighlightStyle.define([
 export const editorTheme = EditorView.theme({
   "&": {
     height: "100%",
-    fontSize: "13px",
+    // Set per editor from the preferences (`--editor-font-size`, `--editor-font`).
+    fontSize: "var(--editor-font-size, 13px)",
     backgroundColor: "var(--background)",
     color: "var(--foreground)",
   },
   "&.cm-focused": { outline: "none" },
-  ".cm-scroller": { fontFamily: "var(--font-mono)", lineHeight: "1.6", overflow: "auto" },
+  ".cm-scroller": {
+    fontFamily: "var(--editor-font, var(--font-mono))",
+    lineHeight: "1.6",
+    overflow: "auto",
+  },
   ".cm-content": { caretColor: "var(--foreground)", padding: "8px 0" },
   ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--foreground)" },
   ".cm-gutters": {
@@ -39,6 +44,25 @@ export const editorTheme = EditorView.theme({
   ".cm-matchingBracket": {
     backgroundColor: "color-mix(in oklab, rgb(59 130 246) 25%, transparent)",
     outline: "1px solid color-mix(in oklab, rgb(59 130 246) 50%, transparent)",
+  },
+  // The mode line of vim mode (`-- INSERT --`, `:` commands).
+  ".cm-vim-panel": {
+    padding: "2px 12px",
+    fontFamily: "var(--editor-font, var(--font-mono))",
+    fontSize: "12px",
+    backgroundColor: "var(--muted)",
+    color: "var(--muted-foreground)",
+    borderTop: "1px solid var(--border)",
+  },
+  ".cm-vim-panel input": { color: "var(--foreground)", fontFamily: "inherit" },
+  ".cm-fat-cursor": {
+    backgroundColor: "color-mix(in oklab, var(--foreground) 70%, transparent) !important",
+    color: "var(--background) !important",
+  },
+  "&:not(.cm-focused) .cm-fat-cursor": {
+    background: "none !important",
+    outline: "1px solid var(--foreground)",
+    color: "inherit !important",
   },
   ".cm-sql-error": {
     textDecoration: "underline wavy var(--destructive)",
