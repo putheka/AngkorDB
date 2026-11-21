@@ -34,6 +34,7 @@ pub struct AppState {
     known_hosts: PathBuf,
     /// Host keys an SSH tunnel stopped at, by fingerprint, until the person trusts one or not.
     pending_host_keys: Mutex<HashMap<String, HostKeyProblem>>,
+    exports: crate::db::export::Exports,
 }
 
 impl AppState {
@@ -47,7 +48,13 @@ impl AppState {
             history: HistoryStore::in_memory().expect("an in-memory SQLite database"),
             known_hosts: ssh::default_known_hosts(),
             pending_host_keys: Mutex::new(HashMap::new()),
+            exports: crate::db::export::Exports::default(),
         }
+    }
+
+    /// The exports of this run, running and done.
+    pub fn exports(&self) -> &crate::db::export::Exports {
+        &self.exports
     }
 
     /// Record SSH host keys in this file instead of `~/.ssh/known_hosts` (tests).

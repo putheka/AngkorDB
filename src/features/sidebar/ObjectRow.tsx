@@ -34,7 +34,7 @@ interface ObjectRowProps {
   /** Open it on its Structure view. */
   onStructure: () => void;
   /** Rename, truncate, drop or refresh it (the menu). */
-  onAction: (action: "rename" | "truncate" | "drop" | "refresh") => void;
+  onAction: (action: "rename" | "truncate" | "drop" | "refresh" | "export") => void;
   /** Open the SQL that defines it in a query tab (functions, views, …). */
   onDefinition: () => void;
   /** The dialog of a sequence or an enum type. */
@@ -42,6 +42,14 @@ interface ObjectRowProps {
 }
 
 const TABLES: ObjectKind[] = ["table", "partitionedTable"];
+/** What can be written to a file: anything with rows. */
+const EXPORTABLE: ObjectKind[] = [
+  "table",
+  "partitionedTable",
+  "foreignTable",
+  "view",
+  "materializedView",
+];
 const DEFINED: ObjectKind[] = ["function", "procedure", "view", "materializedView"];
 const RENAMEABLE: ObjectKind[] = [...TABLES, "foreignTable", "view", "materializedView"];
 
@@ -123,8 +131,9 @@ export function ObjectRow({
           Copy as schema.name
         </ContextMenuItem>
         <ContextMenuSeparator />
-        {/* Export comes with the import / export work (M5). */}
-        <ContextMenuItem disabled>Export…</ContextMenuItem>
+        {EXPORTABLE.includes(object.kind) && (
+          <ContextMenuItem onSelect={() => onAction("export")}>Export…</ContextMenuItem>
+        )}
         {RENAMEABLE.includes(object.kind) && (
           <ContextMenuItem onSelect={() => onAction("rename")}>Rename…</ContextMenuItem>
         )}

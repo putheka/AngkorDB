@@ -2,6 +2,7 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   Columns3Icon,
+  DownloadIcon,
   ListFilterIcon,
   PanelRightIcon,
   PlusIcon,
@@ -53,6 +54,8 @@ export interface GridFooterProps {
   filterCount: number;
   filterOpen: boolean;
   onToggleFilter: () => void;
+  /** Export the rows of this table (what the filter matches) to a file. */
+  onExport?: () => void;
   /** Add a row at the top (⌘I). Left out when the table can't be edited. */
   onAddRow?: () => void;
   /** The row details panel on the right (Space). */
@@ -105,6 +108,17 @@ export function GridFooter(props: GridFooterProps) {
       </div>
 
       <div className="flex items-center gap-1">
+        {props.onExport && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="xs" aria-label="Export" onClick={props.onExport}>
+                <DownloadIcon />
+                Export
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Save the rows to a file</TooltipContent>
+          </Tooltip>
+        )}
         {props.onAddRow && (
           <Tooltip>
             <TooltipTrigger asChild>

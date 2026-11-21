@@ -5,6 +5,7 @@ pub mod alter;
 pub mod app;
 pub mod changes;
 pub mod connections;
+pub mod export;
 pub mod history;
 pub mod objects;
 pub mod privileges;

@@ -4,6 +4,8 @@
  * built and checked without the native app. State lives in memory and resets on reload.
  */
 import type {
+  ExportRequest,
+  ExportStatus,
   ConnectionConfig,
   SshTestResult,
   PrivilegeChange,
@@ -27,6 +29,7 @@ import {
   mockRoleList,
   mockRolePreview,
 } from "@/dev/mockRoles";
+import { cancelMockExport, mockExportStatus, startMockExport } from "@/dev/mockExport";
 import { createChangeHandlers } from "@/dev/mockChanges";
 import { createHistoryHandlers } from "@/dev/mockHistory";
 import { createQueryHandlers } from "@/dev/mockQuery";
@@ -338,7 +341,22 @@ const handlers: Record<string, Handler> = {
   },
 
   // The system file dialog: a fixed path stands in for what the person would pick.
-  "plugin:dialog|open": () => "/Users/me/certs/server-ca.pem",
+  "plugin:dialog|open": (args) =>
+    (args["options"] as { directory?: boolean } | undefined)?.directory
+      ? "/Users/me/Downloads"
+      : "/Users/me/certs/server-ca.pem",
+  "plugin:dialog|save": (args) =>
+    `/Users/me/Downloads/${String(
+      (args["options"] as { defaultPath?: string } | undefined)?.defaultPath ?? "export.csv",
+    )}`,
+  "plugin:opener|reveal_item_in_dir": () => null,
+
+  start_export: (args) => {
+    requireOpen(String(args["connectionId"]));
+    return startMockExport(args["request"] as ExportRequest);
+  },
+  export_status: (args): ExportStatus => mockExportStatus(String(args["id"])),
+  cancel_export: (args) => cancelMockExport(String(args["id"])),
 
   trust_ssh_host: (args) => {
     const where = pendingHostKeys.get(String(args["fingerprint"]));

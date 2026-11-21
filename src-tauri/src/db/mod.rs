@@ -23,6 +23,8 @@ pub mod classify;
 pub mod config;
 pub mod definitions;
 pub mod explain;
+pub mod export;
+pub mod export_format;
 pub mod introspect;
 pub mod objects;
 pub mod privileges;

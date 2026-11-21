@@ -221,6 +221,43 @@ pub fn build_select(desc: &TableDescription, query: &RowQuery) -> AppResult<Buil
     })
 }
 
+/// The `SELECT` of an export: every column, the filters and the sort the person chose, no
+/// paging. Without a sort the rows come as the table has them (no key order: it would make a
+/// big table slower for nothing).
+pub fn build_export_select(
+    desc: &TableDescription,
+    filters: &[Filter],
+    raw_where: Option<&str>,
+    sort: &[SortSpec],
+) -> AppResult<BuiltSql> {
+    let mut params = Vec::new();
+    let select: Vec<String> = desc.columns.iter().map(|c| quote_ident(&c.name)).collect();
+    let (where_sql, has_raw_sql) = where_clause(desc, filters, raw_where, &mut params)?;
+    let mut order = Vec::new();
+    for spec in sort {
+        let column = find_column(desc, &spec.column)?;
+        let dir = match spec.dir {
+            SortDir::Asc => "ASC",
+            SortDir::Desc => "DESC",
+        };
+        order.push(format!("{ALIAS}.{} {dir}", quote_ident(&column.name)));
+    }
+    let order_sql = if order.is_empty() {
+        String::new()
+    } else {
+        format!(" ORDER BY {}", order.join(", "))
+    };
+    Ok(BuiltSql {
+        sql: format!(
+            "SELECT {} FROM {} AS {ALIAS}{where_sql}{order_sql}",
+            select.join(", "),
+            relation(desc)
+        ),
+        params,
+        has_raw_sql,
+    })
+}
+
 pub fn build_count(
     desc: &TableDescription,
     filters: &[Filter],

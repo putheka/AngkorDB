@@ -397,6 +397,11 @@ fn schema_commands_need_an_open_connection() {
         ("database_options", json!({ "connectionId": "nope" })),
         ("list_activity", json!({ "connectionId": "nope" })),
         ("list_roles", json!({ "connectionId": "nope" })),
+        (
+            "start_export",
+            json!({ "connectionId": "nope", "request": { "source": { "kind": "query", "sql": "SELECT 1", "name": null },
+                    "format": { "kind": "markdown" }, "path": "/tmp/x.md" } }),
+        ),
         ("default_privileges", json!({ "connectionId": "nope" })),
         (
             "object_privileges",
@@ -2298,4 +2303,123 @@ fn certificate_files_and_the_key_passphrase_through_ipc() {
 
     ipc.call("delete_connection", json!({ "id": id })).unwrap();
     assert_eq!(ipc.secrets.get(&format!("{id}:sslkey")).unwrap(), None);
+}
+
+#[test]
+fn an_export_through_ipc_runs_reports_progress_and_can_be_cancelled() {
+    if !dev_db_available() {
+        return;
+    }
+    let ipc = setup();
+    let mut form = config("Dev", "localhost", 54329);
+    form["user"] = json!("angkor");
+    form["database"] = json!("angkordb_dev");
+    // Exporting only reads, so a read-only connection may do it.
+    form["safeMode"] = json!("read-only");
+    let saved = ipc
+        .call(
+            "save_connection",
+            json!({ "config": form, "password": { "kind": "set", "value": "angkor" },
+                    "sshSecret": null, "sslKeySecret": null }),
+        )
+        .unwrap();
+    let id = saved["id"].as_str().unwrap();
+    ipc.call("connect_connection", json!({ "id": id })).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+
+    let wait = |export: &str| -> Value {
+        for _ in 0..400 {
+            let status = ipc.call("export_status", json!({ "id": export })).unwrap();
+            if status["state"] != "running" {
+                return status;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        panic!("the export never finished");
+    };
+
+    let file = dir.path().join("users.json");
+    let export = ipc
+        .call(
+            "start_export",
+            json!({ "connectionId": id, "request": {
+                "source": { "kind": "table", "schema": "public", "table": "users", "filters": [],
+                            "rawWhere": null, "sort": [{ "column": "id", "dir": "asc" }] },
+                "format": { "kind": "json", "ndjson": true },
+                "path": file.display().to_string() } }),
+        )
+        .unwrap();
+    let export = export.as_str().unwrap().to_owned();
+    let status = wait(&export);
+    assert_eq!(status["state"], "done", "{status}");
+    assert!(status["rows"].as_f64().unwrap() >= 200.0);
+    assert_eq!(status["files"], json!([file.display().to_string()]));
+    assert!(status["error"].is_null());
+    let lines = std::fs::read_to_string(&file).unwrap();
+    assert_eq!(
+        lines.lines().count() as f64,
+        status["rows"].as_f64().unwrap()
+    );
+    assert_eq!(status["bytes"].as_f64().unwrap() as usize, lines.len());
+
+    // The SQL format takes its batch size in camelCase like everything the UI sends.
+    let sql_file = dir.path().join("users.sql");
+    let sql_export = ipc
+        .call(
+            "start_export",
+            json!({ "connectionId": id, "request": {
+                "source": { "kind": "query", "sql": "SELECT 1 AS a, 'x' AS b", "name": "t" },
+                "format": { "kind": "sql", "batchSize": 10 },
+                "path": sql_file.display().to_string() } }),
+        )
+        .unwrap();
+    assert_eq!(wait(sql_export.as_str().unwrap())["state"], "done");
+    assert_eq!(
+        std::fs::read_to_string(&sql_file).unwrap(),
+        "INSERT INTO \"t\" (\"a\", \"b\") VALUES\n  (1, 'x');\n"
+    );
+
+    // A failure is a status, with the error the UI shows.
+    let bad = ipc
+        .call(
+            "start_export",
+            json!({ "connectionId": id, "request": {
+                "source": { "kind": "query", "sql": "SELECT * FROM no_such_table", "name": null },
+                "format": { "kind": "csv", "delimiter": ",", "quote": "\"", "header": true, "nullText": "" },
+                "path": dir.path().join("bad.csv").display().to_string() } }),
+        )
+        .unwrap();
+    let failed = wait(bad.as_str().unwrap());
+    assert_eq!(failed["state"], "failed");
+    assert_eq!(failed["error"]["code"], "POSTGRES");
+    assert!(!dir.path().join("bad.csv").exists());
+
+    // Cancel a big one.
+    let big = ipc
+        .call(
+            "start_export",
+            json!({ "connectionId": id, "request": {
+                "source": { "kind": "table", "schema": "public", "table": "metrics_big", "filters": [],
+                            "rawWhere": null, "sort": [] },
+                "format": { "kind": "csv", "delimiter": ",", "quote": "\"", "header": true, "nullText": "" },
+                "path": dir.path().join("big.csv").display().to_string() } }),
+        )
+        .unwrap();
+    let big = big.as_str().unwrap().to_owned();
+    assert_eq!(
+        ipc.call("cancel_export", json!({ "id": big })).unwrap(),
+        json!(true)
+    );
+    let cancelled = wait(&big);
+    assert_eq!(cancelled["state"], "cancelled");
+    assert!(!dir.path().join("big.csv").exists());
+    assert_eq!(
+        ipc.call("cancel_export", json!({ "id": "nope" })).unwrap(),
+        json!(false)
+    );
+    assert_eq!(
+        ipc.call("export_status", json!({ "id": "nope" }))
+            .unwrap_err()["code"],
+        "NOT_FOUND"
+    );
 }

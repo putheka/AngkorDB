@@ -157,7 +157,7 @@ impl From<deadpool_postgres::PoolError> for AppError {
 }
 
 /// What the UI receives when a command fails (ANG-8 D9). Absent details are `null`.
-#[derive(Debug, Serialize, specta::Type)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename = "AppError", rename_all = "camelCase")]
 pub struct AppErrorPayload {
     pub code: String,

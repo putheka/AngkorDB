@@ -34,6 +34,7 @@ import { EnumDialog } from "@/features/objects/EnumDialog";
 import { SequenceDialog } from "@/features/objects/SequenceDialog";
 import { openSavedQuery } from "@/features/query/history/openSavedQuery";
 import { commands } from "@/lib/ipc";
+import { ExportDialog } from "@/features/export/ExportDialog";
 import { ObjectActionDialog, type ObjectAction } from "@/features/objects/ObjectActionDialog";
 import { useTableViews } from "@/features/grid/tableViews";
 import { ObjectRow } from "@/features/sidebar/ObjectRow";
@@ -66,6 +67,7 @@ export function ObjectTree({ connectionId }: { connectionId: string }) {
     { kind: "database"; mode: "create" | "drop" } | { kind: "schema"; mode: SchemaMode } | null
   >(null);
   const [action, setAction] = useState<{ kind: ObjectAction; object: DbObject } | null>(null);
+  const [exporting, setExporting] = useState<DbObject | null>(null);
   const [details, setDetails] = useState<DbObject | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
 
@@ -384,7 +386,11 @@ export function ObjectTree({ connectionId }: { connectionId: string }) {
                         mode: "structure",
                       });
                   }}
-                  onAction={(kind) => setAction({ kind, object: row.object })}
+                  onAction={(kind) =>
+                    kind === "export"
+                      ? setExporting(row.object)
+                      : setAction({ kind, object: row.object })
+                  }
                   onDefinition={() => openDefinition(row.object)}
                   onDetails={() => setDetails(row.object)}
                 />
@@ -425,6 +431,13 @@ export function ObjectTree({ connectionId }: { connectionId: string }) {
       )}
       {details?.kind === "enumType" && (
         <EnumDialog connectionId={connectionId} object={details} onClose={() => setDetails(null)} />
+      )}
+      {exporting && (
+        <ExportDialog
+          connectionId={connectionId}
+          seed={{ kind: "tables", schema: exporting.schema, first: exporting.name }}
+          onClose={() => setExporting(null)}
+        />
       )}
       {action && (
         <ObjectActionDialog

@@ -6,6 +6,7 @@ pub mod changes;
 pub mod connection;
 pub mod definitions;
 pub mod explain;
+pub mod export;
 pub mod history;
 pub mod objects;
 pub mod privileges;

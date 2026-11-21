@@ -27,6 +27,7 @@ import {
   type PinnedResult,
 } from "@/features/query/queryViews";
 import { pickTab } from "@/features/query/resultTabs";
+import { ExportDialog } from "@/features/export/ExportDialog";
 import { ResultsPane } from "@/features/query/ResultsPane";
 import { SqlEditor, type RunMode, type SqlEditorHandle } from "@/features/query/SqlEditor";
 import { errorMessage } from "@/lib/errors";
@@ -49,6 +50,7 @@ export function QueryView({ connectionId, tab }: { connectionId: string; tab: Qu
   const { mode: safeMode, name: connectionName, approve } = useWriteApproval(connectionId);
   const queryClient = useQueryClient();
   const [saving, setSaving] = useState<SaveQueryDraft | null>(null);
+  const [exportSql, setExportSql] = useState<string | null>(null);
   const savedQueries = useSavedQueries(connectionId);
   const folders = useMemo(
     () => [...new Set((savedQueries.data ?? []).map((q) => q.folder).filter(Boolean))],
@@ -314,6 +316,13 @@ export function QueryView({ connectionId, tab }: { connectionId: string; tab: Qu
 
   return (
     <div className="flex h-full min-h-0 flex-col">
+      {exportSql !== null && (
+        <ExportDialog
+          connectionId={connectionId}
+          seed={{ kind: "query", sql: exportSql }}
+          onClose={() => setExportSql(null)}
+        />
+      )}
       <div className="flex h-9 shrink-0 items-center gap-2 border-b px-2">
         {view.running ? (
           <Tooltip>
@@ -489,6 +498,7 @@ export function QueryView({ connectionId, tab }: { connectionId: string; tab: Qu
               onTab={(resultTab) => update({ resultTab })}
               onPin={pin}
               onUnpin={unpin}
+              onExport={setExportSql}
               onClosePlan={() =>
                 update({
                   plan: null,

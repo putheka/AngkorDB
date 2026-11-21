@@ -140,6 +140,15 @@ export const commands = {
 	 */
 	applyChanges: (connectionId: string, schema: string, table: string, changes: TableChanges, options?: InvokeOptions) => __TAURI_INVOKE<ApplyResult>("apply_changes", { connectionId, schema, table, changes }, options),
 	/**
+	 *  Start writing the rows to a file in the background. Returns the id to ask about it with.
+	 *  Reading only, so it works on a read-only connection.
+	 */
+	startExport: (connectionId: string, request: ExportRequest, options?: InvokeOptions) => __TAURI_INVOKE<string>("start_export", { connectionId, request }, options),
+	/**  How far an export is: rows and bytes written, and how it ended. */
+	exportStatus: (id: string, options?: InvokeOptions) => __TAURI_INVOKE<ExportStatus>("export_status", { id }, options),
+	/**  Stop an export after the batch it is on. The file is not kept. */
+	cancelExport: (id: string, options?: InvokeOptions) => __TAURI_INVOKE<boolean>("cancel_export", { id }, options),
+	/**
 	 *  Run the statements of `sql` one after another on the query tab's own connection. A
 	 *  statement that fails ends the run and is reported as the last result.
 	 */
@@ -473,6 +482,16 @@ export type CreateTable = {
 	columns: NewTableColumn[],
 };
 
+export type CsvOptions = {
+	/**  One character: `,` `;` tab `|` … */
+	delimiter: string,
+	/**  One character, doubled inside a value: `"` or `'`. */
+	quote: string,
+	header: boolean,
+	/**  What `NULL` is written as. Blank: nothing (an empty text is then quoted, to tell them apart). */
+	nullText: string,
+};
+
 export type DatabaseInfo = {
 	name: string,
 	/**  The database this session is connected to. */
@@ -594,6 +613,56 @@ export type ExplainRun = {
 	 *  whatever it changed is undone. Sequences and other non-transactional effects are not.
 	 */
 	rolledBack: boolean,
+};
+
+export type ExportFormat = {
+	kind: "csv",
+} & CsvOptions | ({ kind: "json"; 
+/**  One object per line instead of one array. */
+ndjson: boolean }) & { batchSize?: never } | 
+/**  `INSERT` statements. */
+({ kind: "sql"; 
+/**  Rows per statement. Clamped to 1..=10000. */
+batchSize: number }) & { ndjson?: never } | ({ kind: "markdown" }) & { batchSize?: never; ndjson?: never };
+
+export type ExportRequest = {
+	source: ExportSource,
+	format: ExportFormat,
+	/**  The file to write; for several tables, the folder to write the files in. */
+	path: string,
+};
+
+/**  What to export. */
+export type ExportSource = 
+/**  One table or view, with the filters and sort of the grid it is exported from. */
+{
+	kind: "table",
+} & TableExport | 
+/**  The rows a query returns. It is run again for the export, in a read-only transaction. */
+{
+	kind: "query",
+} & QueryExport | 
+/**  Several tables, one file each, into a folder. */
+{ kind: "tables"; tables: TableRef[] };
+
+export type ExportState = "running" | "done" | "failed" | "cancelled";
+
+export type ExportStatus = {
+	state: ExportState,
+	/**  Rows written so far (all files). */
+	rows: number | null,
+	/**  Bytes written so far. */
+	bytes: number | null,
+	/**
+	 *  The planner's guess of how many rows there will be, when it has one (a table without
+	 *  filters). Only for the progress bar.
+	 */
+	estimatedRows: number | null,
+	/**  The table or file being written. */
+	current: string | null,
+	/**  The files written (complete ones). */
+	files: string[],
+	error: AppError | null,
 };
 
 /**
@@ -835,6 +904,13 @@ export type PrivilegeTarget = {
 export type PrivilegeTargetKind = "schema" | 
 /**  A table, view, materialized view, foreign table or partitioned table. */
 "relation" | "sequence";
+
+export type QueryExport = {
+	/**  One statement that returns rows. */
+	sql: string,
+	/**  The table name in `INSERT` statements. `query_result` when blank. */
+	name: string | null,
+};
 
 /**
  *  The result of running a script: one entry per statement that was run. After a statement
@@ -1233,6 +1309,16 @@ export type TableDescription = {
 	identity: RowIdentity,
 };
 
+export type TableExport = {
+	schema: string,
+	table: string,
+	filters: Filter[],
+	/**  A `WHERE` fragment typed by the person (it runs in a read-only transaction). */
+	rawWhere: string | null,
+	/**  The order of the grid. Without one the rows come as the table has them. */
+	sort: SortSpec[],
+};
+
 export type TableInfo = {
 	owner: string,
 	comment: string | null,
@@ -1260,6 +1346,11 @@ export type TableInfo = {
 	options: string[],
 	/**  Materialized views: has it been filled? */
 	populated: boolean | null,
+};
+
+export type TableRef = {
+	schema: string,
+	table: string,
 };
 
 export type TableStructure = {

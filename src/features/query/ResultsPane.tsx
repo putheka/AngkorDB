@@ -1,4 +1,4 @@
-import { PinIcon, XIcon } from "lucide-react";
+import { DownloadIcon, PinIcon, XIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import type { Notice, SortSpec, StatementOutcome, StatementResult } from "@/bindings";
@@ -30,6 +30,8 @@ interface ResultsPaneProps {
   /** Keep the rows of statement `index` of the last run. */
   onPin: (index: number) => void;
   onUnpin: (id: number) => void;
+  /** Export what a statement returned: the text of that statement. */
+  onExport?: (sql: string) => void;
   onClosePlan: () => void;
   /** Put the editor cursor on the error of statement `index`. */
   onGoToError: (index: number) => void;
@@ -53,6 +55,7 @@ export function ResultsPane(props: ResultsPaneProps) {
     onTab,
     onPin,
     onUnpin,
+    onExport,
     onClosePlan,
     onGoToError,
     onGoToPlanError,
@@ -104,6 +107,11 @@ export function ResultsPane(props: ResultsPaneProps) {
           outcome={statement.outcome}
           time={formatDuration(statement.durationMs)}
           onPin={() => onPin(tab.index)}
+          {...(onExport && run
+            ? {
+                onExport: () => onExport(run.sql.slice(statement.range.start, statement.range.end)),
+              }
+            : {})}
         />
       ) : null;
   } else {
@@ -327,10 +335,12 @@ function RowsResult({
   outcome,
   time,
   onPin,
+  onExport,
 }: {
   outcome: RowsOutcome;
   time: string;
   onPin?: () => void;
+  onExport?: () => void;
 }) {
   // Sorting, column widths and hidden columns belong to this result only (the parent keys it).
   const [layout, setLayout] = useState(EMPTY_LAYOUT);
@@ -368,11 +378,18 @@ function RowsResult({
             the rest.
           </span>
         )}
-        {onPin && (
-          <Button variant="ghost" size="xs" className="ml-auto" onClick={onPin}>
-            <PinIcon /> Pin
-          </Button>
-        )}
+        <span className="ml-auto flex items-center gap-1">
+          {onExport && (
+            <Button variant="ghost" size="xs" aria-label="Export the result" onClick={onExport}>
+              <DownloadIcon /> Export
+            </Button>
+          )}
+          {onPin && (
+            <Button variant="ghost" size="xs" onClick={onPin}>
+              <PinIcon /> Pin
+            </Button>
+          )}
+        </span>
       </footer>
     </div>
   );

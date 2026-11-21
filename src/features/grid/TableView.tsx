@@ -36,6 +36,7 @@ import {
 } from "@/features/grid/editing/changes";
 import { PreviewDialog } from "@/features/grid/editing/PreviewDialog";
 import { useCommitChanges } from "@/features/grid/editing/useCommit";
+import { ExportDialog } from "@/features/export/ExportDialog";
 import { FilterBar } from "@/features/grid/FilterBar";
 import {
   appliedCount,
@@ -126,6 +127,7 @@ export function TableView({ connectionId, tab }: { connectionId: string; tab: Ta
     [refs, changes],
   );
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const commit = useCommitChanges(connectionId, tab, () => setPreviewOpen(false));
   // No edits while writing: the staged copy is dropped when the write is done.
   const writing = commit.isPending;
@@ -504,6 +506,7 @@ export function TableView({ connectionId, tab }: { connectionId: string; tab: Ta
           filterCount={filterCount}
           filterOpen={filter.open}
           onToggleFilter={filter.open ? closeFilter : openFilter}
+          onExport={() => setExporting(true)}
           {...(addRow ? { onAddRow: addRow } : {})}
           detailOpen={detailOpen}
           onToggleDetail={toggleDetail}
@@ -514,6 +517,20 @@ export function TableView({ connectionId, tab }: { connectionId: string; tab: Ta
 
   return (
     <div className="flex h-full min-h-0 flex-col">
+      {exporting && (
+        <ExportDialog
+          connectionId={connectionId}
+          seed={{
+            kind: "table",
+            schema: tab.schema,
+            table: tab.name,
+            filters: filter.applied.filters,
+            rawWhere: filter.applied.rawWhere,
+            sort: view.sort,
+          }}
+          onClose={() => setExporting(false)}
+        />
+      )}
       {filter.open && (
         <FilterBar
           columns={filterColumns}

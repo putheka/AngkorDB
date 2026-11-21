@@ -110,6 +110,7 @@ version = "0.1.0"
 dependencies = [
  "angkordb-macos-window",
  "apple-native-keyring-store",
+ "bytes",
  "deadpool-postgres",
  "futures-util",
  "keyring-core",
