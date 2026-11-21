@@ -22,6 +22,7 @@ use std::path::Path;
 use specta_typescript::Typescript;
 use state::{AppState, WindowHooks};
 use storage::history::HistoryStore;
+use storage::workspace::WorkspaceStore;
 use storage::{ConnectionManager, secrets::default_secret_store};
 use tauri::Manager;
 use tauri_specta::{Builder, collect_commands};
@@ -60,6 +61,11 @@ pub fn specta_builder<R: tauri::Runtime>() -> Builder<R> {
             commands::connections::connect_connection,
             commands::connections::disconnect_connection,
             commands::connections::connection_health,
+            commands::workspace::save_workspace,
+            commands::workspace::load_workspace,
+            commands::workspace::startup_state,
+            commands::workspace::set_restore_on_launch,
+            commands::workspace::set_last_connection,
             commands::schema::list_databases,
             commands::schema::switch_database,
             commands::schema::list_schemas,
@@ -135,6 +141,8 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        // Size, position and maximized state of the window come back at the next launch (ANG-50).
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .menu(menu::build)
         .on_menu_event(|app, event| menu::on_event(app, event.id().as_ref()))
         .setup(|app| {
@@ -150,7 +158,17 @@ pub fn run() {
                     eprintln!("query history is not saved: {e}");
                     HistoryStore::in_memory().expect("an in-memory SQLite database")
                 });
-            app.manage(AppState::new(connections).with_history(history));
+            // The workspace of each connection and what to do at launch (ANG-50): files in a
+            // folder of their own; if it can't be made, they are kept until the app quits.
+            let workspaces = WorkspaceStore::open(&dir.join("workspaces")).unwrap_or_else(|e| {
+                eprintln!("workspaces are not saved: {}", e.message());
+                WorkspaceStore::in_memory()
+            });
+            app.manage(
+                AppState::new(connections)
+                    .with_history(history)
+                    .with_workspaces(workspaces),
+            );
 
             // What commands may not do themselves: touch the window and quit (ANG-29).
             let window = app.handle().clone();

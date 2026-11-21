@@ -17,3 +17,4 @@ pub mod roles;
 pub mod rows;
 pub mod safety;
 pub mod schema;
+pub mod workspace;

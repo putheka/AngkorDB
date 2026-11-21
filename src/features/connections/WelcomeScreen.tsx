@@ -23,6 +23,7 @@ import {
   useDeleteConnection,
   useDuplicateConnection,
 } from "@/features/connections/useConnections";
+import { ReopenSetting } from "@/features/workspace/ReopenSetting";
 import { errorMessage } from "@/lib/errors";
 import { useSessionStore } from "@/stores/session";
 
@@ -210,6 +211,8 @@ export function WelcomeScreen() {
           </div>
         )}
       </div>
+
+      <ReopenSetting />
 
       <HostKeyDialog />
 

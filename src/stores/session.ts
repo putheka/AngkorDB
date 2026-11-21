@@ -10,6 +10,7 @@ import { useBrowserStore } from "@/stores/browser";
 import { usePaletteStore } from "@/stores/palette";
 import { useStatusStore } from "@/stores/status";
 import { useTabsStore } from "@/stores/tabs";
+import { restoreWorkspace, saveWorkspaceNow } from "@/features/workspace/workspace";
 
 interface SessionState {
   /** The connection currently open, if any. */
@@ -47,6 +48,9 @@ export const useSessionStore = create<SessionState>()((set, get) => ({
         serverVersion: info.serverVersion,
         connectingId: null,
       });
+      // Note which connection to reopen at the next launch, and bring its tabs back.
+      void commands.setLastConnection(connection.id).catch(() => undefined);
+      await restoreWorkspace(connection.id);
     } catch (error) {
       const stop = hostKeyStop(error);
       if (stop?.kind === "unknown") {
@@ -80,6 +84,8 @@ export const useSessionStore = create<SessionState>()((set, get) => ({
     const id = get().activeConnectionId;
     // Staged edits are lost with the tabs: ask first.
     if (!(await guardUnsaved(id, "disconnect"))) return false;
+    // Keep what is open for next time before the tabs go; a disconnect is not "start over".
+    if (id) await saveWorkspaceNow(id);
     // Leave the screen first; closing the server side can't fail in a way the user can act on.
     set({ activeConnectionId: null, serverVersion: null });
     useStatusStore.getState().clear();
@@ -90,6 +96,8 @@ export const useSessionStore = create<SessionState>()((set, get) => ({
       queryClient.removeQueries({ queryKey: ["schema", id] });
       queryClient.removeQueries({ queryKey: ["data", id] });
     }
+    // Leaving on purpose: the next launch starts at the welcome screen.
+    void commands.setLastConnection(null).catch(() => undefined);
     if (id) await commands.disconnectConnection(id).catch(() => undefined);
     return true;
   },

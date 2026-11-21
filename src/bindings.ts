@@ -76,6 +76,18 @@ export const commands = {
 	 *  is polled this way is already back when the next query is run.
 	 */
 	connectionHealth: (connectionId: string, options?: InvokeOptions) => __TAURI_INVOKE<ConnectionHealth>("connection_health", { connectionId }, options),
+	/**
+	 *  Keep the workspace of a connection (tabs, query text, table views) as the page wrote it.
+	 *  Called every couple of seconds while something changes, so it must be cheap and whole.
+	 */
+	saveWorkspace: (connectionId: string, data: string, options?: InvokeOptions) => __TAURI_INVOKE<null>("save_workspace", { connectionId, data }, options),
+	/**  The workspace last kept for a connection, if there is one. */
+	loadWorkspace: (connectionId: string, options?: InvokeOptions) => __TAURI_INVOKE<string | null>("load_workspace", { connectionId }, options),
+	/**  What to do at launch: whether to reopen, and which connection. */
+	startupState: (options?: InvokeOptions) => __TAURI_INVOKE<StartupState>("startup_state", undefined, options),
+	setRestoreOnLaunch: (restore: boolean, options?: InvokeOptions) => __TAURI_INVOKE<null>("set_restore_on_launch", { restore }, options),
+	/**  Note which connection is open (`None`: none is), for the next launch. */
+	setLastConnection: (connectionId: string | null, options?: InvokeOptions) => __TAURI_INVOKE<null>("set_last_connection", { connectionId }, options),
 	listDatabases: (connectionId: string, options?: InvokeOptions) => __TAURI_INVOKE<DatabaseInfo[]>("list_databases", { connectionId }, options),
 	/**
 	 *  Switch the open connection to another database on the same server. Returns the new
@@ -1486,6 +1498,16 @@ export type SslFiles = {
 };
 
 export type SslMode = "disable" | "prefer" | "require" | "verify-ca" | "verify-full";
+
+export type StartupState = {
+	/**
+	 *  Open the connection that was open last time, with its tabs; `false` shows the welcome
+	 *  screen.
+	 */
+	restoreOnLaunch: boolean,
+	/**  The connection that was open when the app was last used. `None` after a disconnect. */
+	lastConnectionId: string | null,
+};
 
 /**  One statement of a script and what it does. */
 export type StatementClass = {

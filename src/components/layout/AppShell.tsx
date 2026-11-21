@@ -7,6 +7,7 @@ import { TabBar } from "@/components/layout/TabBar";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useTabShortcuts } from "@/features/tabs/useTabShortcuts";
+import { useWorkspacePersistence } from "@/features/workspace/useWorkspacePersistence";
 import { refreshData } from "@/features/grid/useTableData";
 import { refreshSchema } from "@/features/sidebar/useSchema";
 import { ConnectedView } from "@/features/connections/ConnectedView";
@@ -28,6 +29,7 @@ export function AppShell() {
 
   useTabShortcuts(connected);
   useUnsavedSync();
+  useWorkspacePersistence();
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

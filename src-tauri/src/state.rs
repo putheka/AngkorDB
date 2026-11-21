@@ -10,6 +10,7 @@ use crate::db::ssh::{self, HostKeyProblem};
 use crate::error::{AppError, AppResult};
 use crate::storage::ConnectionManager;
 use crate::storage::history::HistoryStore;
+use crate::storage::workspace::WorkspaceStore;
 
 /// What the app can do to its own window, for commands that must not take a `Window` or
 /// `AppHandle` themselves (see CLAUDE.md). Installed at startup; tests run without it.
@@ -30,6 +31,7 @@ pub struct AppState {
     unsaved: AtomicU32,
     hooks: Mutex<Option<WindowHooks>>,
     history: HistoryStore,
+    workspaces: WorkspaceStore,
     /// Where SSH host keys are recorded (`~/.ssh/known_hosts`).
     known_hosts: PathBuf,
     /// Host keys an SSH tunnel stopped at, by fingerprint, until the person trusts one or not.
@@ -48,6 +50,8 @@ impl AppState {
             hooks: Mutex::new(None),
             // Without a file (tests): history that lasts as long as the app does.
             history: HistoryStore::in_memory().expect("an in-memory SQLite database"),
+            // Without a folder (tests): workspaces that last as long as the app does.
+            workspaces: WorkspaceStore::in_memory(),
             known_hosts: ssh::default_known_hosts(),
             pending_host_keys: Mutex::new(HashMap::new()),
             exports: crate::db::export::Exports::default(),
@@ -106,6 +110,16 @@ impl AppState {
     pub fn with_history(mut self, history: HistoryStore) -> Self {
         self.history = history;
         self
+    }
+
+    /// Keep workspaces in this store (files) instead of in memory.
+    pub fn with_workspaces(mut self, workspaces: WorkspaceStore) -> Self {
+        self.workspaces = workspaces;
+        self
+    }
+
+    pub fn workspaces(&self) -> &WorkspaceStore {
+        &self.workspaces
     }
 
     pub fn history(&self) -> &HistoryStore {

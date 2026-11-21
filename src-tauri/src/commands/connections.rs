@@ -54,7 +54,10 @@ pub async fn save_connection(
 #[specta::specta]
 pub async fn delete_connection(state: State<'_, AppState>, id: String) -> AppResult<()> {
     state.remove_session(&id).await;
-    state.connections().delete(&id).await
+    state.connections().delete(&id).await?;
+    // What was open in it is no use any more. Failing to forget it is not worth failing for.
+    let _ = state.workspaces().forget(&id);
+    Ok(())
 }
 
 #[tauri::command]

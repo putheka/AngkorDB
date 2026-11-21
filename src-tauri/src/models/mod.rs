@@ -18,3 +18,4 @@ pub mod roles;
 pub mod rows;
 pub mod schema;
 pub mod structure;
+pub mod workspace;

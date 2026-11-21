@@ -239,6 +239,30 @@ function requireWritable(id: string) {
   }
 }
 
+/** The pretend workspace files live in localStorage, so reloading the page is like relaunching. */
+function mockStored<T>(name: string, fallback: T): T {
+  try {
+    const text = localStorage.getItem(`angkordb.mock.${name}`);
+    return text ? (JSON.parse(text) as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+function mockStore(name: string, value: unknown) {
+  try {
+    localStorage.setItem(`angkordb.mock.${name}`, JSON.stringify(value));
+  } catch {
+    // Not remembered: fine for a mock.
+  }
+}
+const mockWorkspaces = new Map<string, string>(
+  Object.entries(mockStored<Record<string, string>>("workspaces", {})),
+);
+const mockStartup = mockStored<{ restoreOnLaunch: boolean; lastConnectionId: string | null }>(
+  "startup",
+  { restoreOnLaunch: false, lastConnectionId: null },
+);
+
 /** What the pretend connections file holds. */
 const mockConnectionFile: SharedConnection[] = [
   {
@@ -499,6 +523,24 @@ const handlers: Record<string, Handler> = {
     const ids = args["ids"] as string[];
     if (ids.length === 0) throw appError("VALIDATION", "Choose at least one connection.");
     return ids.length;
+  },
+  // The workspace, kept in memory by the page itself (a reload of the mock keeps it).
+  save_workspace: (args) => {
+    mockWorkspaces.set(String(args["connectionId"]), String(args["data"]));
+    mockStore("workspaces", Object.fromEntries(mockWorkspaces));
+    return null;
+  },
+  load_workspace: (args) => mockWorkspaces.get(String(args["connectionId"])) ?? null,
+  startup_state: () => ({ ...mockStartup }),
+  set_restore_on_launch: (args) => {
+    mockStartup.restoreOnLaunch = Boolean(args["restore"]);
+    mockStore("startup", mockStartup);
+    return null;
+  },
+  set_last_connection: (args) => {
+    mockStartup.lastConnectionId = (args["connectionId"] as string | null) ?? null;
+    mockStore("startup", mockStartup);
+    return null;
   },
   resolve_ssh_alias: (args): SshAlias | null =>
     String(args["host"]).trim() === "prod-db"

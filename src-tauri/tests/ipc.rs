@@ -2925,3 +2925,75 @@ fn resolve_ssh_alias_answers_nothing_for_a_blank_or_unknown_name() {
         json!(null)
     );
 }
+
+#[test]
+fn the_workspace_and_the_launch_settings_are_kept_and_deleting_a_connection_forgets_them() {
+    let ipc = setup();
+    let saved = ipc
+        .call(
+            "save_connection",
+            json!({ "config": config("Work", "localhost", 5432),
+                    "password": { "kind": "keep" }, "sshSecret": null, "sslKeySecret": null }),
+        )
+        .unwrap();
+    let id = saved["id"].as_str().unwrap();
+
+    // Nothing yet; reopening is on by default.
+    assert_eq!(
+        ipc.call("load_workspace", json!({ "connectionId": id }))
+            .unwrap(),
+        json!(null)
+    );
+    let startup = ipc.call("startup_state", json!({})).unwrap();
+    assert_eq!(startup["restoreOnLaunch"], json!(true));
+    assert_eq!(startup["lastConnectionId"], json!(null));
+
+    let data =
+        r#"{"version":1,"tabs":[{"kind":"query","number":1}],"queries":{"query:1":"select 1"}}"#;
+    ipc.call(
+        "save_workspace",
+        json!({ "connectionId": id, "data": data }),
+    )
+    .unwrap();
+    assert_eq!(
+        ipc.call("load_workspace", json!({ "connectionId": id }))
+            .unwrap(),
+        json!(data)
+    );
+    ipc.call("set_last_connection", json!({ "connectionId": id }))
+        .unwrap();
+    ipc.call("set_restore_on_launch", json!({ "restore": false }))
+        .unwrap();
+    let startup = ipc.call("startup_state", json!({})).unwrap();
+    assert_eq!(startup["restoreOnLaunch"], json!(false));
+    assert_eq!(startup["lastConnectionId"], json!(id));
+
+    // Bad input is refused, and does not touch what is kept.
+    for args in [
+        json!({ "connectionId": "../etc", "data": "{}" }),
+        json!({ "connectionId": id, "data": "not json" }),
+    ] {
+        assert_eq!(
+            ipc.call("save_workspace", args).unwrap_err()["code"],
+            "VALIDATION"
+        );
+    }
+    assert_eq!(
+        ipc.call("load_workspace", json!({ "connectionId": id }))
+            .unwrap(),
+        json!(data)
+    );
+
+    ipc.call("delete_connection", json!({ "id": id })).unwrap();
+    assert_eq!(
+        ipc.call("load_workspace", json!({ "connectionId": id }))
+            .unwrap(),
+        json!(null)
+    );
+    assert_eq!(
+        ipc.call("startup_state", json!({})).unwrap()["lastConnectionId"],
+        json!(null)
+    );
+    ipc.call("set_last_connection", json!({ "connectionId": null }))
+        .unwrap();
+}
