@@ -4,6 +4,8 @@
  * built and checked without the native app. State lives in memory and resets on reload.
  */
 import type {
+  BackupRequest,
+  RestoreRequest,
   ImportRequest,
   PreviewRequest,
   ExportRequest,
@@ -31,6 +33,13 @@ import {
   mockRoleList,
   mockRolePreview,
 } from "@/dev/mockRoles";
+import {
+  cancelMockTool,
+  mockPgTools,
+  mockToolStatus,
+  startMockBackup,
+  startMockRestore,
+} from "@/dev/mockBackup";
 import {
   cancelMockImport,
   mockImportStatus,
@@ -363,6 +372,18 @@ const handlers: Record<string, Handler> = {
     )}`,
   "plugin:opener|reveal_item_in_dir": () => null,
 
+  detect_pg_tools: (args) => mockPgTools((args["toolsDir"] as string | null) ?? null),
+  start_backup: (args) => {
+    requireOpen(String(args["connectionId"]));
+    return startMockBackup(args["request"] as BackupRequest);
+  },
+  start_restore: (args) => {
+    requireOpen(String(args["connectionId"]));
+    requireWritable(String(args["connectionId"]));
+    return startMockRestore(args["request"] as RestoreRequest);
+  },
+  tool_status: (args) => mockToolStatus(String(args["id"])),
+  cancel_tool: (args) => cancelMockTool(String(args["id"])),
   preview_import: (args) => mockImportPreview(args["request"] as PreviewRequest),
   start_import: (args) => {
     requireOpen(String(args["connectionId"]));

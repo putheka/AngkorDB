@@ -36,6 +36,7 @@ import { useBrowserStore } from "@/stores/browser";
 import { useLayoutStore } from "@/stores/layout";
 import { usePaletteStore, type PaletteMode } from "@/stores/palette";
 import { useSessionStore } from "@/stores/session";
+import { useBackupDialog } from "@/stores/backupDialog";
 import { useImportDialog } from "@/stores/importDialog";
 import { useTabsStore } from "@/stores/tabs";
 
@@ -244,6 +245,12 @@ function CommandResults({
       group: "Commands",
       label: "Open activity (processes and locks)",
       run: () => useTabsStore.getState().openActivity(),
+    },
+    {
+      id: "backup",
+      group: "Commands",
+      label: "Back up or restore the database…",
+      run: () => useBackupDialog.getState().show("backup"),
     },
     {
       id: "import",

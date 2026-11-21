@@ -18,6 +18,7 @@
 
 pub mod activity;
 pub mod alter;
+pub mod backup;
 pub mod changes;
 pub mod classify;
 pub mod config;

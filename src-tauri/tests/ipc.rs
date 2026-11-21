@@ -398,6 +398,18 @@ fn schema_commands_need_an_open_connection() {
         ("list_activity", json!({ "connectionId": "nope" })),
         ("list_roles", json!({ "connectionId": "nope" })),
         (
+            "start_backup",
+            json!({ "connectionId": "nope", "request": { "toolsDir": null, "database": null,
+                "path": "/tmp/x.dump", "format": "custom", "schemaOnly": false, "dataOnly": false,
+                "includeTables": [], "excludeTables": [], "compression": null, "noOwner": true } }),
+        ),
+        (
+            "start_restore",
+            json!({ "connectionId": "nope", "request": { "toolsDir": null, "path": "/tmp/x.dump",
+                "target": { "kind": "new", "database": "x" }, "clean": false, "noOwner": true,
+                "jobs": 1 } }),
+        ),
+        (
             "start_import",
             json!({ "connectionId": "nope", "request": { "path": "/tmp/x.csv",
                 "format": { "kind": "json" }, "onError": "abort",
@@ -2542,4 +2554,77 @@ fn an_import_through_ipc_previews_runs_reports_errors_and_is_refused_when_read_o
         .unwrap_err();
     assert_eq!(refused["code"], "VALIDATION");
     assert!(refused["message"].as_str().unwrap().contains("read-only"));
+}
+
+#[test]
+fn a_backup_through_ipc_runs_on_a_read_only_connection_but_a_restore_does_not() {
+    if !dev_db_available() {
+        return;
+    }
+    let ipc = setup();
+    let tools = ipc
+        .call("detect_pg_tools", json!({ "toolsDir": null }))
+        .unwrap();
+    let Some(first) = tools.as_array().unwrap().first() else {
+        assert!(
+            std::env::var("ANGKORDB_REQUIRE_DB").as_deref() != Ok("1"),
+            "pg_dump is needed"
+        );
+        return;
+    };
+    assert!(first["major"].as_u64().unwrap() >= 9 && first["dir"].is_string());
+    assert!(
+        first["version"]
+            .as_str()
+            .unwrap()
+            .starts_with(&first["major"].to_string())
+    );
+
+    let id = dev_connection(&ipc, "read-only");
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("dev.dump");
+    let job = ipc
+        .call(
+            "start_backup",
+            json!({ "connectionId": id, "request": { "toolsDir": null, "database": "postgres",
+                "path": file.display().to_string(), "format": "custom", "schemaOnly": true,
+                "dataOnly": false, "includeTables": [], "excludeTables": [],
+                "compression": 5, "noOwner": true } }),
+        )
+        .unwrap();
+    let job = job.as_str().unwrap().to_owned();
+    let status = loop {
+        let status = ipc.call("tool_status", json!({ "id": job })).unwrap();
+        if status["state"] != "running" {
+            break status;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    };
+    assert_eq!(status["state"], "done", "{status}");
+    assert_eq!(status["output"], json!(file.display().to_string()));
+    assert!(status["bytes"].as_f64().unwrap() > 100.0);
+    assert!(!status["command"].as_str().unwrap().contains("PGPASSWORD"));
+    assert!(std::fs::read(&file).unwrap().starts_with(b"PGDMP"));
+
+    // Restoring writes: refused here.
+    let refused = ipc
+        .call(
+            "start_restore",
+            json!({ "connectionId": id, "request": { "toolsDir": null,
+                "path": file.display().to_string(),
+                "target": { "kind": "new", "database": "angkordb_ipc_never" },
+                "clean": false, "noOwner": true, "jobs": 1 } }),
+        )
+        .unwrap_err();
+    assert_eq!(refused["code"], "VALIDATION");
+    assert!(refused["message"].as_str().unwrap().contains("read-only"));
+    assert_eq!(
+        ipc.call("cancel_tool", json!({ "id": "nope" })).unwrap(),
+        json!(false)
+    );
+    assert_eq!(
+        ipc.call("tool_status", json!({ "id": "nope" }))
+            .unwrap_err()["code"],
+        "NOT_FOUND"
+    );
 }

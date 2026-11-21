@@ -3,6 +3,7 @@
 pub mod activity;
 pub mod alter;
 pub mod app;
+pub mod backup;
 pub mod changes;
 pub mod connections;
 pub mod export;

@@ -34,6 +34,7 @@ import { EnumDialog } from "@/features/objects/EnumDialog";
 import { SequenceDialog } from "@/features/objects/SequenceDialog";
 import { openSavedQuery } from "@/features/query/history/openSavedQuery";
 import { commands } from "@/lib/ipc";
+import { useBackupDialog } from "@/stores/backupDialog";
 import { useImportDialog } from "@/stores/importDialog";
 import { ExportDialog } from "@/features/export/ExportDialog";
 import { ObjectActionDialog, type ObjectAction } from "@/features/objects/ObjectActionDialog";
@@ -230,6 +231,9 @@ export function ObjectTree({ connectionId }: { connectionId: string }) {
                 onSelect={() => setManage({ kind: "database", mode: "drop" })}
               >
                 Drop a database…
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => useBackupDialog.getState().show("backup")}>
+                Back up or restore…
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuLabel>Schema</DropdownMenuLabel>

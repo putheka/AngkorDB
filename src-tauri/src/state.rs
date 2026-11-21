@@ -36,6 +36,7 @@ pub struct AppState {
     pending_host_keys: Mutex<HashMap<String, HostKeyProblem>>,
     exports: crate::db::export::Exports,
     imports: crate::db::import::Imports,
+    tool_jobs: crate::db::backup::ToolJobs,
 }
 
 impl AppState {
@@ -51,7 +52,13 @@ impl AppState {
             pending_host_keys: Mutex::new(HashMap::new()),
             exports: crate::db::export::Exports::default(),
             imports: crate::db::import::Imports::default(),
+            tool_jobs: crate::db::backup::ToolJobs::default(),
         }
+    }
+
+    /// The backups and restores of this run, running and done.
+    pub fn tool_jobs(&self) -> &crate::db::backup::ToolJobs {
+        &self.tool_jobs
     }
 
     /// The imports of this run, running and done.

@@ -140,6 +140,28 @@ export const commands = {
 	 */
 	applyChanges: (connectionId: string, schema: string, table: string, changes: TableChanges, options?: InvokeOptions) => __TAURI_INVOKE<ApplyResult>("apply_changes", { connectionId, schema, table, changes }, options),
 	/**
+	 *  The PostgreSQL programs on this Mac (Homebrew, Postgres.app, …), newest first. `tools_dir`
+	 *  is a folder the person chose; it is tried too.
+	 */
+	detectPgTools: (toolsDir: string | null, options?: InvokeOptions) => __TAURI_INVOKE<PgTools[]>("detect_pg_tools", { toolsDir }, options),
+	/**
+	 *  Back the database up in the background. Only reads, so a read-only connection may do it.
+	 *  Returns the id to ask about it with.
+	 */
+	startBackup: (connectionId: string, request: BackupRequest, options?: InvokeOptions) => __TAURI_INVOKE<string>("start_backup", { connectionId, request }, options),
+	/**
+	 *  Restore a backup in the background, into a database that exists or a new one. Refused on a
+	 *  read-only connection. Returns the id to ask about it with.
+	 */
+	startRestore: (connectionId: string, request: RestoreRequest, options?: InvokeOptions) => __TAURI_INVOKE<string>("start_restore", { connectionId, request }, options),
+	/**  What the program printed so far, how big the backup is, and how it ended. */
+	toolStatus: (id: string, options?: InvokeOptions) => __TAURI_INVOKE<ToolStatus>("tool_status", { id }, options),
+	/**
+	 *  Stop the program. A backup that was not finished is removed; a database made for a restore
+	 *  is dropped again.
+	 */
+	cancelTool: (id: string, options?: InvokeOptions) => __TAURI_INVOKE<boolean>("cancel_tool", { id }, options),
+	/**
 	 *  The start of a file: its columns, the first 50 rows and a type for each column. Reads the
 	 *  file only; needs no connection.
 	 */
@@ -302,6 +324,37 @@ export type Backend = {
 	lockWait: string | null,
 	/**  The connection the app used to ask. It can't be stopped from here. */
 	isSelf: boolean,
+};
+
+export type BackupFormat = 
+/**  `pg_restore` can pick tables and restore in parallel. Compressed. */
+"custom" | 
+/**  A SQL script, for `psql`. */
+"plain" | 
+/**  A folder with one file per table, restorable in parallel. */
+"directory" | "tar";
+
+export type BackupRequest = {
+	/**
+	 *  The folder with the PostgreSQL programs; `None`: the newest one found that is not older
+	 *  than the server.
+	 */
+	toolsDir: string | null,
+	/**  The database to back up; `None`: the one connected to. */
+	database: string | null,
+	/**  The file to write (for the directory format, the folder, which must not exist yet). */
+	path: string,
+	format: BackupFormat,
+	schemaOnly: boolean,
+	dataOnly: boolean,
+	/**  Only these tables (`pg_dump -t`): names or patterns like `public.orders*`. */
+	includeTables: string[],
+	/**  Leave these tables out (`pg_dump -T`). */
+	excludeTables: string[],
+	/**  0 (none) to 9, for the custom and directory formats; `None`: the program's default. */
+	compression: number | null,
+	/**  Leave out who owns what (`--no-owner`). */
+	noOwner: boolean,
 };
 
 /**
@@ -951,6 +1004,17 @@ export type Persistence = "permanent" |
 /**  Not written to the write-ahead log: fast, and empty after a crash. */
 "unlogged" | "temporary";
 
+/**  A set of PostgreSQL client programs found on this Mac. */
+export type PgTools = {
+	/**  The folder with `pg_dump`, `pg_restore` and `psql`. */
+	dir: string,
+	/**  `17.10` */
+	version: string,
+	major: number,
+	/**  Where it was found: `Homebrew`, `Postgres.app`, `PATH`, `Chosen folder`, … */
+	source: string,
+};
+
 /**  One statement of the plan. */
 export type PlannedStatement = {
 	sql: string,
@@ -1048,6 +1112,25 @@ export type RenameSchema = {
 	name: string,
 	newName: string,
 };
+
+export type RestoreRequest = {
+	toolsDir: string | null,
+	/**  A backup file or folder. */
+	path: string,
+	target: RestoreTarget,
+	/**  Drop what is in the backup before making it again (`--clean --if-exists`). */
+	clean: boolean,
+	/**  Don't set who owns what (`--no-owner`). */
+	noOwner: boolean,
+	/**  Programs restoring at once (`-j`), for the custom and directory formats. 1..=16. */
+	jobs: number,
+};
+
+export type RestoreTarget = 
+/**  A database that exists. */
+{ kind: "existing"; database: string } | 
+/**  Make this database first. */
+{ kind: "new"; database: string };
 
 export type ResultColumn = {
 	name: string,
@@ -1492,6 +1575,23 @@ export type TableStructure = {
 export type TextRange = {
 	start: number,
 	end: number,
+};
+
+export type ToolState = "running" | "done" | "failed" | "cancelled";
+
+export type ToolStatus = {
+	state: ToolState,
+	/**  What the program printed, the last lines. */
+	log: string[],
+	/**  How many lines it printed in all. */
+	lines: number | null,
+	/**  For a backup: how big the file (or folder) is so far. */
+	bytes: number | null,
+	/**  The command, without anything secret, as it would be typed. */
+	command: string,
+	/**  What it made: the file, or the database. */
+	output: string | null,
+	error: AppError | null,
 };
 
 export type TriggerInfo = {

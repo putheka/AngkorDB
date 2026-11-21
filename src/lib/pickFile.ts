@@ -37,3 +37,10 @@ export async function pickDataFile(title: string): Promise<string | null> {
   });
   return typeof chosen === "string" ? chosen : null;
 }
+
+/** Ask for a backup: a file, or (a directory backup) a folder. `null` when they cancel. */
+export async function pickBackup(title: string, folder: boolean): Promise<string | null> {
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const chosen = await open({ title, multiple: false, directory: folder });
+  return typeof chosen === "string" ? chosen : null;
+}
