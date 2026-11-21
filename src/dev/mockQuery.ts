@@ -208,6 +208,7 @@ async function execute(tabId: string, text: string, at: number): Promise<Stateme
       "SET",
       "GRANT",
       "COMMENT",
+      "DO",
       "VACUUM",
       "ANALYZE",
     ].includes(command)
@@ -271,6 +272,18 @@ export function createQueryHandlers(requireOpen: (id: string) => void): Record<s
           range: { start: span.start, end: span.end },
           durationMs: Date.now() - t0,
           outcome,
+          notices:
+            outcome.kind === "command" && outcome.command === "DO"
+              ? [
+                  {
+                    severity: "NOTICE",
+                    message: "hello from DO",
+                    detail: null,
+                    hint: null,
+                    code: "00000",
+                  },
+                ]
+              : [],
         });
         if (outcome.kind === "error") break;
       }

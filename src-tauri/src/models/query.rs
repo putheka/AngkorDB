@@ -42,6 +42,34 @@ pub struct StatementResult {
     pub range: TextRange,
     pub duration_ms: u32,
     pub outcome: StatementOutcome,
+    /// What the server said while running it: `RAISE NOTICE` / `WARNING`, "table does not exist,
+    /// skipping", … In the order they arrived.
+    pub notices: Vec<Notice>,
+}
+
+/// A message from the server that is not an error (ANG-32).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct Notice {
+    /// `NOTICE`, `WARNING`, `INFO`, `LOG`, `DEBUG`.
+    pub severity: String,
+    pub message: String,
+    pub detail: Option<String>,
+    pub hint: Option<String>,
+    /// SQLSTATE, e.g. `00000`.
+    pub code: String,
+}
+
+impl From<&tokio_postgres::error::DbError> for Notice {
+    fn from(e: &tokio_postgres::error::DbError) -> Self {
+        Self {
+            severity: e.severity().to_owned(),
+            message: e.message().to_owned(),
+            detail: e.detail().map(str::to_owned),
+            hint: e.hint().map(str::to_owned),
+            code: e.code().code().to_owned(),
+        }
+    }
 }
 
 /// The result of running a script: one entry per statement that was run. After a statement

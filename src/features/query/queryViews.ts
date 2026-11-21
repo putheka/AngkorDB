@@ -1,7 +1,8 @@
 import { useCallback } from "react";
 import { create } from "zustand";
 
-import type { QueryRun } from "@/bindings";
+import type { QueryRun, StatementOutcome } from "@/bindings";
+import { pickTab, type ResultTab } from "@/features/query/resultTabs";
 import { commands } from "@/lib/ipc";
 import { useSessionStore } from "@/stores/session";
 import { useTabsStore } from "@/stores/tabs";
@@ -13,8 +14,19 @@ export interface LastRun {
   result: QueryRun;
   /** Offset in the editor of the text that was run: 0 for everything, the selection's start, ... */
   base: number;
-  /** Which statement's result is shown. */
-  selected: number;
+  /** The text that was run (the statements' ranges are into it). */
+  sql: string;
+}
+
+/** The rows of a result that were kept from an earlier run. */
+export interface PinnedResult {
+  id: number;
+  /** "Pinned 1": the tab's name. */
+  title: string;
+  outcome: Extract<StatementOutcome, { kind: "rows" }>;
+  durationMs: number;
+  /** The statement that produced it, for the tab's tooltip. */
+  sql: string;
 }
 
 /** Everything about one query tab that must survive switching to another tab and back. */
@@ -27,6 +39,14 @@ export interface QueryView {
   /** When the current run started (`Date.now()`), for the timer. */
   startedAt: number | null;
   lastRun: LastRun | null;
+  /** Which result is in front. */
+  resultTab: ResultTab;
+  /** Results kept across runs. */
+  pinned: PinnedResult[];
+  /** Results below the editor, or to its right. */
+  layout: "below" | "right";
+  /** Width of the editor in pixels when the results are to its right. */
+  editorWidth: number;
   /** The run itself could not happen (lost connection, ...), as opposed to a statement failing. */
   runError: string | null;
 }
@@ -38,6 +58,10 @@ export const DEFAULT_QUERY_VIEW: QueryView = {
   running: false,
   startedAt: null,
   lastRun: null,
+  resultTab: pickTab([]),
+  pinned: [],
+  layout: "below",
+  editorWidth: 560,
   runError: null,
 };
 

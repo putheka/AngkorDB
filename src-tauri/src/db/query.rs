@@ -77,6 +77,7 @@ fn blocked(statement: &Statement) -> StatementResult {
             end: statement.utf16_end,
         },
         duration_ms: 0,
+        notices: Vec::new(),
         outcome: StatementOutcome::Error {
             error: AppErrorPayload::from(&error),
             offset: Some(statement.utf16_start),
@@ -104,6 +105,7 @@ async fn run_statement(
         },
         duration_ms: millis(started),
         outcome,
+        notices: session.take_notices(tab_id),
     }
 }
 

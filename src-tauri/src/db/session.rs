@@ -6,12 +6,13 @@ use deadpool_postgres::{
     Hook, HookError, Manager, ManagerConfig, Object, Pool, RecyclingMethod, Runtime,
 };
 use tokio::sync::Mutex;
-use tokio_postgres::{Client, Config};
+use tokio_postgres::{AsyncMessage, Client, Config};
 use tokio_postgres_rustls::MakeRustlsConnect;
 
 use crate::db::{config, tls};
 use crate::error::{AppError, AppResult};
 use crate::models::connection::{ConnectionConfig, ConnectionInfo};
+use crate::models::query::Notice;
 
 /// Pooled connections for introspection, grid fetches and `apply_changes` (ANG-8 D3).
 const META_POOL_SIZE: usize = 3;
@@ -29,6 +30,8 @@ pub struct Session {
     tls: MakeRustlsConnect,
     meta_pool: Pool,
     tabs: Mutex<HashMap<String, Arc<Client>>>,
+    /// What each tab's server connection has said (`RAISE NOTICE`, …) since it was last read.
+    notices: std::sync::Mutex<HashMap<String, Arc<std::sync::Mutex<Vec<Notice>>>>>,
 }
 
 impl Session {
@@ -87,6 +90,7 @@ impl Session {
             tls,
             meta_pool,
             tabs: Mutex::new(HashMap::new()),
+            notices: std::sync::Mutex::new(HashMap::new()),
         })
     }
 
@@ -113,16 +117,31 @@ impl Session {
         }
 
         // Connect without holding the lock so other tabs aren't blocked.
-        let (client, connection) = self.pg_config.connect(self.tls.clone()).await?;
+        let (client, mut connection) = self.pg_config.connect(self.tls.clone()).await?;
+        // The connection is polled by hand so that notices can be kept: they come on the same
+        // socket as the results, ahead of the statement's own completion.
+        let heard = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = Arc::clone(&heard);
         tokio::spawn(async move {
             // Ends when the client is dropped or the server closes the socket.
-            let _ = connection.await;
+            while let Some(Ok(message)) =
+                std::future::poll_fn(|cx| connection.poll_message(cx)).await
+            {
+                if let AsyncMessage::Notice(notice) = message
+                    && let Ok(mut list) = sink.lock()
+                {
+                    list.push(Notice::from(&notice));
+                }
+            }
         });
         if let Some(sql) = config::init_sql(&self.config) {
             client.batch_execute(&sql).await?;
         }
 
         let client = Arc::new(client);
+        if let Ok(mut notices) = self.notices.lock() {
+            notices.insert(tab_id.to_owned(), heard);
+        }
         self.tabs
             .lock()
             .await
@@ -130,8 +149,23 @@ impl Session {
         Ok(client)
     }
 
+    /// What the tab's connection has said since this was last called, oldest first.
+    pub fn take_notices(&self, tab_id: &str) -> Vec<Notice> {
+        let heard = self
+            .notices
+            .lock()
+            .ok()
+            .and_then(|notices| notices.get(tab_id).cloned());
+        heard
+            .and_then(|list| list.lock().ok().map(|mut list| std::mem::take(&mut *list)))
+            .unwrap_or_default()
+    }
+
     /// Close a tab's dedicated connection (dropped once no query still holds it).
     pub async fn close_tab(&self, tab_id: &str) {
+        if let Ok(mut notices) = self.notices.lock() {
+            notices.remove(tab_id);
+        }
         self.tabs.lock().await.remove(tab_id);
     }
 
@@ -147,6 +181,9 @@ impl Session {
 
     /// Close every connection of this session.
     pub async fn close(&self) {
+        if let Ok(mut notices) = self.notices.lock() {
+            notices.clear();
+        }
         self.tabs.lock().await.clear();
         self.meta_pool.close();
     }

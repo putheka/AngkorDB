@@ -289,6 +289,17 @@ export type LimitedCount = {
 	capped: boolean,
 };
 
+/**  A message from the server that is not an error (ANG-32). */
+export type Notice = {
+	/**  `NOTICE`, `WARNING`, `INFO`, `LOG`, `DEBUG`. */
+	severity: string,
+	message: string,
+	detail: string | null,
+	hint: string | null,
+	/**  SQLSTATE, e.g. `00000`. */
+	code: string,
+};
+
 export type ObjectKind = "table" | "partitionedTable" | "foreignTable" | "view" | "materializedView" | "sequence" | "function" | "procedure" | "enumType";
 
 /**  Fields extracted from a `postgres://` URL, used to fill the connection form. */
@@ -448,6 +459,11 @@ export type StatementResult = {
 	range: TextRange,
 	durationMs: number,
 	outcome: StatementOutcome,
+	/**
+	 *  What the server said while running it: `RAISE NOTICE` / `WARNING`, "table does not exist,
+	 *  skipping", … In the order they arrived.
+	 */
+	notices: Notice[],
 };
 
 /**

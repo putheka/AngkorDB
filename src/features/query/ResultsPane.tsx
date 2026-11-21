@@ -1,9 +1,12 @@
+import { PinIcon, XIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
-import type { QueryRun, SortSpec, StatementOutcome, StatementResult } from "@/bindings";
+import type { Notice, SortSpec, StatementOutcome, StatementResult } from "@/bindings";
 import { Button } from "@/components/ui/button";
 import { EMPTY_LAYOUT } from "@/features/grid/columns";
 import { DataGrid } from "@/features/grid/DataGrid";
+import type { LastRun, PinnedResult } from "@/features/query/queryViews";
+import { messageCount, resultsOf, sameTab, type ResultTab } from "@/features/query/resultTabs";
 import { sortRows } from "@/features/query/sortRows";
 import { summarize } from "@/features/query/summarize";
 import { formatDuration } from "@/lib/format";
@@ -11,18 +14,31 @@ import { cn } from "@/lib/utils";
 
 const number = new Intl.NumberFormat("en-US");
 
+type RowsOutcome = Extract<StatementOutcome, { kind: "rows" }>;
+
 interface ResultsPaneProps {
-  run: { id: number; result: QueryRun; selected: number } | null;
+  run: LastRun | null;
+  pinned: PinnedResult[];
+  tab: ResultTab;
   running: boolean;
   /** The run couldn't take place at all. */
   runError: string | null;
-  onSelect: (index: number) => void;
+  onTab: (tab: ResultTab) => void;
+  /** Keep the rows of statement `index` of the last run. */
+  onPin: (index: number) => void;
+  onUnpin: (id: number) => void;
   /** Put the editor cursor on the error of statement `index`. */
   onGoToError: (index: number) => void;
 }
 
-/** What the last run returned: a chip per statement when there are several, then its result. */
-export function ResultsPane({ run, running, runError, onSelect, onGoToError }: ResultsPaneProps) {
+/**
+ * What the last run returned. One tab per statement that returned rows (`Result 1`, `Result 2`),
+ * a `Messages` tab with every statement's outcome, timing and notices, and the results that were
+ * pinned from earlier runs.
+ */
+export function ResultsPane(props: ResultsPaneProps) {
+  const { run, pinned, tab, running, runError, onTab, onPin, onUnpin, onGoToError } = props;
+
   if (runError) {
     return (
       <div role="alert" className="p-4 text-sm select-text">
@@ -30,7 +46,7 @@ export function ResultsPane({ run, running, runError, onSelect, onGoToError }: R
       </div>
     );
   }
-  if (!run) {
+  if (!run && pinned.length === 0) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-1 p-6 text-center text-sm text-muted-foreground">
         <p>{running ? "Running…" : "Results appear here."}</p>
@@ -44,7 +60,140 @@ export function ResultsPane({ run, running, runError, onSelect, onGoToError }: R
     );
   }
 
-  const { statements } = run.result;
+  const statements = run?.result.statements ?? [];
+  const results = resultsOf(statements);
+  const messages = messageCount(statements);
+
+  let body;
+  if (tab.kind === "pinned") {
+    const kept = pinned.find((p) => p.id === tab.id);
+    body = kept ? (
+      <RowsResult
+        key={`pinned:${kept.id}`}
+        outcome={kept.outcome}
+        time={formatDuration(kept.durationMs)}
+      />
+    ) : null;
+  } else if (tab.kind === "result") {
+    const statement = statements[tab.index];
+    body =
+      statement?.outcome.kind === "rows" ? (
+        <RowsResult
+          key={`${run?.id}:${tab.index}`}
+          outcome={statement.outcome}
+          time={formatDuration(statement.durationMs)}
+          onPin={() => onPin(tab.index)}
+        />
+      ) : null;
+  } else {
+    body = run ? <Messages run={run} onGoToError={onGoToError} /> : null;
+  }
+
+  return (
+    <div className={cn("flex h-full min-h-0 flex-col", running && "opacity-60")}>
+      <div
+        role="tablist"
+        aria-label="Results"
+        className="flex shrink-0 gap-1 overflow-x-auto border-b px-2 py-1"
+      >
+        {results.map((result) => (
+          <TabButton
+            key={`result:${result.index}`}
+            selected={sameTab(tab, { kind: "result", index: result.index })}
+            onClick={() => onTab({ kind: "result", index: result.index })}
+          >
+            Result {result.number} · {number.format(result.rows)}{" "}
+            {result.rows === 1 ? "row" : "rows"}
+          </TabButton>
+        ))}
+        {run && (
+          <TabButton
+            selected={tab.kind === "messages"}
+            failed={statements[statements.length - 1]?.outcome.kind === "error"}
+            onClick={() => onTab({ kind: "messages" })}
+          >
+            Messages
+            {messages > 0 && (
+              <span className="ml-1.5 rounded-full bg-muted px-1.5 text-[10px] tabular-nums">
+                {messages}
+              </span>
+            )}
+          </TabButton>
+        )}
+        {pinned.map((kept) => (
+          <TabButton
+            key={`pinned:${kept.id}`}
+            selected={sameTab(tab, { kind: "pinned", id: kept.id })}
+            onClick={() => onTab({ kind: "pinned", id: kept.id })}
+            onClose={() => onUnpin(kept.id)}
+            title={kept.sql}
+          >
+            <PinIcon className="mr-1 size-3 shrink-0" />
+            {kept.title}
+          </TabButton>
+        ))}
+      </div>
+      {body}
+    </div>
+  );
+}
+
+function TabButton({
+  selected,
+  failed,
+  onClick,
+  onClose,
+  title,
+  children,
+}: {
+  selected: boolean;
+  failed?: boolean;
+  onClick: () => void;
+  onClose?: () => void;
+  title?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <span
+      className={cn(
+        "flex shrink-0 items-center rounded-md border text-xs whitespace-nowrap",
+        selected
+          ? "bg-accent text-accent-foreground"
+          : "text-muted-foreground hover:text-foreground",
+        failed && "border-destructive/50 text-destructive",
+      )}
+    >
+      <button
+        type="button"
+        role="tab"
+        aria-selected={selected}
+        title={title}
+        onClick={onClick}
+        className="flex items-center px-2 py-0.5"
+      >
+        {children}
+      </button>
+      {onClose && (
+        <button
+          type="button"
+          aria-label="Unpin result"
+          onClick={onClose}
+          className="rounded-r-md px-1 py-0.5 opacity-60 hover:opacity-100"
+        >
+          <XIcon className="size-3" />
+        </button>
+      )}
+    </span>
+  );
+}
+
+const SEVERITY_STYLE: Record<string, string> = {
+  WARNING: "text-amber-600 dark:text-amber-400",
+  ERROR: "text-destructive",
+};
+
+function Messages({ run, onGoToError }: { run: LastRun; onGoToError: (index: number) => void }) {
+  const { statements, durationMs } = run.result;
   if (statements.length === 0) {
     return (
       <p className="p-6 text-center text-sm text-muted-foreground">
@@ -52,118 +201,102 @@ export function ResultsPane({ run, running, runError, onSelect, onGoToError }: R
       </p>
     );
   }
-  const shown = statements[run.selected] ?? statements[statements.length - 1];
-
   return (
-    <div className={cn("flex h-full min-h-0 flex-col", running && "opacity-60")}>
-      {statements.length > 1 && (
-        <div
-          role="tablist"
-          aria-label="Statements"
-          className="flex shrink-0 gap-1 overflow-x-auto border-b px-2 py-1"
-        >
-          {statements.map((statement, index) => (
-            <Chip
-              key={index}
-              index={index}
-              statement={statement}
-              selected={statement === shown}
-              onClick={() => onSelect(index)}
-            />
-          ))}
-        </div>
-      )}
-      {shown && (
-        <Outcome
-          key={`${run.id}:${statements.indexOf(shown)}`}
-          statement={shown}
-          onGoToError={() => onGoToError(statements.indexOf(shown))}
-        />
-      )}
+    <div className="min-h-0 flex-1 overflow-auto p-3 text-xs select-text">
+      <p className="mb-2 text-muted-foreground">
+        {statements.length} {statements.length === 1 ? "statement" : "statements"} in{" "}
+        {formatDuration(durationMs)}
+      </p>
+      <ol className="flex flex-col gap-2">
+        {statements.map((statement, index) => (
+          <Message
+            key={index}
+            index={index}
+            statement={statement}
+            sql={run.sql.slice(statement.range.start, statement.range.end)}
+            onGoToError={() => onGoToError(index)}
+          />
+        ))}
+      </ol>
     </div>
   );
 }
 
-function Chip({
+function Message({
   index,
   statement,
-  selected,
-  onClick,
+  sql,
+  onGoToError,
 }: {
   index: number;
   statement: StatementResult;
-  selected: boolean;
-  onClick: () => void;
-}) {
-  const failed = statement.outcome.kind === "error";
-  return (
-    <button
-      type="button"
-      role="tab"
-      aria-selected={selected}
-      onClick={onClick}
-      className={cn(
-        "shrink-0 rounded-md border px-2 py-0.5 text-xs whitespace-nowrap",
-        selected
-          ? "bg-accent text-accent-foreground"
-          : "text-muted-foreground hover:text-foreground",
-        failed && "border-destructive/50 text-destructive",
-      )}
-    >
-      {index + 1} · {summarize(statement.outcome)} · {formatDuration(statement.durationMs)}
-    </button>
-  );
-}
-
-function Outcome({
-  statement,
-  onGoToError,
-}: {
-  statement: StatementResult;
+  sql: string;
   onGoToError: () => void;
 }) {
   const { outcome } = statement;
-  const time = formatDuration(statement.durationMs);
-
-  if (outcome.kind === "error") {
-    const { error } = outcome;
-    return (
-      <div role="alert" className="min-h-0 flex-1 overflow-auto p-4 text-sm select-text">
-        <p className="font-medium text-destructive">{error.message}</p>
-        {error.pgCode && (
-          <p className="mt-1 text-xs text-muted-foreground">
-            SQLSTATE <span className="font-mono">{error.pgCode}</span>
-          </p>
-        )}
-        {error.detail && <p className="mt-2 text-xs text-muted-foreground">{error.detail}</p>}
-        {error.hint && <p className="mt-1 text-xs text-muted-foreground">Hint: {error.hint}</p>}
-        {outcome.offset !== null && (
-          <Button variant="outline" size="xs" className="mt-3" onClick={onGoToError}>
-            Go to error
-          </Button>
-        )}
+  const failed = outcome.kind === "error";
+  const oneLine = sql.replace(/\s+/g, " ").trim();
+  return (
+    <li className={cn("rounded-md border p-2", failed && "border-destructive/40")}>
+      <div className="flex items-baseline gap-2">
+        <span className="text-muted-foreground tabular-nums">{index + 1}</span>
+        <span className={cn("font-medium", failed && "text-destructive")}>
+          {failed ? outcome.error.message : summarize(outcome)}
+        </span>
+        <span className="ml-auto shrink-0 text-muted-foreground tabular-nums">
+          {formatDuration(statement.durationMs)}
+        </span>
       </div>
-    );
-  }
+      <p className="mt-1 truncate font-mono text-muted-foreground" title={oneLine}>
+        {oneLine.length > 160 ? `${oneLine.slice(0, 160)}…` : oneLine}
+      </p>
+      {statement.notices.map((notice, i) => (
+        <NoticeLine key={i} notice={notice} />
+      ))}
+      {outcome.kind === "error" && (
+        <div className="mt-1 text-muted-foreground">
+          {outcome.error.pgCode && (
+            <p>
+              SQLSTATE <span className="font-mono">{outcome.error.pgCode}</span>
+            </p>
+          )}
+          {outcome.error.detail && <p>{outcome.error.detail}</p>}
+          {outcome.error.hint && <p>Hint: {outcome.error.hint}</p>}
+          {outcome.offset !== null && (
+            <Button variant="outline" size="xs" className="mt-1.5" onClick={onGoToError}>
+              Go to error
+            </Button>
+          )}
+        </div>
+      )}
+    </li>
+  );
+}
 
-  if (outcome.kind === "command") {
-    return (
-      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-1 text-sm">
-        <p className="font-medium">{summarize(outcome)}</p>
-        <p className="text-xs text-muted-foreground">Completed in {time}.</p>
-      </div>
-    );
-  }
-
-  return <RowsResult outcome={outcome} time={time} />;
+function NoticeLine({ notice }: { notice: Notice }) {
+  return (
+    <div className="mt-1">
+      <p>
+        <span className={cn("font-medium", SEVERITY_STYLE[notice.severity])}>
+          {notice.severity}
+        </span>
+        <span className="text-muted-foreground">: </span>
+        {notice.message}
+      </p>
+      {notice.detail && <p className="text-muted-foreground">DETAIL: {notice.detail}</p>}
+      {notice.hint && <p className="text-muted-foreground">HINT: {notice.hint}</p>}
+    </div>
+  );
 }
 
 function RowsResult({
   outcome,
   time,
+  onPin,
 }: {
-  outcome: Extract<StatementOutcome, { kind: "rows" }>;
+  outcome: RowsOutcome;
   time: string;
+  onPin?: () => void;
 }) {
   // Sorting, column widths and hidden columns belong to this result only (the parent keys it).
   const [layout, setLayout] = useState(EMPTY_LAYOUT);
@@ -200,6 +333,11 @@ function RowsResult({
             Results cut at {number.format(outcome.rows.length)} rows. Add a LIMIT or a WHERE to see
             the rest.
           </span>
+        )}
+        {onPin && (
+          <Button variant="ghost" size="xs" className="ml-auto" onClick={onPin}>
+            <PinIcon /> Pin
+          </Button>
         )}
       </footer>
     </div>

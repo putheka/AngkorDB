@@ -332,6 +332,51 @@ async fn cancelling_a_minute_long_query_takes_under_a_second_and_the_tab_is_reus
 }
 
 #[tokio::test]
+async fn notices_and_warnings_come_back_with_the_statement_that_raised_them() {
+    let Some(session) = open_or_skip().await else {
+        return;
+    };
+    let result = run(
+        &session,
+        "notices",
+        "SELECT 1;
+         DO $$ BEGIN
+           RAISE NOTICE 'hello %', 42;
+           RAISE WARNING 'careful' USING HINT = 'look again', DETAIL = 'because';
+         END $$;
+         DROP TABLE IF EXISTS public.ang32_no_such_table;
+         SELECT 2",
+    )
+    .await;
+    assert_eq!(result.statements.len(), 4);
+    let heard = |i: usize| {
+        result.statements[i]
+            .notices
+            .iter()
+            .map(|n| (n.severity.as_str(), n.message.as_str()))
+            .collect::<Vec<_>>()
+    };
+
+    assert!(heard(0).is_empty());
+    assert_eq!(heard(1), [("NOTICE", "hello 42"), ("WARNING", "careful")]);
+    let warning = &result.statements[1].notices[1];
+    assert_eq!(warning.hint.as_deref(), Some("look again"));
+    assert_eq!(warning.detail.as_deref(), Some("because"));
+    assert_eq!(warning.code, "01000");
+    // The server's own notice for a statement that did nothing.
+    assert_eq!(heard(2).len(), 1);
+    assert!(
+        heard(2)[0].1.contains("does not exist, skipping"),
+        "{:?}",
+        heard(2)
+    );
+    assert!(
+        heard(3).is_empty(),
+        "notices are not carried over to the next statement"
+    );
+}
+
+#[tokio::test]
 async fn a_long_query_in_one_tab_does_not_block_the_others() {
     let Some(session) = open_or_skip().await else {
         return;
