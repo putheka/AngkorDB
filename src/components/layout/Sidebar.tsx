@@ -1,4 +1,4 @@
-import { ActivityIcon, PlugZapIcon } from "lucide-react";
+import { ActivityIcon, PlugZapIcon, ShieldIcon } from "lucide-react";
 
 import { SidebarResizer } from "@/components/layout/SidebarResizer";
 import { Button } from "@/components/ui/button";
@@ -39,6 +39,19 @@ export function Sidebar() {
             </Button>
           </TooltipTrigger>
           <TooltipContent>Activity: processes and locks</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Roles"
+              onClick={() => useTabsStore.getState().openRoles()}
+            >
+              <ShieldIcon />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Roles and privileges</TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>

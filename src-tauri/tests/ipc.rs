@@ -394,6 +394,31 @@ fn schema_commands_need_an_open_connection() {
         ),
         ("database_options", json!({ "connectionId": "nope" })),
         ("list_activity", json!({ "connectionId": "nope" })),
+        ("list_roles", json!({ "connectionId": "nope" })),
+        ("default_privileges", json!({ "connectionId": "nope" })),
+        (
+            "object_privileges",
+            json!({ "connectionId": "nope",
+                    "target": { "kind": "schema", "schema": "", "name": "public" } }),
+        ),
+        (
+            "preview_privilege_changes",
+            json!({ "connectionId": "nope", "changes": [] }),
+        ),
+        (
+            "apply_privilege_changes",
+            json!({ "connectionId": "nope", "changes": [] }),
+        ),
+        (
+            "preview_role_operation",
+            json!({ "connectionId": "nope", "operation": { "kind": "drop", "name": "x",
+                    "reassignTo": null } }),
+        ),
+        (
+            "apply_role_operation",
+            json!({ "connectionId": "nope", "operation": { "kind": "drop", "name": "x",
+                    "reassignTo": null } }),
+        ),
         (
             "cancel_backend",
             json!({ "connectionId": "nope", "pid": 1 }),
@@ -1858,4 +1883,181 @@ fn a_read_only_connection_refuses_to_stop_a_backend() {
         .unwrap_err();
     assert_eq!(err["code"], "VALIDATION");
     assert!(err["message"].as_str().unwrap().contains("read-only"));
+}
+
+const ROLE_ATTRIBUTES: &str = r#"{ "canLogin": true, "superuser": false, "createDb": false,
+    "createRole": false, "inherit": true, "replication": false, "bypassRls": false,
+    "connectionLimit": null, "validUntil": null }"#;
+
+fn dev_connection(ipc: &Ipc, safe_mode: &str) -> String {
+    let mut form = config("Dev", "localhost", 54329);
+    form["user"] = json!("angkor");
+    form["database"] = json!("angkordb_dev");
+    form["safeMode"] = json!(safe_mode);
+    let saved = ipc
+        .call(
+            "save_connection",
+            json!({ "config": form, "password": { "kind": "set", "value": "angkor" } }),
+        )
+        .unwrap();
+    let id = saved["id"].as_str().unwrap().to_owned();
+    ipc.call("connect_connection", json!({ "id": id })).unwrap();
+    id
+}
+
+#[test]
+fn roles_and_privileges_through_ipc() {
+    if !dev_db_available() {
+        return;
+    }
+    let ipc = setup();
+    let id = dev_connection(&ipc, "off");
+    let name = format!("angkordb_role_ipc_{}", std::process::id());
+    let attributes: Value = serde_json::from_str(ROLE_ATTRIBUTES).unwrap();
+    let _ = ipc.call(
+        "apply_role_operation",
+        json!({ "connectionId": id, "operation": { "kind": "drop", "name": name,
+                "reassignTo": null } }),
+    );
+
+    let create = json!({ "kind": "create", "name": name, "attributes": attributes,
+                         "password": "pa'ss\\word", "memberOf": [] });
+    let preview = ipc
+        .call(
+            "preview_role_operation",
+            json!({ "connectionId": id, "operation": create }),
+        )
+        .unwrap();
+    let text = preview["sql"].as_str().unwrap();
+    assert!(
+        text.contains("CREATE ROLE") && text.contains("••••••••"),
+        "{text}"
+    );
+    assert!(!text.contains("SCRAM") && !text.contains("pa'ss"), "{text}");
+    assert_eq!(preview["statements"].as_array().unwrap().len(), 1);
+
+    let ran = ipc
+        .call(
+            "apply_role_operation",
+            json!({ "connectionId": id, "operation": create }),
+        )
+        .unwrap();
+    assert_eq!(ran, json!(1));
+    let roles = ipc
+        .call("list_roles", json!({ "connectionId": id }))
+        .unwrap();
+    let mine = roles
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["name"] == json!(name))
+        .expect("the new role is listed");
+    assert_eq!(mine["canLogin"], json!(true));
+    assert_eq!(mine["connectionLimit"], json!(null));
+    assert_eq!(mine["memberOf"], json!([]));
+    assert_eq!(mine["predefined"], json!(false));
+
+    let alter = json!({ "kind": "alter", "name": name, "newName": null, "attributes": attributes,
+                        "password": { "kind": "keep" }, "memberOf": ["pg_read_all_data"],
+                        "previousMemberOf": [] });
+    ipc.call(
+        "apply_role_operation",
+        json!({ "connectionId": id, "operation": alter }),
+    )
+    .unwrap();
+
+    // The matrix of a table, a change through it, and the defaults.
+    let target = json!({ "kind": "relation", "schema": "public", "name": "users" });
+    let matrix = ipc
+        .call(
+            "object_privileges",
+            json!({ "connectionId": id, "target": target }),
+        )
+        .unwrap();
+    assert_eq!(matrix["privileges"][0], json!("SELECT"));
+    assert_eq!(matrix["rows"][0]["grantee"], json!(null));
+    let grant =
+        json!([{ "target": target, "grantee": name, "privilege": "SELECT", "grant": true }]);
+    let shown = ipc
+        .call(
+            "preview_privilege_changes",
+            json!({ "connectionId": id, "changes": grant }),
+        )
+        .unwrap();
+    assert!(shown["sql"].as_str().unwrap().contains(&format!(
+        "GRANT SELECT ON TABLE \"public\".\"users\" TO \"{name}\";"
+    )));
+    ipc.call(
+        "apply_privilege_changes",
+        json!({ "connectionId": id, "changes": grant }),
+    )
+    .unwrap();
+    let after = ipc
+        .call(
+            "object_privileges",
+            json!({ "connectionId": id, "target": target }),
+        )
+        .unwrap();
+    let row = after["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["grantee"] == json!(name))
+        .unwrap();
+    assert_eq!(row["granted"], json!(["SELECT"]));
+    assert!(
+        ipc.call("default_privileges", json!({ "connectionId": id }))
+            .unwrap()
+            .is_array()
+    );
+
+    // A bad privilege is a validation error before anything runs.
+    let bad = ipc
+        .call(
+            "preview_privilege_changes",
+            json!({ "connectionId": id, "changes": [{ "target": target, "grantee": name,
+                    "privilege": "USAGE", "grant": true }] }),
+        )
+        .unwrap_err();
+    assert_eq!(bad["code"], "VALIDATION");
+
+    ipc.call(
+        "apply_privilege_changes",
+        json!({ "connectionId": id, "changes": [{ "target": target, "grantee": name,
+                "privilege": "SELECT", "grant": false }] }),
+    )
+    .unwrap();
+    ipc.call(
+        "apply_role_operation",
+        json!({ "connectionId": id, "operation": { "kind": "drop", "name": name,
+                "reassignTo": null } }),
+    )
+    .unwrap();
+}
+
+#[test]
+fn a_read_only_connection_refuses_role_and_privilege_changes() {
+    if !dev_db_available() {
+        return;
+    }
+    let ipc = setup();
+    let id = dev_connection(&ipc, "read-only");
+    // Looking is fine.
+    ipc.call("list_roles", json!({ "connectionId": id }))
+        .unwrap();
+    for (cmd, args) in [
+        (
+            "apply_role_operation",
+            json!({ "connectionId": id, "operation": { "kind": "drop", "name": "x",
+                    "reassignTo": null } }),
+        ),
+        (
+            "apply_privilege_changes",
+            json!({ "connectionId": id, "changes": [] }),
+        ),
+    ] {
+        let err = ipc.call(cmd, args).unwrap_err();
+        assert_eq!(err["code"], "VALIDATION", "{cmd}");
+        assert!(err["message"].as_str().unwrap().contains("read-only"));
+    }
 }

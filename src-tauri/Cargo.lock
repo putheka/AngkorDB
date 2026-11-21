@@ -66,6 +66,7 @@ dependencies = [
  "futures-util",
  "keyring-core",
  "percent-encoding",
+ "postgres-protocol",
  "robius-authentication",
  "rusqlite",
  "rustls",

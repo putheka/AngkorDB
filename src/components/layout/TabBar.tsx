@@ -1,4 +1,4 @@
-import { ActivityIcon, PlusIcon, SquareTerminalIcon, XIcon } from "lucide-react";
+import { ActivityIcon, PlusIcon, ShieldIcon, SquareTerminalIcon, XIcon } from "lucide-react";
 import { useEffect, useRef, useState, type PointerEvent, type WheelEvent } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -147,7 +147,9 @@ function TabItem({ tab, active, dragging, ...handlers }: TabItemProps) {
       ? OBJECT_ICONS[tab.objectKind]
       : tab.kind === "activity"
         ? ActivityIcon
-        : SquareTerminalIcon;
+        : tab.kind === "roles"
+          ? ShieldIcon
+          : SquareTerminalIcon;
   const title = tabTitle(tab);
 
   return (

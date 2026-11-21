@@ -245,6 +245,12 @@ function CommandResults({
       run: () => useTabsStore.getState().openActivity(),
     },
     {
+      id: "roles",
+      group: "Commands",
+      label: "Open roles and privileges",
+      run: () => useTabsStore.getState().openRoles(),
+    },
+    {
       id: "reload",
       group: "Commands",
       label: "Reload schema and rows",

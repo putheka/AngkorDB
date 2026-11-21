@@ -27,14 +27,30 @@ export interface ActivityTab extends TabBase {
   kind: "activity";
 }
 
-export type Tab = TableTab | QueryTab | ActivityTab;
+/** Roles, their privileges and the default privileges. There is one per connection. */
+export interface RolesTab extends TabBase {
+  kind: "roles";
+}
+
+export type Tab = TableTab | QueryTab | ActivityTab | RolesTab;
 
 export const ACTIVITY_TAB_ID = "activity";
+export const ROLES_TAB_ID = "roles";
 
 export const tableTabId = (schema: string, name: string) => `table:${schema}.${name}`;
 
-export const tabTitle = (tab: Tab) =>
-  tab.kind === "table" ? tab.name : tab.kind === "activity" ? "Activity" : `Query ${tab.number}`;
+export const tabTitle = (tab: Tab) => {
+  switch (tab.kind) {
+    case "table":
+      return tab.name;
+    case "activity":
+      return "Activity";
+    case "roles":
+      return "Roles";
+    case "query":
+      return `Query ${tab.number}`;
+  }
+};
 
 interface TabsState {
   tabs: Tab[];
@@ -49,6 +65,8 @@ interface TabsState {
   newQuery: () => void;
   /** Show the process list: focus its tab, or open one. */
   openActivity: () => void;
+  /** Show roles and privileges: focus its tab, or open one. */
+  openRoles: () => void;
   activate: (id: string) => void;
   /** 0-based; out of range picks the last tab. */
   activateIndex: (index: number) => void;
@@ -105,6 +123,13 @@ export const useTabsStore = create<TabsState>()((set) => ({
     set((state) => {
       if (state.tabs.some((t) => t.id === ACTIVITY_TAB_ID)) return { activeId: ACTIVITY_TAB_ID };
       const tab: ActivityTab = { id: ACTIVITY_TAB_ID, kind: "activity", preview: false };
+      return { tabs: [...state.tabs, tab], activeId: tab.id };
+    }),
+
+  openRoles: () =>
+    set((state) => {
+      if (state.tabs.some((t) => t.id === ROLES_TAB_ID)) return { activeId: ROLES_TAB_ID };
+      const tab: RolesTab = { id: ROLES_TAB_ID, kind: "roles", preview: false };
       return { tabs: [...state.tabs, tab], activeId: tab.id };
     }),
 

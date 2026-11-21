@@ -104,6 +104,23 @@ export const commands = {
 	databaseConnections: (connectionId: string, name: string, options?: InvokeOptions) => __TAURI_INVOKE<number>("database_connections", { connectionId, name }, options),
 	/**  The settings and current value of a sequence. */
 	sequenceInfo: (connectionId: string, schema: string, name: string, options?: InvokeOptions) => __TAURI_INVOKE<SequenceInfo>("sequence_info", { connectionId, schema, name }, options),
+	/**  Every role of the server. */
+	listRoles: (connectionId: string, options?: InvokeOptions) => __TAURI_INVOKE<Role[]>("list_roles", { connectionId }, options),
+	/**  The SQL the change would run. A password is shown as dots. Nothing is executed. */
+	previewRoleOperation: (connectionId: string, operation: RoleOperation, options?: InvokeOptions) => __TAURI_INVOKE<StructurePreview>("preview_role_operation", { connectionId, operation }, options),
+	/**
+	 *  Run the change in one transaction. Refused on a read-only connection. Returns how many
+	 *  statements ran.
+	 */
+	applyRoleOperation: (connectionId: string, operation: RoleOperation, options?: InvokeOptions) => __TAURI_INVOKE<number>("apply_role_operation", { connectionId, operation }, options),
+	/**  Who holds which privileges on a schema, table or sequence. */
+	objectPrivileges: (connectionId: string, target: PrivilegeTarget, options?: InvokeOptions) => __TAURI_INVOKE<PrivilegeMatrix>("object_privileges", { connectionId, target }, options),
+	/**  What new objects start out with, per role and schema (`ALTER DEFAULT PRIVILEGES`). */
+	defaultPrivileges: (connectionId: string, options?: InvokeOptions) => __TAURI_INVOKE<DefaultPrivilege[]>("default_privileges", { connectionId }, options),
+	/**  The `GRANT` and `REVOKE` statements the changes would run. Nothing is executed. */
+	previewPrivilegeChanges: (connectionId: string, changes: PrivilegeChange[], options?: InvokeOptions) => __TAURI_INVOKE<StructurePreview>("preview_privilege_changes", { connectionId, changes }, options),
+	/**  Run the changes in one transaction. Refused on a read-only connection. */
+	applyPrivilegeChanges: (connectionId: string, changes: PrivilegeChange[], options?: InvokeOptions) => __TAURI_INVOKE<number>("apply_privilege_changes", { connectionId, changes }, options),
 	/**  The SQL that `apply_changes` would run, values written in. Nothing is executed. */
 	previewChanges: (connectionId: string, schema: string, table: string, changes: TableChanges, options?: InvokeOptions) => __TAURI_INVOKE<string>("preview_changes", { connectionId, schema, table, changes }, options),
 	/**
@@ -185,6 +202,19 @@ export type AlterColumn = {
 	nullable: boolean | null,
 	defaultValue: DefaultChange | null,
 	comment: CommentChange | null,
+};
+
+export type AlterRole = {
+	name: string,
+	newName: string | null,
+	attributes: RoleAttributes,
+	password: RolePasswordChange,
+	/**
+	 *  What it should be a member of afterwards, and what it was before: the difference is
+	 *  granted and revoked.
+	 */
+	memberOf: string[],
+	previousMemberOf: string[],
 };
 
 /**  What the UI receives when a command fails (ANG-8 D9). Absent details are `null`. */
@@ -403,6 +433,14 @@ export type CreateIndex = {
 	concurrently: boolean,
 };
 
+export type CreateRole = {
+	name: string,
+	attributes: RoleAttributes,
+	/**  `None`: no password (the role can't log in with one). */
+	password: string | null,
+	memberOf: string[],
+};
+
 export type CreateSchema = {
 	name: string,
 	owner: string | null,
@@ -453,6 +491,18 @@ export type DefaultChange =
 /**  `DROP DEFAULT` */
 { kind: "drop" };
 
+/**  One line of `pg_default_acl`: what new objects made by `role` start out with. */
+export type DefaultPrivilege = {
+	role: string,
+	/**  `None`: in every schema. */
+	schema: string | null,
+	/**  `tables`, `sequences`, `functions`, `types` or `schemas`. */
+	objectType: string,
+	/**  `None`: PUBLIC. */
+	grantee: string | null,
+	privileges: string[],
+};
+
 export type DropColumn = {
 	column: string,
 	cascade: boolean,
@@ -480,6 +530,15 @@ export type DropObject = {
 	name: string,
 	/**  Also drop what depends on it (views, foreign keys of other tables). */
 	cascade: boolean,
+};
+
+export type DropRole = {
+	name: string,
+	/**
+	 *  Give what the role owns to this role first (`REASSIGN OWNED`, then `DROP OWNED`: in this
+	 *  database only). Without it PostgreSQL refuses while the role owns anything.
+	 */
+	reassignTo: string | null,
 };
 
 export type DropSchema = {
@@ -717,6 +776,46 @@ export type PlannedStatement = {
 	destructive: boolean,
 };
 
+export type PrivilegeChange = {
+	target: PrivilegeTarget,
+	/**  `None`: PUBLIC. */
+	grantee: string | null,
+	privilege: string,
+	/**  `true`: `GRANT`; `false`: `REVOKE`. */
+	grant: boolean,
+};
+
+export type PrivilegeMatrix = {
+	/**  The columns, in the order PostgreSQL lists them. */
+	privileges: string[],
+	owner: string,
+	/**  PUBLIC first, then every role that is not predefined. */
+	rows: PrivilegeRow[],
+};
+
+/**  What one grantee holds on the target. */
+export type PrivilegeRow = {
+	/**  `None`: PUBLIC, everybody. */
+	grantee: string | null,
+	superuser: boolean,
+	owner: boolean,
+	granted: string[],
+	/**  The ones it may pass on (`WITH GRANT OPTION`). */
+	grantable: string[],
+};
+
+export type PrivilegeTarget = {
+	kind: PrivilegeTargetKind,
+	/**  Left empty for a schema. */
+	schema: string,
+	/**  The schema's name, or the relation's. */
+	name: string,
+};
+
+export type PrivilegeTargetKind = "schema" | 
+/**  A table, view, materialized view, foreign table or partitioned table. */
+"relation" | "sequence";
+
 /**
  *  The result of running a script: one entry per statement that was run. After a statement
  *  fails, the ones behind it are not run, so the last entry is the error.
@@ -756,6 +855,57 @@ export type ResultColumn = {
 	/**  As Postgres prints it: `numeric(20,6)`, `text[]`. */
 	typeName: string,
 };
+
+/**  One role of the server, from `pg_roles`. */
+export type Role = {
+	name: string,
+	canLogin: boolean,
+	superuser: boolean,
+	createDb: boolean,
+	createRole: boolean,
+	inherit: boolean,
+	replication: boolean,
+	bypassRls: boolean,
+	/**  `None`: no limit. */
+	connectionLimit: number | null,
+	/**  When the password stops working; `None` for never. */
+	validUntil: string | null,
+	/**  The roles this one is a member of. */
+	memberOf: string[],
+	/**  A role PostgreSQL ships with (`pg_read_all_data`, …): it can't be changed or dropped. */
+	predefined: boolean,
+	/**  The role the app is connected as. */
+	isCurrent: boolean,
+};
+
+/**
+ *  What a role may do. Written in full whenever a role is altered, so what the form shows is
+ *  what the role ends up with.
+ */
+export type RoleAttributes = {
+	canLogin: boolean,
+	superuser: boolean,
+	createDb: boolean,
+	createRole: boolean,
+	inherit: boolean,
+	replication: boolean,
+	bypassRls: boolean,
+	connectionLimit: number | null,
+	/**  `2027-01-01` or a full timestamp; `None` for never. */
+	validUntil: string | null,
+};
+
+export type RoleOperation = {
+	kind: "create",
+} & CreateRole | {
+	kind: "alter",
+} & AlterRole | {
+	kind: "drop",
+} & DropRole;
+
+export type RolePasswordChange = { kind: "keep" } | { kind: "set"; value: string } | 
+/**  `PASSWORD NULL` */
+{ kind: "clear" };
 
 export type RowCount = {
 	count: number | null,

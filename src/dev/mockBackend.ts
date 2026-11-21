@@ -5,6 +5,9 @@
  */
 import type {
   ConnectionConfig,
+  PrivilegeChange,
+  PrivilegeTarget,
+  RoleOperation,
   ConnectionInfo,
   ParsedConnectionUrl,
   PasswordChange,
@@ -14,6 +17,15 @@ import type {
 } from "@/bindings";
 
 import { mockCancelBackend, mockListActivity, mockTerminateBackend } from "@/dev/mockActivity";
+import {
+  mockDefaultPrivileges,
+  mockMatrix,
+  mockPrivilegeApply,
+  mockPrivilegePreview,
+  mockRoleApply,
+  mockRoleList,
+  mockRolePreview,
+} from "@/dev/mockRoles";
 import { createChangeHandlers } from "@/dev/mockChanges";
 import { createHistoryHandlers } from "@/dev/mockHistory";
 import { createQueryHandlers } from "@/dev/mockQuery";
@@ -235,6 +247,38 @@ const handlers: Record<string, Handler> = {
     requireOpen(String(args["connectionId"]));
     requireWritable(String(args["connectionId"]));
     return mockTerminateBackend(Number(args["pid"]));
+  },
+  list_roles: (args) => {
+    requireOpen(String(args["connectionId"]));
+    return mockRoleList();
+  },
+  preview_role_operation: (args) => {
+    requireOpen(String(args["connectionId"]));
+    return mockRolePreview(args["operation"] as RoleOperation);
+  },
+  apply_role_operation: async (args) => {
+    requireOpen(String(args["connectionId"]));
+    requireWritable(String(args["connectionId"]));
+    await sleep(120);
+    return mockRoleApply(args["operation"] as RoleOperation);
+  },
+  object_privileges: (args) => {
+    requireOpen(String(args["connectionId"]));
+    return mockMatrix(args["target"] as PrivilegeTarget);
+  },
+  default_privileges: (args) => {
+    requireOpen(String(args["connectionId"]));
+    return mockDefaultPrivileges();
+  },
+  preview_privilege_changes: (args) => {
+    requireOpen(String(args["connectionId"]));
+    return mockPrivilegePreview(args["changes"] as PrivilegeChange[]);
+  },
+  apply_privilege_changes: async (args) => {
+    requireOpen(String(args["connectionId"]));
+    requireWritable(String(args["connectionId"]));
+    await sleep(120);
+    return mockPrivilegeApply(args["changes"] as PrivilegeChange[]);
   },
   database_options: (args) => {
     requireOpen(String(args["connectionId"]));
