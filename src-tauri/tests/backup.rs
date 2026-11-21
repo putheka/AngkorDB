@@ -499,6 +499,94 @@ async fn restoring_over_a_database_with_drop_first_puts_the_backup_back() {
 }
 
 #[tokio::test]
+async fn a_sql_script_cannot_run_psql_commands() {
+    let Some(dev) = open_or_skip().await else {
+        return;
+    };
+    let Some(tools) = tools_for(&dev).await else {
+        return;
+    };
+    let dir = TempDir::new().unwrap();
+    let marker = dir.path().join("pwned");
+    let marker_path = marker.display().to_string();
+    // A command on a line of its own, one after a statement on the same line, one that runs
+    // a program through \copy, and a try at leaving restricted mode with a guessed key.
+    let script = dir.path().join("evil.sql");
+    std::fs::write(
+        &script,
+        format!(
+            "CREATE TABLE t (a int);\n\\! touch {marker_path}\nSELECT 1; \\! touch {marker_path}\n\
+             \\copy t from program 'touch {marker_path}'\n\\unrestrict guess\nINSERT INTO t VALUES (1);\n"
+        ),
+    )
+    .unwrap();
+    let copy = name("evil");
+    drop_db(&dev, &copy).await;
+    let (result, status) = restore(
+        &dev,
+        &tools,
+        &restore_of(
+            &script,
+            RestoreTarget::New {
+                database: copy.clone(),
+            },
+        ),
+        endpoint("angkordb_dev"),
+    )
+    .await;
+    assert!(
+        !marker.exists(),
+        "a psql command in the script ran a program"
+    );
+    // psql said no to them, and so the restore failed (and the new database is gone).
+    assert!(result.is_err(), "{status:?}");
+    assert!(
+        status.log.iter().any(|l| l.contains("restricted")),
+        "psql did not say why: {:?}",
+        status.log
+    );
+    let there: i64 = dev
+        .meta()
+        .await
+        .unwrap()
+        .query_one(
+            "SELECT count(*) FROM pg_database WHERE datname = $1",
+            &[&copy],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(there, 0);
+
+    // A script with nothing but SQL, and pg_dump's own restrict lines, restores as usual.
+    let fine = dir.path().join("fine.sql");
+    std::fs::write(
+        &fine,
+        "\\restrict fromdump\nCREATE TABLE ok (a int);\nCOPY public.ok (a) FROM stdin;\n1\n2\n\\.\n\\unrestrict fromdump\n",
+    )
+    .unwrap();
+    let ok = name("fine_script");
+    drop_db(&dev, &ok).await;
+    let (result, _) = restore(
+        &dev,
+        &tools,
+        &restore_of(
+            &fine,
+            RestoreTarget::New {
+                database: ok.clone(),
+            },
+        ),
+        endpoint("angkordb_dev"),
+    )
+    .await;
+    result.unwrap();
+    let restored = open(&ok).await;
+    assert_eq!(counts(&restored).await, [("public.ok".to_owned(), 2)]);
+    restored.close().await;
+    drop_db(&dev, &ok).await;
+}
+
+#[tokio::test]
 async fn cancelling_a_backup_leaves_no_file() {
     let Some(dev) = open_or_skip().await else {
         return;

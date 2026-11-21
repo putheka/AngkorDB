@@ -492,6 +492,13 @@ function Body({
                 {path ?? (mode === "backup" ? "Nothing chosen yet" : "No backup chosen yet")}
               </span>
             </div>
+            {mode === "restore" && path !== null && /\.sql$/i.test(path) && (
+              <p className="text-xs text-muted-foreground">
+                A SQL script is run as it is: it can do anything SQL can do as this user, so restore
+                only one you trust. Commands for <span className="font-mono">psql</span> in it (such
+                as running a program) are refused.
+              </p>
+            )}
             {problem && (
               <p role="alert" className="text-xs font-medium text-destructive">
                 {problem}

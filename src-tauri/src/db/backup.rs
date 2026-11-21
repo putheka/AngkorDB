@@ -424,12 +424,14 @@ pub fn restore_args(
                     "A SQL script is run as it is: \"drop first\" only works for custom, directory and tar backups.",
                 ));
             }
+            // The script is not given to psql as a file: it is fed through its input behind
+            // `\restrict` (see `ScriptFeed`), so that nothing in it can run a psql command.
+            let _ = path;
             Ok(vec![
                 "--no-password".into(),
                 "--no-psqlrc".into(),
                 format!("--dbname={database}"),
-                "--file".into(),
-                path.display().to_string(),
+                "--file=-".into(),
             ])
         }
         BackupKind::Archive => {
@@ -523,11 +525,17 @@ impl ToolJob {
     }
 
     fn line(&self, text: String) {
-        let complaint = text.starts_with("pg_restore: error:")
+        // A parallel restore prints where an error happened as lines of their own, which the
+        // workers' output can garble; they say nothing about what went wrong.
+        let context = text.contains("while PROCESSING TOC") || text.contains("from TOC entry");
+        let complaint = !context
+            && (text.starts_with("pg_restore: error:")
             || text.starts_with("pg_dump: error:")
             || text.starts_with("Command was:")
             || text.contains("ERROR:")
-            || text.contains("FATAL:");
+            || text.contains("FATAL:")
+            // psql: "psql:<stdin>:3: error: backslash commands are restricted…"
+            || (text.starts_with("psql:") && text.contains("error:")));
         if complaint {
             let mut problems = self.problems.lock().unwrap_or_else(|e| e.into_inner());
             if problems.len() < 100 {
@@ -622,6 +630,7 @@ async fn run_program(
     program: &Path,
     args: &[String],
     env: &[(String, String)],
+    feed: Option<&Path>,
 ) -> AppResult<Exit> {
     let name = program
         .file_name()
@@ -630,12 +639,22 @@ async fn run_program(
     let mut child = Command::new(program)
         .args(args)
         .envs(env.iter().map(|(k, v)| (k, v)))
-        .stdin(Stdio::null())
+        .stdin(if feed.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
         .map_err(|e| AppError::Internal(format!("could not start {name}: {e}")))?;
+
+    // A SQL script goes in through the program's input, behind `\restrict`.
+    let feeder = match (feed, child.stdin.take()) {
+        (Some(path), Some(stdin)) => Some(tokio::spawn(feed_script(path.to_path_buf(), stdin))),
+        _ => None,
+    };
 
     // What the program prints, line by line, into the job's log.
     let tail = Arc::new(StdMutex::new(Vec::<String>::new()));
@@ -669,6 +688,9 @@ async fn run_program(
             }
         }
     };
+    if let Some(feeder) = feeder {
+        feeder.abort();
+    }
     // Let the readers take the last lines.
     for reader in readers {
         let _ = tokio::time::timeout(Duration::from_secs(2), reader).await;
@@ -750,6 +772,99 @@ fn complaint(job: &ToolJob, fallback: String) -> String {
     }
 }
 
+/// What `psql` is given for a SQL script: first `\restrict <key>` with a key made here, then the
+/// script. In restricted mode `psql` refuses every meta-command (`\!`, `\copy … program`, `\i`,
+/// `\gset`, wherever on a line they are) except `\unrestrict` with that key, which the script
+/// cannot know. `pg_dump` itself writes `\restrict` and `\unrestrict` lines with its own key
+/// into a plain backup; those are left out (outside of `COPY` data, where a line is only data).
+pub struct ScriptFilter {
+    in_copy: bool,
+}
+
+impl ScriptFilter {
+    pub fn new() -> Self {
+        Self { in_copy: false }
+    }
+
+    /// `true`: pass the line on.
+    pub fn keep(&mut self, line: &[u8]) -> bool {
+        let text = String::from_utf8_lossy(line);
+        let text = text.trim_end_matches(['\n', '\r']);
+        if self.in_copy {
+            if text == "\\." {
+                self.in_copy = false;
+            }
+            return true;
+        }
+        if text.starts_with("COPY ") && text.ends_with("FROM stdin;") {
+            self.in_copy = true;
+            return true;
+        }
+        !(text.starts_with("\\restrict ") || text.starts_with("\\unrestrict "))
+    }
+}
+
+impl Default for ScriptFilter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Write the script to `psql`'s input: our `\restrict` line, then the file, line by line.
+async fn feed_script(path: PathBuf, mut stdin: tokio::process::ChildStdin) {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+    let Ok(file) = tokio::fs::File::open(&path).await else {
+        return;
+    };
+    let key = uuid::Uuid::new_v4().simple().to_string();
+    if stdin
+        .write_all(format!("\\restrict {key}\n").as_bytes())
+        .await
+        .is_err()
+    {
+        return;
+    }
+    let mut reader = BufReader::with_capacity(1 << 20, file);
+    let mut filter = ScriptFilter::new();
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        match reader.read_until(b'\n', &mut line).await {
+            Ok(0) | Err(_) => break,
+            Ok(_) => {
+                if filter.keep(&line) && stdin.write_all(&line).await.is_err() {
+                    return; // the program ended: nothing more to say to it
+                }
+            }
+        }
+    }
+    let _ = stdin.shutdown().await;
+}
+
+/// Does this `psql` have restricted mode (CVE-2025-8714)? It came with 13.22, 14.19, 15.14,
+/// 16.10, 17.6 and 18.
+pub fn supports_restrict(tools: &PgTools) -> bool {
+    let minor: u32 = tools
+        .version
+        .split('.')
+        .nth(1)
+        .map(|m| {
+            m.chars()
+                .take_while(char::is_ascii_digit)
+                .collect::<String>()
+        })
+        .and_then(|m| m.parse().ok())
+        .unwrap_or(0);
+    match tools.major {
+        13 => minor >= 22,
+        14 => minor >= 19,
+        15 => minor >= 14,
+        16 => minor >= 10,
+        17 => minor >= 6,
+        major => major >= 18,
+    }
+}
+
 /// `<path>.part`
 fn part_of(path: &Path) -> PathBuf {
     let mut name = path.as_os_str().to_owned();
@@ -808,6 +923,7 @@ pub async fn run_backup(
         &Path::new(&tools.dir).join("pg_dump"),
         &args,
         &endpoint.env(),
+        None,
     )
     .await;
     match outcome {
@@ -856,6 +972,13 @@ pub async fn run_restore(
         RestoreTarget::New { database } => (database.as_str(), true),
     };
     let endpoint = endpoint.with_database(database)?;
+    if kind == BackupKind::Script && !supports_restrict(tools) {
+        return Err(invalid(format!(
+            "psql {} can't run a SQL script safely: a script can carry psql commands that run programs. \
+             Update PostgreSQL (brew upgrade postgresql@{}) or restore a custom, directory or tar backup.",
+            tools.version, tools.major
+        )));
+    }
     let args = restore_args(request, kind, database, &path)?;
     let program = match kind {
         BackupKind::Archive => "pg_restore",
@@ -873,6 +996,7 @@ pub async fn run_restore(
         &Path::new(&tools.dir).join(program),
         &args,
         &endpoint.env(),
+        (kind == BackupKind::Script).then_some(path.as_path()),
     )
     .await;
     let undo = || async {
@@ -1156,6 +1280,51 @@ mod tests {
         assert!(!only_known_harmless(&[
             "psql:x.sql:3: ERROR:  syntax error at or near \"THIS\"".to_owned()
         ]));
+    }
+
+    #[test]
+    fn a_script_is_filtered_and_psql_commands_are_left_to_restricted_mode() {
+        let mut filter = ScriptFilter::new();
+        let script = "\\restrict abc123\nSET x = 1;\nCOPY public.t (a) FROM stdin;\n\\N\n\\restrict not-a-command-but-data\n\\.\nSELECT 1;\n\\unrestrict abc123\n";
+        let kept: Vec<&str> = script
+            .split_inclusive('\n')
+            .filter(|l| filter.keep(l.as_bytes()))
+            .collect();
+        assert_eq!(
+            kept,
+            [
+                "SET x = 1;\n",
+                "COPY public.t (a) FROM stdin;\n",
+                "\\N\n",
+                "\\restrict not-a-command-but-data\n", // data inside COPY stays
+                "\\.\n",
+                "SELECT 1;\n",
+            ]
+        );
+        // A real meta-command is not removed here: restricted mode refuses it.
+        let mut filter = ScriptFilter::new();
+        assert!(filter.keep(b"\\! touch /tmp/x\n"));
+        assert!(filter.keep(b"SELECT 1 \\gset\n"));
+    }
+
+    #[test]
+    fn restricted_mode_is_needed_and_only_some_versions_have_it() {
+        let v = |major: u32, version: &str| PgTools {
+            dir: String::new(),
+            version: version.into(),
+            major,
+            source: String::new(),
+        };
+        assert!(supports_restrict(&v(17, "17.10")));
+        assert!(supports_restrict(&v(17, "17.6")));
+        assert!(!supports_restrict(&v(17, "17.5")));
+        assert!(supports_restrict(&v(16, "16.10")));
+        assert!(!supports_restrict(&v(16, "16.9")));
+        assert!(supports_restrict(&v(18, "18.0")));
+        assert!(supports_restrict(&v(18, "18devel")));
+        assert!(!supports_restrict(&v(15, "15.13")));
+        assert!(supports_restrict(&v(15, "15.14")));
+        assert!(!supports_restrict(&v(12, "12.99")));
     }
 
     #[test]
