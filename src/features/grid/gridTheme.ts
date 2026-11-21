@@ -1,5 +1,8 @@
 import type { Theme } from "@glideapps/glide-data-grid";
-import { useMemo, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+
+import { gridMetrics, type AppearancePrefs } from "@/features/appearance/prefs";
+import { useAppearance } from "@/stores/appearance";
 
 let probe: CanvasRenderingContext2D | null = null;
 
@@ -28,22 +31,35 @@ function token(name: string): string {
   return toRgba(resolved);
 }
 
-const BLUE = "rgb(59, 130, 246)";
-const FONT = '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif';
+const FONTS = {
+  system: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif',
+  mono: '"SF Mono", ui-monospace, Menlo, monospace',
+} as const;
+
+/** `rgba(r, g, b, a)` with another alpha. */
+function withAlpha(rgba: string, alpha: number): string {
+  const [r = "0", g = "0", b = "0"] = rgba.match(/[\d.]+/g) ?? [];
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
 
 /** The grid's colors and fonts from our theme tokens, so it matches the rest of the window. */
-export function buildGridTheme(): Partial<Theme> {
+export function buildGridTheme(
+  prefs: Pick<AppearancePrefs, "density" | "gridFont" | "gridFontSize">,
+): Partial<Theme> {
   const background = token("--background");
   const foreground = token("--foreground");
   const muted = token("--muted-foreground");
   const mutedBackground = token("--muted");
   const border = token("--border");
   const accent = token("--accent");
+  // The macOS accent color (blue where the system doesn't say).
+  const system = token("--app-accent");
+  const size = prefs.gridFontSize;
 
   return {
-    accentColor: BLUE,
+    accentColor: system,
     accentFg: "#fff",
-    accentLight: "rgba(59, 130, 246, 0.16)",
+    accentLight: withAlpha(system, 0.16),
     textDark: foreground,
     textMedium: muted,
     textLight: muted,
@@ -58,12 +74,12 @@ export function buildGridTheme(): Partial<Theme> {
     fgIconHeader: foreground,
     borderColor: border,
     horizontalBorderColor: border,
-    headerFontStyle: "600 12px",
-    baseFontStyle: "13px",
-    markerFontStyle: "11px",
-    fontFamily: FONT,
-    editorFontSize: "13px",
-    cellHorizontalPadding: 10,
+    headerFontStyle: `600 ${size - 1}px`,
+    baseFontStyle: `${size}px`,
+    markerFontStyle: `${size - 2}px`,
+    fontFamily: FONTS[prefs.gridFont],
+    editorFontSize: `${size}px`,
+    cellHorizontalPadding: gridMetrics(prefs).cellPadding,
   };
 }
 
@@ -75,10 +91,28 @@ function subscribeToTheme(onChange: () => void) {
 
 const isDark = () => document.documentElement.classList.contains("dark");
 
-/** Grid theme that follows light/dark mode. */
+/** The window came to the front: the person may have changed the system accent color meanwhile. */
+function useAccentTick(): number {
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const bump = () => setTick((t) => t + 1);
+    window.addEventListener("focus", bump);
+    return () => window.removeEventListener("focus", bump);
+  }, []);
+  return tick;
+}
+
+/** Grid theme that follows light/dark mode, the accent color, the font and the density. */
 export function useGridTheme(): Partial<Theme> {
   const dark = useSyncExternalStore(subscribeToTheme, isDark);
-  // `dark` is not read inside, but the tokens it resolves change with it.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  return useMemo(() => buildGridTheme(), [dark]);
+  const density = useAppearance((s) => s.density);
+  const gridFont = useAppearance((s) => s.gridFont);
+  const gridFontSize = useAppearance((s) => s.gridFontSize);
+  const accentTick = useAccentTick();
+  return useMemo(() => {
+    // Not read, but the tokens `buildGridTheme` resolves change with them.
+    void dark;
+    void accentTick;
+    return buildGridTheme({ density, gridFont, gridFontSize });
+  }, [dark, accentTick, density, gridFont, gridFontSize]);
 }

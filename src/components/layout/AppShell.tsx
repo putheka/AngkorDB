@@ -6,6 +6,7 @@ import { StatusBar } from "@/components/layout/StatusBar";
 import { TabBar } from "@/components/layout/TabBar";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { AppearanceMenu } from "@/features/appearance/AppearanceMenu";
 import { useTabShortcuts } from "@/features/tabs/useTabShortcuts";
 import { useWorkspacePersistence } from "@/features/workspace/useWorkspacePersistence";
 import { refreshData } from "@/features/grid/useTableData";
@@ -77,6 +78,9 @@ export function AppShell() {
         )}
         {/* Not a click target, so a press on the title still drags the window. */}
         <span className="pointer-events-none">AngkorDB</span>
+        <div className="ml-auto">
+          <AppearanceMenu />
+        </div>
       </header>
 
       <div className="flex min-h-0 flex-1">

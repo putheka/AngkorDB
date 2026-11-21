@@ -170,6 +170,20 @@ pub fn run() {
                     .with_workspaces(workspaces),
             );
 
+            // The sidebar of macOS apps lets the desktop show through (ANG-51). The page paints
+            // everything else opaque; the sidebar goes translucent unless the person turned it off.
+            #[cfg(target_os = "macos")]
+            if let Some(main) = app.get_webview_window("main")
+                && let Err(e) = window_vibrancy::apply_vibrancy(
+                    &main,
+                    window_vibrancy::NSVisualEffectMaterial::Sidebar,
+                    None,
+                    None,
+                )
+            {
+                eprintln!("no window vibrancy: {e}");
+            }
+
             // What commands may not do themselves: touch the window and quit (ANG-29).
             let window = app.handle().clone();
             let quitter = app.handle().clone();

@@ -56,12 +56,12 @@ import {
   type RowKey,
 } from "@/features/grid/clipboard/formats";
 import { rowsFromText, type PasteColumn } from "@/features/grid/clipboard/parse";
+import { gridMetrics } from "@/features/appearance/prefs";
 import { errorMessage } from "@/lib/errors";
+import { useAppearance } from "@/stores/appearance";
 
 /** The row-number column is column 0 of the grid's own coordinates; ours start after it. */
 const ROW_MARKER_OFFSET = 1;
-const ROW_HEIGHT = 28;
-const HEADER_HEIGHT = 32;
 
 const arrow = (path: string) => (props: { fgColor: string }) =>
   `<svg width="20" height="20" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg"><path d="${path}" fill="${props.fgColor}"/></svg>`;
@@ -192,6 +192,9 @@ export function DataGrid({
   copyTarget,
 }: DataGridProps) {
   const theme = useGridTheme();
+  const density = useAppearance((s) => s.density);
+  const gridFontSize = useAppearance((s) => s.gridFontSize);
+  const { rowHeight, headerHeight } = gridMetrics({ density, gridFontSize });
   const visible = useMemo(() => visibleColumns(columns, layout), [columns, layout]);
   const [menu, setMenu] = useState<MenuTarget | null>(null);
   const [editor, setEditor] = useState<EditorState | null>(null);
@@ -698,8 +701,8 @@ export function DataGrid({
             }}
             theme={theme}
             headerIcons={HEADER_ICONS}
-            rowHeight={ROW_HEIGHT}
-            headerHeight={HEADER_HEIGHT}
+            rowHeight={rowHeight}
+            headerHeight={headerHeight}
             rowMarkers={{ kind: "clickable-number", startIndex: firstRowNumber }}
             getCellsForSelection={true}
             onPaste={false}

@@ -36,14 +36,14 @@ export const editorTheme = EditorView.theme({
   ".cm-activeLine": { backgroundColor: "color-mix(in oklab, var(--accent) 45%, transparent)" },
   ".cm-activeLineGutter": { backgroundColor: "transparent", color: "var(--foreground)" },
   ".cm-selectionBackground": {
-    backgroundColor: "color-mix(in oklab, rgb(59 130 246) 28%, transparent) !important",
+    backgroundColor: "color-mix(in oklab, var(--app-accent) 28%, transparent) !important",
   },
   "&.cm-focused .cm-selectionBackground": {
-    backgroundColor: "color-mix(in oklab, rgb(59 130 246) 38%, transparent) !important",
+    backgroundColor: "color-mix(in oklab, var(--app-accent) 38%, transparent) !important",
   },
   ".cm-matchingBracket": {
-    backgroundColor: "color-mix(in oklab, rgb(59 130 246) 25%, transparent)",
-    outline: "1px solid color-mix(in oklab, rgb(59 130 246) 50%, transparent)",
+    backgroundColor: "color-mix(in oklab, var(--app-accent) 25%, transparent)",
+    outline: "1px solid color-mix(in oklab, var(--app-accent) 50%, transparent)",
   },
   // The mode line of vim mode (`-- INSERT --`, `:` commands).
   ".cm-vim-panel": {

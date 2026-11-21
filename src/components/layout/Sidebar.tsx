@@ -23,6 +23,7 @@ export function Sidebar() {
 
   return (
     <aside
+      data-sidebar
       style={{ width }}
       className="relative flex shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground"
     >
