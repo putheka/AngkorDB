@@ -201,7 +201,7 @@ fn is_canceled(error: &tokio_postgres::Error) -> bool {
 }
 
 /// The first word of the statement in capitals (`UPDATE`, `CREATE`), skipping comments.
-fn command_word(text: &str) -> String {
+pub(crate) fn command_word(text: &str) -> String {
     let mut rest = text;
     loop {
         rest = rest.trim_start();

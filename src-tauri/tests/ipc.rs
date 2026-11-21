@@ -392,6 +392,10 @@ fn schema_commands_need_an_open_connection() {
             "cancel_query",
             json!({ "connectionId": "nope", "tabId": "query:1" }),
         ),
+        (
+            "explain_query",
+            json!({ "connectionId": "nope", "tabId": "query:1", "sql": "SELECT 1", "analyze": false }),
+        ),
     ] {
         let err = ipc.call(cmd, args).unwrap_err();
         assert_eq!(err["code"], "NOT_CONNECTED", "{cmd}: {err}");
@@ -1047,4 +1051,73 @@ fn running_queries_is_recorded_in_the_history_through_ipc() {
     assert_eq!(entries[2]["connectionId"], id);
     assert!(entries[2]["durationMs"].is_u64());
     assert!(entries[2]["ranAt"].as_f64().unwrap() > 1.0e12);
+}
+
+#[test]
+fn explain_through_ipc() {
+    if !dev_db_available() {
+        return;
+    }
+    let ipc = setup();
+    let mut form = config("Dev", "localhost", 54329);
+    form["user"] = json!("angkor");
+    form["database"] = json!("angkordb_dev");
+    let saved = ipc
+        .call(
+            "save_connection",
+            json!({ "config": form, "password": { "kind": "set", "value": "angkor" } }),
+        )
+        .unwrap();
+    let id = saved["id"].as_str().unwrap();
+    ipc.call("connect_connection", json!({ "id": id })).unwrap();
+
+    // The shape the plan view reads.
+    let plain = ipc
+        .call(
+            "explain_query",
+            json!({ "connectionId": id, "tabId": "query:1",
+                    "sql": "SELECT * FROM public.users WHERE id = 1", "analyze": false }),
+        )
+        .unwrap();
+    assert_eq!(plain["outcome"]["kind"], "plan");
+    let plan: Value = serde_json::from_str(plain["outcome"]["json"].as_str().unwrap()).unwrap();
+    assert!(plan[0]["Plan"]["Node Type"].is_string());
+    assert_eq!(plain["analyzed"], false);
+    assert_eq!(plain["rolledBack"], false);
+    assert_eq!(plain["statementKind"], "read");
+    assert_eq!(plain["command"], "SELECT");
+    assert!(plain["durationMs"].is_u64());
+
+    let analyzed = ipc
+        .call(
+            "explain_query",
+            json!({ "connectionId": id, "tabId": "query:1",
+                    "sql": "UPDATE public.short_codes SET label = label", "analyze": true }),
+        )
+        .unwrap();
+    assert_eq!(analyzed["analyzed"], true);
+    assert_eq!(analyzed["rolledBack"], true);
+    assert_eq!(analyzed["statementKind"], "write");
+    assert_eq!(analyzed["command"], "UPDATE");
+
+    // A server error stays in the result, with where it is in the text.
+    let failed = ipc
+        .call(
+            "explain_query",
+            json!({ "connectionId": id, "tabId": "query:1",
+                    "sql": "SELECT * FROM no_such_table", "analyze": false }),
+        )
+        .unwrap();
+    assert_eq!(failed["outcome"]["kind"], "error");
+    assert_eq!(failed["outcome"]["error"]["pgCode"], "42P01");
+    assert_eq!(failed["outcome"]["offset"], 14);
+
+    // Not exactly one statement: the command itself fails, with a message to show.
+    let two = ipc
+        .call(
+            "explain_query",
+            json!({ "connectionId": id, "tabId": "query:1", "sql": "SELECT 1; SELECT 2", "analyze": false }),
+        )
+        .unwrap_err();
+    assert_eq!(two["code"], "VALIDATION");
 }

@@ -73,4 +73,6 @@ test("tabs compare by kind and identity", () => {
   assert.ok(!sameTab({ kind: "result", index: 1 }, { kind: "result", index: 2 }));
   assert.ok(!sameTab({ kind: "pinned", id: 1 }, { kind: "result", index: 1 }));
   assert.ok(sameTab({ kind: "pinned", id: 7 }, { kind: "pinned", id: 7 }));
+  assert.ok(sameTab({ kind: "plan" }, { kind: "plan" }));
+  assert.ok(!sameTab({ kind: "plan" }, { kind: "messages" }));
 });

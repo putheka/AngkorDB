@@ -2,8 +2,9 @@
 
 use tauri::State;
 
-use crate::db::{query, script};
+use crate::db::{explain, query, script};
 use crate::error::AppResult;
+use crate::models::explain::ExplainRun;
 use crate::models::query::{QueryRun, StatementOutcome, TextRange};
 use crate::state::AppState;
 use crate::storage::history;
@@ -47,6 +48,21 @@ fn remember(state: &AppState, connection_id: &str, sql: &str, run: &QueryRun) {
             eprintln!("could not record query history: {error}");
         }
     }
+}
+
+/// `EXPLAIN` the one statement in `sql` on the tab's connection. With `analyze` the statement
+/// is run (`EXPLAIN (ANALYZE, BUFFERS)`) inside a transaction that is rolled back.
+#[tauri::command]
+#[specta::specta]
+pub async fn explain_query(
+    state: State<'_, AppState>,
+    connection_id: String,
+    tab_id: String,
+    sql: String,
+    analyze: bool,
+) -> AppResult<ExplainRun> {
+    let session = state.session(&connection_id).await?;
+    explain::explain(&session, &tab_id, &sql, analyze).await
 }
 
 /// Ask the server to stop what the tab is running. `false` if the tab has no connection yet.

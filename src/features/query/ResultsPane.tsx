@@ -5,7 +5,8 @@ import type { Notice, SortSpec, StatementOutcome, StatementResult } from "@/bind
 import { Button } from "@/components/ui/button";
 import { EMPTY_LAYOUT } from "@/features/grid/columns";
 import { DataGrid } from "@/features/grid/DataGrid";
-import type { LastRun, PinnedResult } from "@/features/query/queryViews";
+import { PlanView } from "@/features/query/plan/PlanView";
+import type { LastRun, PinnedResult, PlanRun } from "@/features/query/queryViews";
 import { messageCount, resultsOf, sameTab, type ResultTab } from "@/features/query/resultTabs";
 import { sortRows } from "@/features/query/sortRows";
 import { summarize } from "@/features/query/summarize";
@@ -19,6 +20,8 @@ type RowsOutcome = Extract<StatementOutcome, { kind: "rows" }>;
 interface ResultsPaneProps {
   run: LastRun | null;
   pinned: PinnedResult[];
+  /** The plan of the last Explain / Analyze. */
+  plan: PlanRun | null;
   tab: ResultTab;
   running: boolean;
   /** The run couldn't take place at all. */
@@ -27,8 +30,11 @@ interface ResultsPaneProps {
   /** Keep the rows of statement `index` of the last run. */
   onPin: (index: number) => void;
   onUnpin: (id: number) => void;
+  onClosePlan: () => void;
   /** Put the editor cursor on the error of statement `index`. */
   onGoToError: (index: number) => void;
+  /** Put the editor cursor on the error of the plan. */
+  onGoToPlanError: () => void;
 }
 
 /**
@@ -37,7 +43,20 @@ interface ResultsPaneProps {
  * pinned from earlier runs.
  */
 export function ResultsPane(props: ResultsPaneProps) {
-  const { run, pinned, tab, running, runError, onTab, onPin, onUnpin, onGoToError } = props;
+  const {
+    run,
+    pinned,
+    plan,
+    tab,
+    running,
+    runError,
+    onTab,
+    onPin,
+    onUnpin,
+    onClosePlan,
+    onGoToError,
+    onGoToPlanError,
+  } = props;
 
   if (runError) {
     return (
@@ -46,7 +65,7 @@ export function ResultsPane(props: ResultsPaneProps) {
       </div>
     );
   }
-  if (!run && pinned.length === 0) {
+  if (!run && pinned.length === 0 && !plan) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-1 p-6 text-center text-sm text-muted-foreground">
         <p>{running ? "Running…" : "Results appear here."}</p>
@@ -65,7 +84,9 @@ export function ResultsPane(props: ResultsPaneProps) {
   const messages = messageCount(statements);
 
   let body;
-  if (tab.kind === "pinned") {
+  if (tab.kind === "plan") {
+    body = plan ? <PlanView key={plan.id} run={plan.run} onGoToError={onGoToPlanError} /> : null;
+  } else if (tab.kind === "pinned") {
     const kept = pinned.find((p) => p.id === tab.id);
     body = kept ? (
       <RowsResult
@@ -120,6 +141,17 @@ export function ResultsPane(props: ResultsPaneProps) {
             )}
           </TabButton>
         )}
+        {plan && (
+          <TabButton
+            selected={tab.kind === "plan"}
+            failed={plan.run.outcome.kind === "error"}
+            onClick={() => onTab({ kind: "plan" })}
+            onClose={onClosePlan}
+            closeLabel="Close plan"
+          >
+            {plan.analyze ? "Analyze" : "Explain"}
+          </TabButton>
+        )}
         {pinned.map((kept) => (
           <TabButton
             key={`pinned:${kept.id}`}
@@ -143,6 +175,7 @@ function TabButton({
   failed,
   onClick,
   onClose,
+  closeLabel = "Unpin result",
   title,
   children,
 }: {
@@ -150,6 +183,7 @@ function TabButton({
   failed?: boolean;
   onClick: () => void;
   onClose?: () => void;
+  closeLabel?: string;
   title?: string;
   children: React.ReactNode;
 }) {
@@ -176,7 +210,7 @@ function TabButton({
       {onClose && (
         <button
           type="button"
-          aria-label="Unpin result"
+          aria-label={closeLabel}
           onClick={onClose}
           className="rounded-r-md px-1 py-0.5 opacity-60 hover:opacity-100"
         >

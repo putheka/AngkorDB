@@ -64,6 +64,7 @@ pub fn specta_builder<R: tauri::Runtime>() -> Builder<R> {
             commands::changes::preview_changes,
             commands::changes::apply_changes,
             commands::query::run_query,
+            commands::query::explain_query,
             commands::query::cancel_query,
             commands::query::close_query_tab,
             commands::query::statement_at,

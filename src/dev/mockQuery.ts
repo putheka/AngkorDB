@@ -5,6 +5,7 @@
  * DDL give plausible results; anything else is a syntax error at its first word.
  */
 import type {
+  ExplainRun,
   QueryRun,
   StatementClass,
   StatementOutcome,
@@ -12,6 +13,7 @@ import type {
   TextRange,
 } from "@/bindings";
 import { recordHistory } from "@/dev/mockHistory";
+import { BIG_SCAN_PLAN, JOIN_PLAN, UPDATE_PLAN, planWithoutActuals } from "@/dev/planFixtures";
 import { mockTableData } from "@/dev/mockRows";
 import { appError, sleep, type Handler } from "@/dev/mockSupport";
 
@@ -295,6 +297,71 @@ export function createQueryHandlers(requireOpen: (id: string) => void): Record<s
         if (outcome.kind === "error") break;
       }
       return { statements, durationMs: Date.now() - started };
+    },
+
+    explain_query: async (args): Promise<ExplainRun> => {
+      requireOpen(String(args["connectionId"]));
+      const sql = String(args["sql"]);
+      const analyze = args["analyze"] === true;
+      const spans = splitStatements(sql);
+      const span = spans[0];
+      if (!span) {
+        throw appError(
+          "VALIDATION",
+          "There is no SQL to explain: the editor is empty or only has comments.",
+        );
+      }
+      if (spans.length > 1) {
+        throw appError(
+          "VALIDATION",
+          "Explain works on one statement at a time. Put the cursor in the statement, or select it.",
+        );
+      }
+      const text = sql.slice(span.start, span.end);
+      const kind = classifyStatement(sql, span);
+      if (/^\s*explain\b/i.test(text)) {
+        throw appError(
+          "VALIDATION",
+          "This statement already starts with EXPLAIN. Remove it: the Explain buttons add it.",
+        );
+      }
+      await sleep(analyze ? 120 : 40);
+
+      const missing = /no_such_table/i.exec(text);
+      if (missing) {
+        return {
+          outcome: {
+            kind: "error",
+            error: appError("POSTGRES", 'relation "no_such_table" does not exist', {
+              pgCode: "42P01",
+              position: missing.index + 1,
+            }),
+            offset: span.start + missing.index,
+          },
+          durationMs: 3,
+          analyzed: analyze,
+          statementKind: kind.kind,
+          command: kind.command,
+          rolledBack: analyze,
+        };
+      }
+
+      const plan = /metrics_big/i.test(text)
+        ? BIG_SCAN_PLAN
+        : kind.kind !== "read"
+          ? UPDATE_PLAN
+          : JOIN_PLAN;
+      return {
+        outcome: {
+          kind: "plan",
+          json: JSON.stringify(analyze ? plan : planWithoutActuals(plan)),
+        },
+        durationMs: analyze ? 24 : 2,
+        analyzed: analyze,
+        statementKind: kind.kind,
+        command: kind.command,
+        rolledBack: analyze,
+      };
     },
 
     cancel_query: (args) => {

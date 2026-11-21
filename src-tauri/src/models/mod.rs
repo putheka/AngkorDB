@@ -2,6 +2,7 @@
 
 pub mod changes;
 pub mod connection;
+pub mod explain;
 pub mod history;
 pub mod query;
 pub mod rows;

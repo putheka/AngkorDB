@@ -6,11 +6,14 @@ export type ResultTab =
   /** The result of statement `index` of the last run: only statements that returned rows have one. */
   | { kind: "result"; index: number }
   /** A result kept from an earlier run. */
-  | { kind: "pinned"; id: number };
+  | { kind: "pinned"; id: number }
+  /** The plan of the last Explain / Analyze. */
+  | { kind: "plan" };
 
 export const sameTab = (a: ResultTab, b: ResultTab): boolean =>
   a.kind === b.kind &&
   (a.kind === "messages" ||
+    a.kind === "plan" ||
     (a.kind === "result" && b.kind === "result" && a.index === b.index) ||
     (a.kind === "pinned" && b.kind === "pinned" && a.id === b.id));
 

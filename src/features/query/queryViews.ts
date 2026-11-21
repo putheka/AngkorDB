@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import { create } from "zustand";
 
-import type { QueryRun, StatementOutcome } from "@/bindings";
+import type { ExplainRun, QueryRun, StatementOutcome } from "@/bindings";
 import { pickTab, type ResultTab } from "@/features/query/resultTabs";
 import { commands } from "@/lib/ipc";
 import { useSessionStore } from "@/stores/session";
@@ -29,6 +29,16 @@ export interface PinnedResult {
   sql: string;
 }
 
+/** The last Explain / Analyze of a query tab. */
+export interface PlanRun {
+  /** Changes with every run. */
+  id: number;
+  analyze: boolean;
+  /** Offset in the editor of the statement that was explained (for pointing at an error). */
+  base: number;
+  run: ExplainRun;
+}
+
 /** Everything about one query tab that must survive switching to another tab and back. */
 export interface QueryView {
   text: string;
@@ -41,6 +51,8 @@ export interface QueryView {
   lastRun: LastRun | null;
   /** Which result is in front. */
   resultTab: ResultTab;
+  /** The plan of the last Explain / Analyze. */
+  plan: PlanRun | null;
   /** Results kept across runs. */
   pinned: PinnedResult[];
   /** Results below the editor, or to its right. */
@@ -61,6 +73,7 @@ export const DEFAULT_QUERY_VIEW: QueryView = {
   startedAt: null,
   lastRun: null,
   resultTab: pickTab([]),
+  plan: null,
   pinned: [],
   layout: "below",
   editorWidth: 560,

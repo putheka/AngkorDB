@@ -73,6 +73,11 @@ export const commands = {
 	 *  statement that fails ends the run and is reported as the last result.
 	 */
 	runQuery: (connectionId: string, tabId: string, sql: string, options?: InvokeOptions) => __TAURI_INVOKE<QueryRun>("run_query", { connectionId, tabId, sql }, options),
+	/**
+	 *  `EXPLAIN` the one statement in `sql` on the tab's connection. With `analyze` the statement
+	 *  is run (`EXPLAIN (ANALYZE, BUFFERS)`) inside a transaction that is rolled back.
+	 */
+	explainQuery: (connectionId: string, tabId: string, sql: string, analyze: boolean, options?: InvokeOptions) => __TAURI_INVOKE<ExplainRun>("explain_query", { connectionId, tabId, sql, analyze }, options),
 	/**  Ask the server to stop what the tab is running. `false` if the tab has no connection yet. */
 	cancelQuery: (connectionId: string, tabId: string, options?: InvokeOptions) => __TAURI_INVOKE<boolean>("cancel_query", { connectionId, tabId }, options),
 	/**  Close the tab's connection. Nothing to do if the connection is already gone. */
@@ -258,6 +263,29 @@ export type DbObject = {
 	rowEstimate: number | null,
 	/**  Functions: `(arguments) → result type`. */
 	detail: string | null,
+};
+
+/**  What `EXPLAIN` gave back. */
+export type ExplainOutcome = 
+/**  The plan as the server wrote it: `EXPLAIN (FORMAT JSON …)`'s single value. */
+{ kind: "plan"; json: string } | { kind: "error"; error: AppError; 
+/**  Where the server pointed, as an offset into the submitted text (UTF-16 units). */
+offset: number | null };
+
+export type ExplainRun = {
+	outcome: ExplainOutcome,
+	durationMs: number,
+	/**  `EXPLAIN ANALYZE`: the statement really ran. */
+	analyzed: boolean,
+	/**  What the explained statement does to the database. */
+	statementKind: StatementKind,
+	/**  `UPDATE`, `SELECT`, … */
+	command: string,
+	/**
+	 *  The statement ran inside a transaction (or savepoint) that was rolled back afterwards, so
+	 *  whatever it changed is undone. Sequences and other non-transactional effects are not.
+	 */
+	rolledBack: boolean,
 };
 
 /**

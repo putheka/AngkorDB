@@ -114,18 +114,79 @@ export function QueryView({ connectionId, tab }: { connectionId: string; tab: Qu
     [connectionId, tab.id, update, safeMode, connectionName, approve, queryClient],
   );
 
+  /** The selection, or the statement the cursor is in; `null` if the editor has no SQL. */
+  const pickStatement = useCallback(async (): Promise<{ sql: string; base: number } | null> => {
+    const { text, from, to } = editor.current?.snapshot() ?? { text: view.text, from: 0, to: 0 };
+    if (to > from) return { sql: text.slice(from, to), base: from };
+    const range = await commands.statementAt(text, from);
+    return range ? { sql: text.slice(range.start, range.end), base: range.start } : null;
+  }, [view.text]);
+
   const onRun = useCallback(
     async (mode: RunMode) => {
-      const { text, from, to } = editor.current?.snapshot() ?? { text: view.text, from: 0, to: 0 };
-      if (mode === "all") return void run(text, 0);
-      if (to > from) return void run(text.slice(from, to), from);
-
-      const range = await commands.statementAt(text, from);
-      if (range) void run(text.slice(range.start, range.end), range.start);
+      if (mode === "all") {
+        const { text } = editor.current?.snapshot() ?? { text: view.text };
+        return void run(text, 0);
+      }
+      const picked = await pickStatement();
+      if (picked) void run(picked.sql, picked.base);
       else
         update({ runError: "There is no SQL to run: the editor is empty or only has comments." });
     },
-    [run, update, view.text],
+    [run, update, view.text, pickStatement],
+  );
+
+  /** Explain the statement at the cursor (or the selection); with `analyze`, run it for real. */
+  const explain = useCallback(
+    async (analyze: boolean) => {
+      if (useQueryViews.getState().views[tab.id]?.running) return;
+      const picked = await pickStatement();
+      if (!picked) {
+        update({
+          runError: "There is no SQL to explain: the editor is empty or only has comments.",
+        });
+        return;
+      }
+
+      // Analyze runs the statement (and rolls it back): the safe modes ask first for one that changes things.
+      if (analyze && (safeMode === "confirm" || safeMode === "touch-id")) {
+        try {
+          const changing = (await commands.classifySql(picked.sql)).find((s) => s.kind !== "read");
+          if (changing) {
+            const text = picked.sql.replace(/\s+/g, " ").trim();
+            const ok = await approve({
+              title: `Analyze a statement that changes ${connectionName}?`,
+              lines: [
+                text.length > 80 ? `${text.slice(0, 80)}…` : text,
+                "It runs for real inside a transaction that is rolled back afterwards.",
+              ],
+              reason: `analyze SQL that changes ${connectionName}`,
+            });
+            if (!ok) return;
+          }
+        } catch (error) {
+          update({ runError: errorMessage(error) });
+          return;
+        }
+      }
+
+      update({ running: true, startedAt: Date.now(), runError: null });
+      try {
+        const result = await commands.explainQuery(connectionId, tab.id, picked.sql, analyze);
+        update({
+          running: false,
+          startedAt: null,
+          plan: { id: nextRunId(), analyze, base: picked.base, run: result },
+          resultTab: { kind: "plan" },
+        });
+        if (result.outcome.kind === "error" && result.outcome.offset !== null) {
+          editor.current?.showError(picked.base + result.outcome.offset);
+        }
+      } catch (error) {
+        update({ running: false, startedAt: null, runError: errorMessage(error) });
+      }
+    },
+    [connectionId, tab.id, update, safeMode, connectionName, approve, pickStatement],
   );
 
   const stop = useCallback(
@@ -192,7 +253,8 @@ export function QueryView({ connectionId, tab }: { connectionId: string; tab: Qu
       : front.kind === "pinned"
         ? view.pinned.find((p) => p.id === front.id)
         : undefined;
-  const shownMs = shown?.durationMs ?? null;
+  const shownMs =
+    front.kind === "plan" ? (view.plan?.run.durationMs ?? null) : (shown?.durationMs ?? null);
   const shownRows =
     shown && "outcome" in shown && shown.outcome.kind === "rows" ? shown.outcome.rows.length : null;
   useEffect(() => {
@@ -284,6 +346,34 @@ export function QueryView({ connectionId, tab }: { connectionId: string; tab: Qu
             </Button>
           </TooltipTrigger>
           <TooltipContent>Run every statement in the editor (⌘⇧↵)</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={view.running}
+              onClick={() => void explain(false)}
+            >
+              Explain
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Show the plan of the statement without running it</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={view.running}
+              onClick={() => void explain(true)}
+            >
+              Analyze
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>
+            Run the statement and show real timings (a statement that changes data is rolled back)
+          </TooltipContent>
         </Tooltip>
         {view.running && (
           <span className="text-xs text-muted-foreground tabular-nums">
@@ -392,12 +482,28 @@ export function QueryView({ connectionId, tab }: { connectionId: string; tab: Qu
             <ResultsPane
               run={view.lastRun}
               pinned={view.pinned}
+              plan={view.plan}
               tab={view.resultTab}
               running={view.running}
               runError={view.runError}
               onTab={(resultTab) => update({ resultTab })}
               onPin={pin}
               onUnpin={unpin}
+              onClosePlan={() =>
+                update({
+                  plan: null,
+                  ...(view.resultTab.kind === "plan"
+                    ? { resultTab: pickTab(view.lastRun?.result.statements ?? []) }
+                    : {}),
+                })
+              }
+              onGoToPlanError={() => {
+                const failed = view.plan;
+                if (failed?.run.outcome.kind === "error" && failed.run.outcome.offset !== null) {
+                  editor.current?.showError(failed.base + failed.run.outcome.offset);
+                  editor.current?.focus();
+                }
+              }}
               onGoToError={(index) => {
                 const statement = view.lastRun?.result.statements[index];
                 if (
