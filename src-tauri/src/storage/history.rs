@@ -28,21 +28,70 @@ pub fn now_ms() -> f64 {
         .map_or(0.0, |d| d.as_millis() as f64)
 }
 
-/// The statement as it may be stored: a role statement that sets a password is replaced.
+/// `sql` with `--` and (nested) `/* */` comments taken out. Strings are not looked at: this is
+/// only for spotting secrets, where cutting too much is harmless.
+fn without_comments(sql: &str) -> String {
+    let mut out = String::with_capacity(sql.len());
+    let bytes = sql.as_bytes();
+    let (mut i, mut depth) = (0, 0usize);
+    while i < bytes.len() {
+        if bytes[i..].starts_with(b"/*") {
+            depth += 1;
+            i += 2;
+        } else if depth > 0 && bytes[i..].starts_with(b"*/") {
+            depth -= 1;
+            i += 2;
+        } else if depth == 0 && bytes[i..].starts_with(b"--") {
+            while i < bytes.len() && bytes[i] != b'\n' {
+                i += 1;
+            }
+        } else {
+            if depth == 0 {
+                let ch = sql[i..].chars().next().unwrap_or(' ');
+                out.push(ch);
+                i += ch.len_utf8();
+            } else {
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
+/// Does `lower` (lower-case SQL) give a password a value: `PASSWORD 'x'`, `password = 'x'`,
+/// `host=h password=x`, `PASSWORD $$x$$`? A column called `password` that is only selected, or
+/// the string `'password'`, does not.
+fn sets_a_password(lower: &str) -> bool {
+    for word in ["password", "passwd"] {
+        for (at, _) in lower.match_indices(word) {
+            let before = lower[..at].chars().next_back();
+            let after = &lower[at + word.len()..];
+            if before.is_some_and(|c| c.is_alphanumeric() || c == '_') {
+                continue;
+            }
+            if after.starts_with(|c: char| c.is_alphanumeric() || c == '_') {
+                continue;
+            }
+            // The string 'password' (or a name in quotes like "password" that is not given a value).
+            if before == Some('\'') && after.starts_with('\'') {
+                continue;
+            }
+            let rest = after.strip_prefix('"').unwrap_or(after).trim_start();
+            if rest.starts_with(['=', '\'', '$']) || rest.starts_with("e'") {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// The statement as it may be stored: one that gives a password a value (`CREATE ROLE … PASSWORD`,
+/// `CREATE USER MAPPING … OPTIONS (password '…')`, a `CONNECTION 'host=… password=…'` string,
+/// `dblink_connect('… password=…')`, inside a `DO` block, …) is replaced. The text is checked as
+/// written and with its comments taken out, so a comment can't hide the keyword from the check.
 pub fn redact(sql: &str) -> &str {
-    let words: Vec<String> = sql
-        .split_whitespace()
-        .take(2)
-        .map(str::to_ascii_lowercase)
-        .collect();
-    let sets_up_a_role = matches!(
-        (
-            words.first().map(String::as_str),
-            words.get(1).map(String::as_str)
-        ),
-        (Some("create" | "alter"), Some("role" | "user" | "group"))
-    );
-    if sets_up_a_role && sql.to_ascii_lowercase().contains("password") {
+    let lower = sql.to_ascii_lowercase();
+    if sets_a_password(&lower) || sets_a_password(&without_comments(&lower)) {
         HIDDEN
     } else {
         sql

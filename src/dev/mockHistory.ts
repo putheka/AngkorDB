@@ -10,7 +10,10 @@ let nextId = 1;
 export function recordHistory(connectionId: string, sql: string, durationMs: number, ok: boolean) {
   const text = sql.trim();
   if (!text) return;
-  const hidden = /^\s*(create|alter)\s+(role|user|group)\b/i.test(text) && /password/i.test(text);
+  // Like the Rust side: a statement that gives a password a value is not kept.
+  const hidden = /(?<![\w'])pass(?:word|wd)\b"?\s*(?:=|'|\$|e')/i.test(
+    text.replace(/\/\*[\s\S]*?\*\/|--[^\n]*/g, " "),
+  );
   const stored = hidden ? "-- statement not kept: it contains a password" : text;
   const last = history.find((h) => h.connectionId === connectionId);
   if (last && last.sql === stored) {

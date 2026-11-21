@@ -170,14 +170,36 @@ fn statements_with_passwords_are_never_stored() {
         "  alter   user app with password 'x'",
         "ALTER ROLE app ENCRYPTED PASSWORD 'md5abc'",
         "create group g password 'p'",
+        // A comment in front, or in the middle, does not hide it.
+        "/* note */ ALTER ROLE app PASSWORD 'p'",
+        "-- change it\nALTER USER app PASSWORD 'p'",
+        "/* a /* nested */ b */ create user u password 'p'",
+        "ALTER ROLE app PASSWORD /* hidden */ 'p'",
+        "ALTER ROLE app PASSWORD\n'p'",
+        "ALTER USER app WITH PASSWORD'p'",
+        "ALTER ROLE app PASSWORD $$p$$",
+        // Other places a password can be written.
+        "CREATE USER MAPPING FOR bob SERVER s OPTIONS (user 'bob', password 'secret')",
+        "ALTER SERVER s OPTIONS (ADD password 'secret')",
+        "CREATE SUBSCRIPTION s CONNECTION 'host=h password=secret dbname=d' PUBLICATION p",
+        "CREATE SUBSCRIPTION s CONNECTION 'password=secret host=h' PUBLICATION p",
+        "SELECT dblink_connect('host=h user=u password=secret')",
+        "DO $$ BEGIN CREATE ROLE x PASSWORD 'p'; END $$",
+        "UPDATE users SET password = 'plain'",
+        "UPDATE users SET \"password\" = 'plain'",
     ] {
         assert_eq!(redact(sql), HIDDEN, "{sql}");
     }
     for sql in [
         "CREATE ROLE reader",
         "ALTER ROLE app SET search_path = x",
+        "ALTER ROLE app PASSWORD NULL",
         "SELECT 'password' FROM t",
+        "SELECT password, name FROM users",
+        "SELECT * FROM users WHERE name = 'x'",
         "INSERT INTO users (password) VALUES ('x')",
+        "SELECT passwords FROM t WHERE reset_password_token IS NULL",
+        "-- password: see the vault\nSELECT 1",
     ] {
         assert_eq!(redact(sql), sql, "{sql}");
     }
@@ -191,9 +213,17 @@ fn statements_with_passwords_are_never_stored() {
         true,
     )
     .unwrap();
+    s.add(
+        "a",
+        "/* x */ ALTER USER app PASSWORD 'hunter3'",
+        2.0,
+        1,
+        true,
+    )
+    .unwrap();
     let all = s.search("", None, 5, 0).unwrap();
-    assert_eq!(all[0].sql, HIDDEN);
-    assert!(s.search("hunter2", None, 5, 0).unwrap().is_empty());
+    assert!(all.iter().all(|e| e.sql == HIDDEN));
+    assert!(s.search("hunter", None, 5, 0).unwrap().is_empty());
 }
 
 fn input(name: &str, folder: &str, connection: Option<&str>) -> SavedQueryInput {
