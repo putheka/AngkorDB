@@ -33,11 +33,16 @@ interface ObjectRowProps {
   onPin: () => void;
   /** Open it on its Structure view. */
   onStructure: () => void;
-  /** Rename, truncate or drop it (the menu). */
-  onAction: (action: "rename" | "truncate" | "drop") => void;
+  /** Rename, truncate, drop or refresh it (the menu). */
+  onAction: (action: "rename" | "truncate" | "drop" | "refresh") => void;
+  /** Open the SQL that defines it in a query tab (functions, views, …). */
+  onDefinition: () => void;
+  /** The dialog of a sequence or an enum type. */
+  onDetails: () => void;
 }
 
 const TABLES: ObjectKind[] = ["table", "partitionedTable"];
+const DEFINED: ObjectKind[] = ["function", "procedure", "view", "materializedView"];
 const RENAMEABLE: ObjectKind[] = [...TABLES, "foreignTable", "view", "materializedView"];
 
 export function ObjectRow({
@@ -49,6 +54,8 @@ export function ObjectRow({
   onPin,
   onStructure,
   onAction,
+  onDefinition,
+  onDetails,
 }: ObjectRowProps) {
   const { object, indices } = row;
   const Icon = OBJECT_ICONS[object.kind];
@@ -63,7 +70,11 @@ export function ObjectRow({
           aria-selected={isActive}
           style={style}
           onClick={onOpen}
-          onDoubleClick={onPin}
+          onDoubleClick={() => {
+            if (object.kind === "function" || object.kind === "procedure") onDefinition();
+            else if (object.kind === "sequence" || object.kind === "enumType") onDetails();
+            else onPin();
+          }}
           title={object.detail ? `${object.name}${object.detail}` : undefined}
           className={cn(
             "flex cursor-default items-center gap-2 pr-2 pl-5 text-sm select-none hover:bg-sidebar-accent/60",
@@ -91,6 +102,22 @@ export function ObjectRow({
       <ContextMenuContent>
         {openable && <ContextMenuItem onSelect={onPin}>Open in new tab</ContextMenuItem>}
         {openable && <ContextMenuItem onSelect={onStructure}>Open structure</ContextMenuItem>}
+        {DEFINED.includes(object.kind) && (
+          <ContextMenuItem onSelect={onDefinition}>
+            {object.kind === "function" || object.kind === "procedure"
+              ? "Open source in a query tab"
+              : "Edit definition in a query tab"}
+          </ContextMenuItem>
+        )}
+        {object.kind === "materializedView" && (
+          <ContextMenuItem onSelect={() => onAction("refresh")}>Refresh…</ContextMenuItem>
+        )}
+        {object.kind === "sequence" && (
+          <ContextMenuItem onSelect={onDetails}>Sequence…</ContextMenuItem>
+        )}
+        {object.kind === "enumType" && (
+          <ContextMenuItem onSelect={onDetails}>Values…</ContextMenuItem>
+        )}
         <ContextMenuItem onSelect={() => copy(object.name)}>Copy name</ContextMenuItem>
         <ContextMenuItem onSelect={() => copy(qualifiedName(object.schema, object.name))}>
           Copy as schema.name

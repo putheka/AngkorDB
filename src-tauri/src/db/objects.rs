@@ -15,7 +15,8 @@ use crate::db::structure::literal;
 use crate::error::{AppError, AppResult};
 use crate::models::alter::{PlannedStatement, StructurePreview};
 use crate::models::objects::{
-    CreateTable, DropObject, NewTableColumn, ObjectOperation, RenameObject, TruncateTable,
+    AddEnumValue, CreateTable, DropObject, NewTableColumn, ObjectOperation,
+    RefreshMaterializedView, RenameObject, SetSequence, TruncateTable,
 };
 use crate::models::schema::{ColumnIdentity, ObjectKind};
 
@@ -218,6 +219,69 @@ fn drop_object(d: &DropObject, out: &mut Vec<PlannedStatement>) -> AppResult<()>
     Ok(())
 }
 
+fn refresh(r: &RefreshMaterializedView, out: &mut Vec<PlannedStatement>) -> AppResult<()> {
+    if r.concurrently && r.with_no_data {
+        return Err(invalid(
+            "CONCURRENTLY and WITH NO DATA can't be used together.",
+        ));
+    }
+    let mut sql = String::from("REFRESH MATERIALIZED VIEW ");
+    if r.concurrently {
+        sql.push_str("CONCURRENTLY ");
+    }
+    sql.push_str(&relation(&r.schema, &r.name)?);
+    if r.with_no_data {
+        sql.push_str(" WITH NO DATA");
+    }
+    sql.push(';');
+    out.push(statement(
+        format!("refresh materialized view {}", r.name),
+        sql,
+        false,
+    ));
+    Ok(())
+}
+
+fn set_sequence(s: &SetSequence, out: &mut Vec<PlannedStatement>) -> AppResult<()> {
+    let value: i64 = s
+        .value
+        .trim()
+        .parse()
+        .map_err(|_| invalid("The value has to be a whole number."))?;
+    let regclass = literal(&relation(&s.schema, &s.name)?);
+    out.push(statement(
+        format!("set sequence {}", s.name),
+        format!(
+            "SELECT setval({regclass}::regclass, {value}, {});",
+            s.is_called
+        ),
+        false,
+    ));
+    Ok(())
+}
+
+fn add_enum_value(a: &AddEnumValue, out: &mut Vec<PlannedStatement>) -> AppResult<()> {
+    if a.value.is_empty() {
+        return Err(invalid("The new value is empty."));
+    }
+    let mut sql = format!("ALTER TYPE {} ADD VALUE ", relation(&a.schema, &a.name)?);
+    if a.if_not_exists {
+        sql.push_str("IF NOT EXISTS ");
+    }
+    sql.push_str(&literal(&a.value));
+    if let Some(position) = &a.position {
+        sql.push_str(if position.before {
+            " BEFORE "
+        } else {
+            " AFTER "
+        });
+        sql.push_str(&literal(&position.existing));
+    }
+    sql.push(';');
+    out.push(statement(format!("add value to {}", a.name), sql, false));
+    Ok(())
+}
+
 /// The statements for an operation.
 pub fn plan(operation: &ObjectOperation) -> AppResult<Vec<PlannedStatement>> {
     let mut out = Vec::new();
@@ -226,6 +290,9 @@ pub fn plan(operation: &ObjectOperation) -> AppResult<Vec<PlannedStatement>> {
         ObjectOperation::Rename(r) => rename(r, &mut out)?,
         ObjectOperation::Truncate(t) => truncate(t, &mut out)?,
         ObjectOperation::Drop(d) => drop_object(d, &mut out)?,
+        ObjectOperation::RefreshMaterializedView(r) => refresh(r, &mut out)?,
+        ObjectOperation::SetSequence(s) => set_sequence(s, &mut out)?,
+        ObjectOperation::AddEnumValue(a) => add_enum_value(a, &mut out)?,
     }
     for statement in &out {
         if script::split(&statement.sql).len() != 1 {
@@ -515,6 +582,94 @@ mod tests {
             new_name: " ".into(),
         }));
         assert!(blank.is_err());
+    }
+
+    #[test]
+    fn refresh_set_sequence_and_add_enum_value() {
+        use crate::models::objects::{
+            AddEnumValue, EnumPosition, RefreshMaterializedView, SetSequence,
+        };
+        let refresh = |concurrently, with_no_data| {
+            plan(&ObjectOperation::RefreshMaterializedView(
+                RefreshMaterializedView {
+                    schema: "billing".into(),
+                    name: "monthly".into(),
+                    concurrently,
+                    with_no_data,
+                },
+            ))
+        };
+        assert_eq!(
+            refresh(false, false).unwrap()[0].sql,
+            "REFRESH MATERIALIZED VIEW \"billing\".\"monthly\";"
+        );
+        assert_eq!(
+            refresh(true, false).unwrap()[0].sql,
+            "REFRESH MATERIALIZED VIEW CONCURRENTLY \"billing\".\"monthly\";"
+        );
+        assert_eq!(
+            refresh(false, true).unwrap()[0].sql,
+            "REFRESH MATERIALIZED VIEW \"billing\".\"monthly\" WITH NO DATA;"
+        );
+        assert!(refresh(true, true).is_err());
+
+        let set = |value: &str, called| {
+            plan(&ObjectOperation::SetSequence(SetSequence {
+                schema: "public".into(),
+                name: "orders_id_seq".into(),
+                value: value.into(),
+                is_called: called,
+            }))
+        };
+        assert_eq!(
+            set(" 1000 ", true).unwrap()[0].sql,
+            "SELECT setval('\"public\".\"orders_id_seq\"'::regclass, 1000, true);"
+        );
+        assert!(set("-5", false).unwrap()[0].sql.ends_with("-5, false);"));
+        assert!(set("9223372036854775807", true).is_ok());
+        for bad in ["", "1.5", "abc", "1; DROP TABLE x", "9223372036854775808"] {
+            assert!(set(bad, true).is_err(), "{bad}");
+        }
+        // Odd names stay inside the string.
+        let odd = plan(&ObjectOperation::SetSequence(SetSequence {
+            schema: "s".into(),
+            name: "it's".into(),
+            value: "1".into(),
+            is_called: true,
+        }))
+        .unwrap();
+        assert_eq!(
+            odd[0].sql,
+            "SELECT setval('\"s\".\"it''s\"'::regclass, 1, true);"
+        );
+
+        let add = |value: &str, position: Option<EnumPosition>, if_not_exists| {
+            plan(&ObjectOperation::AddEnumValue(AddEnumValue {
+                schema: "public".into(),
+                name: "mood".into(),
+                value: value.into(),
+                position,
+                if_not_exists,
+            }))
+        };
+        assert_eq!(
+            add("it's", None, false).unwrap()[0].sql,
+            "ALTER TYPE \"public\".\"mood\" ADD VALUE 'it''s';"
+        );
+        assert_eq!(
+            add(
+                "new",
+                Some(EnumPosition {
+                    before: true,
+                    existing: "old".into()
+                }),
+                true
+            )
+            .unwrap()[0]
+                .sql,
+            "ALTER TYPE \"public\".\"mood\" ADD VALUE IF NOT EXISTS 'new' BEFORE 'old';"
+        );
+        assert!(add("", None, false).is_err());
     }
 
     #[test]

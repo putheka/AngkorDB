@@ -18,7 +18,12 @@ import { createHistoryHandlers } from "@/dev/mockHistory";
 import { createQueryHandlers } from "@/dev/mockQuery";
 import { createRowHandlers } from "@/dev/mockRows";
 import { createSchemaHandlers } from "@/dev/mockSchema";
-import { mockObjectApply, mockObjectPreview } from "@/dev/mockObjects";
+import {
+  mockDefinition,
+  mockObjectApply,
+  mockObjectPreview,
+  mockSequenceInfo,
+} from "@/dev/mockObjects";
 import { mockApply, mockPreview, mockTableStructure } from "@/dev/mockStructure";
 import { appError, sleep, type Handler } from "@/dev/mockSupport";
 
@@ -208,6 +213,14 @@ const handlers: Record<string, Handler> = {
   table_structure: (args) => {
     requireOpen(String(args["connectionId"]));
     return mockTableStructure(String(args["schema"]), String(args["table"]));
+  },
+  object_definition: (args) => {
+    requireOpen(String(args["connectionId"]));
+    return mockDefinition(String(args["kind"]), String(args["schema"]), String(args["name"]));
+  },
+  sequence_info: (args) => {
+    requireOpen(String(args["connectionId"]));
+    return mockSequenceInfo(String(args["schema"]), String(args["name"]));
   },
   preview_object_operation: (args) => {
     requireOpen(String(args["connectionId"]));

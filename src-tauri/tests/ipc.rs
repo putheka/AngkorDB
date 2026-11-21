@@ -393,6 +393,15 @@ fn schema_commands_need_an_open_connection() {
             json!({ "connectionId": "nope", "tabId": "query:1" }),
         ),
         (
+            "object_definition",
+            json!({ "connectionId": "nope", "kind": "function", "schema": "public",
+                    "name": "f", "oid": 1 }),
+        ),
+        (
+            "sequence_info",
+            json!({ "connectionId": "nope", "schema": "public", "name": "s" }),
+        ),
+        (
             "preview_object_operation",
             json!({ "connectionId": "nope", "operation": { "kind": "truncate", "schema": "public",
                     "name": "t", "restartIdentity": false, "cascade": false } }),
@@ -1548,4 +1557,124 @@ fn a_read_only_connection_refuses_object_operations() {
         .unwrap_err();
     assert_eq!(err["code"], "VALIDATION");
     assert!(err["message"].as_str().unwrap().contains("read-only"));
+}
+
+#[test]
+fn definitions_and_sequences_through_ipc() {
+    if !dev_db_available() {
+        return;
+    }
+    let ipc = setup();
+    let mut form = config("Dev", "localhost", 54329);
+    form["user"] = json!("angkor");
+    form["database"] = json!("angkordb_dev");
+    let saved = ipc
+        .call(
+            "save_connection",
+            json!({ "config": form, "password": { "kind": "set", "value": "angkor" } }),
+        )
+        .unwrap();
+    let id = saved["id"].as_str().unwrap();
+    ipc.call("connect_connection", json!({ "id": id })).unwrap();
+
+    // The oid comes from the sidebar's own listing.
+    let objects = ipc
+        .call(
+            "list_objects",
+            json!({ "connectionId": id, "schema": "public" }),
+        )
+        .unwrap();
+    let find = |name: &str, kind: &str| {
+        objects
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|o| o["name"] == name && o["kind"] == kind)
+            .unwrap_or_else(|| panic!("{name} is not listed"))
+            .clone()
+    };
+    let greet = find("greet", "function");
+    let def = ipc
+        .call(
+            "object_definition",
+            json!({ "connectionId": id, "kind": "function", "schema": "public",
+                    "name": "greet", "oid": greet["oid"] }),
+        )
+        .unwrap();
+    assert_eq!(def["title"], "greet()");
+    let sql = def["sql"].as_str().unwrap();
+    assert!(
+        sql.starts_with("CREATE OR REPLACE FUNCTION public.greet"),
+        "{sql}"
+    );
+    // PostgreSQL writes its own dollar-quote tag.
+    assert!(
+        sql.contains("$function$") && sql.contains("Hello; "),
+        "{sql}"
+    );
+
+    let view = ipc
+        .call(
+            "object_definition",
+            json!({ "connectionId": id, "kind": "view", "schema": "public",
+                    "name": "user_order_totals", "oid": 0 }),
+        )
+        .unwrap();
+    assert!(
+        view["sql"]
+            .as_str()
+            .unwrap()
+            .starts_with("CREATE OR REPLACE VIEW public.user_order_totals AS")
+    );
+
+    let seq = ipc
+        .call(
+            "sequence_info",
+            json!({ "connectionId": id, "schema": "public", "name": "orders_id_seq" }),
+        )
+        .unwrap();
+    assert_eq!(seq["dataType"], "bigint");
+    assert_eq!(seq["increment"], "1");
+    assert_eq!(seq["ownedBy"], "public.orders.id");
+    assert!(seq["lastValue"].is_string());
+
+    // Operations: the JSON the dialogs send.
+    let set = json!({ "kind": "setSequence", "schema": "public", "name": "orders_id_seq",
+        "value": "1000", "isCalled": true });
+    let preview = ipc
+        .call(
+            "preview_object_operation",
+            json!({ "connectionId": id, "operation": set }),
+        )
+        .unwrap();
+    assert!(
+        preview["sql"]
+            .as_str()
+            .unwrap()
+            .contains("setval('\"public\".\"orders_id_seq\"'::regclass, 1000, true)")
+    );
+    let add = json!({ "kind": "addEnumValue", "schema": "public", "name": "user_status",
+        "value": "retired", "position": { "before": false, "existing": "suspended" },
+        "ifNotExists": true });
+    let preview = ipc
+        .call(
+            "preview_object_operation",
+            json!({ "connectionId": id, "operation": add }),
+        )
+        .unwrap();
+    assert!(
+        preview["sql"]
+            .as_str()
+            .unwrap()
+            .contains("ADD VALUE IF NOT EXISTS 'retired' AFTER 'suspended'")
+    );
+    let refresh = json!({ "kind": "refreshMaterializedView", "schema": "billing",
+        "name": "monthly_revenue", "concurrently": true, "withNoData": true });
+    let bad = ipc
+        .call(
+            "preview_object_operation",
+            json!({ "connectionId": id, "operation": refresh }),
+        )
+        .unwrap_err();
+    assert_eq!(bad["code"], "VALIDATION");
 }

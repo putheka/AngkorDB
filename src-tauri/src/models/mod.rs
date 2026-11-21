@@ -3,6 +3,7 @@
 pub mod alter;
 pub mod changes;
 pub mod connection;
+pub mod definitions;
 pub mod explain;
 pub mod history;
 pub mod objects;

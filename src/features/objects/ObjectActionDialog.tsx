@@ -22,7 +22,7 @@ import { useWriteApproval } from "@/features/safety/approval";
 import { errorDetails, errorMessage } from "@/lib/errors";
 import { commands } from "@/lib/ipc";
 
-export type ObjectAction = "rename" | "truncate" | "drop";
+export type ObjectAction = "rename" | "truncate" | "drop" | "refresh";
 
 const KIND_WORDS: Partial<Record<DbObject["kind"], string>> = {
   table: "table",
@@ -56,7 +56,7 @@ export function ObjectActionDialog({ connectionId, action, object, onClose }: Pr
   const [error, setError] = useState<unknown>(null);
 
   const word = KIND_WORDS[object.kind] ?? "object";
-  const destructive = action !== "rename";
+  const destructive = action === "truncate" || action === "drop";
   const mustType = needsTypedConfirmation(color, destructive);
 
   const operation = useMemo<ObjectOperation>(() => {
@@ -65,6 +65,14 @@ export function ObjectActionDialog({ connectionId, action, object, onClose }: Pr
       return { kind: "rename", ...target, objectKind: object.kind, newName: newName.trim() };
     }
     if (action === "truncate") return { kind: "truncate", ...target, restartIdentity, cascade };
+    if (action === "refresh") {
+      return {
+        kind: "refreshMaterializedView",
+        ...target,
+        concurrently: cascade,
+        withNoData: restartIdentity,
+      };
+    }
     return { kind: "drop", ...target, objectKind: object.kind, cascade };
   }, [action, object, newName, restartIdentity, cascade]);
 
@@ -80,8 +88,17 @@ export function ObjectActionDialog({ connectionId, action, object, onClose }: Pr
       ? `Rename ${object.name}`
       : action === "truncate"
         ? `Empty ${object.name}?`
-        : `Drop ${object.name}?`;
-  const verb = action === "rename" ? "Rename" : action === "truncate" ? "Truncate" : "Drop";
+        : action === "refresh"
+          ? `Refresh ${object.name}`
+          : `Drop ${object.name}?`;
+  const verb =
+    action === "rename"
+      ? "Rename"
+      : action === "truncate"
+        ? "Truncate"
+        : action === "refresh"
+          ? "Refresh"
+          : "Drop";
 
   const run = async () => {
     if (!ready || running) return;
@@ -132,6 +149,40 @@ export function ObjectActionDialog({ connectionId, action, object, onClose }: Pr
                 onChange={(e) => setNewName(e.target.value)}
               />
             </div>
+          )}
+          {action === "refresh" && (
+            <>
+              <label className="flex items-start gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="mt-1"
+                  checked={cascade}
+                  disabled={restartIdentity}
+                  onChange={(e) => setCascade(e.target.checked)}
+                />
+                <span>
+                  Concurrently
+                  <span className="block text-xs text-muted-foreground">
+                    Readers keep the old rows while it refreshes. Needs a unique index on the view.
+                  </span>
+                </span>
+              </label>
+              <label className="flex items-start gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="mt-1"
+                  checked={restartIdentity}
+                  disabled={cascade}
+                  onChange={(e) => setRestartIdentity(e.target.checked)}
+                />
+                <span>
+                  With no data
+                  <span className="block text-xs text-muted-foreground">
+                    Empties it instead of filling it again; it can't be read until the next refresh.
+                  </span>
+                </span>
+              </label>
+            </>
           )}
           {action === "truncate" && (
             <>

@@ -66,6 +66,8 @@ pub fn specta_builder<R: tauri::Runtime>() -> Builder<R> {
             commands::alter::apply_structure_changes,
             commands::objects::preview_object_operation,
             commands::objects::apply_object_operation,
+            commands::objects::object_definition,
+            commands::objects::sequence_info,
             commands::changes::preview_changes,
             commands::changes::apply_changes,
             commands::query::run_query,

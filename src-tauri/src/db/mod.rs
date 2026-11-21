@@ -3,6 +3,7 @@
 //! - `config`  — saved connection settings → `tokio_postgres::Config`
 //! - `tls`     — rustls connector using macOS system root certificates
 //! - `url`     — parse `postgres://` URLs into connection form fields
+//! - `definitions` — the SQL behind a function, view, sequence or enum
 //! - `explain` — EXPLAIN / EXPLAIN ANALYZE of one statement, analyzed ones rolled back
 //! - `introspect` — databases, schemas, objects, columns and row identity from `pg_catalog`
 //! - `alter`  — change the structure of a table: plan the statements, run them
@@ -19,6 +20,7 @@ pub mod alter;
 pub mod changes;
 pub mod classify;
 pub mod config;
+pub mod definitions;
 pub mod explain;
 pub mod introspect;
 pub mod objects;

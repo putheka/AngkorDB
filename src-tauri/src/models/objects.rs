@@ -11,6 +11,9 @@ pub enum ObjectOperation {
     Rename(RenameObject),
     Truncate(TruncateTable),
     Drop(DropObject),
+    RefreshMaterializedView(RefreshMaterializedView),
+    SetSequence(SetSequence),
+    AddEnumValue(AddEnumValue),
 }
 
 #[derive(Debug, Clone, Deserialize, specta::Type)]
@@ -65,4 +68,47 @@ pub struct DropObject {
     pub name: String,
     /// Also drop what depends on it (views, foreign keys of other tables).
     pub cascade: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct RefreshMaterializedView {
+    pub schema: String,
+    pub name: String,
+    /// Keeps the old rows readable while it refreshes; needs a unique index on the view.
+    pub concurrently: bool,
+    /// Empties it instead of filling it again (it can't be read until the next refresh).
+    pub with_no_data: bool,
+}
+
+/// `setval`: the next value handed out depends on `is_called`.
+#[derive(Debug, Clone, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SetSequence {
+    pub schema: String,
+    pub name: String,
+    /// A whole number, as text (a sequence can go past what a JS number holds).
+    pub value: String,
+    /// `true`: `value` was already handed out, so the next is the one after it. `false`: the
+    /// next value is `value` itself.
+    pub is_called: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct EnumPosition {
+    /// `true`: before `existing`; `false`: after it.
+    pub before: bool,
+    pub existing: String,
+}
+
+#[derive(Debug, Clone, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AddEnumValue {
+    pub schema: String,
+    pub name: String,
+    pub value: String,
+    /// `None`: at the end.
+    pub position: Option<EnumPosition>,
+    pub if_not_exists: bool,
 }

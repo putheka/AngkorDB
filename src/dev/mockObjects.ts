@@ -1,6 +1,21 @@
 /** Preview and apply for create / rename / truncate / drop in the in-browser mock. */
-import type { ObjectOperation, PlannedStatement, StructurePreview } from "@/bindings";
-import { mockCreateTable, mockDropObject, mockHasObject, mockRenameObject } from "@/dev/mockSchema";
+import type {
+  ObjectDefinition,
+  ObjectOperation,
+  PlannedStatement,
+  SequenceInfo,
+  StructurePreview,
+} from "@/bindings";
+import {
+  mockAddEnumValue,
+  mockCreateTable,
+  mockDropObject,
+  mockEnumValues,
+  mockHasObject,
+  mockRenameObject,
+  mockSequence,
+  mockSetSequence,
+} from "@/dev/mockSchema";
 import { appError } from "@/dev/mockSupport";
 
 const q = (name: string) => `"${name.replace(/"/g, '""')}"`;
@@ -54,6 +69,28 @@ function statements(op: ObjectOperation): PlannedStatement[] {
         `TRUNCATE TABLE ${q(op.schema)}.${q(op.name)}${op.restartIdentity ? " RESTART IDENTITY" : ""}${op.cascade ? " CASCADE" : ""};`,
         true,
       );
+    case "refreshMaterializedView":
+      if (op.concurrently && op.withNoData) {
+        throw appError("VALIDATION", "CONCURRENTLY and WITH NO DATA can't be used together.");
+      }
+      return one(
+        `refresh materialized view ${op.name}`,
+        `REFRESH MATERIALIZED VIEW ${op.concurrently ? "CONCURRENTLY " : ""}${q(op.schema)}.${q(op.name)}${op.withNoData ? " WITH NO DATA" : ""};`,
+      );
+    case "setSequence":
+      if (!/^-?\d+$/.test(op.value.trim())) {
+        throw appError("VALIDATION", "The value has to be a whole number.");
+      }
+      return one(
+        `set sequence ${op.name}`,
+        `SELECT setval('${q(op.schema)}.${q(op.name)}'::regclass, ${op.value.trim()}, ${op.isCalled});`,
+      );
+    case "addEnumValue":
+      if (op.value === "") throw appError("VALIDATION", "The new value is empty.");
+      return one(
+        `add value to ${op.name}`,
+        `ALTER TYPE ${q(op.schema)}.${q(op.name)} ADD VALUE ${op.ifNotExists ? "IF NOT EXISTS " : ""}'${op.value.replace(/'/g, "''")}'${op.position ? ` ${op.position.before ? "BEFORE" : "AFTER"} '${op.position.existing}'` : ""};`,
+      );
     case "drop":
       return one(
         `drop ${op.name}`,
@@ -86,6 +123,14 @@ export function mockObjectApply(op: ObjectOperation): number {
     case "drop":
       mockDropObject(op.schema, op.name);
       break;
+    case "refreshMaterializedView":
+      break;
+    case "setSequence":
+      mockSetSequence(op.schema, op.name, op.value.trim(), op.isCalled);
+      break;
+    case "addEnumValue":
+      mockAddEnumValue(op.value, op.position, op.ifNotExists);
+      break;
     case "truncate":
       if (!mockHasObject(op.schema, op.name)) {
         throw appError("POSTGRES", `relation "${op.name}" does not exist`, { pgCode: "42P01" });
@@ -93,4 +138,50 @@ export function mockObjectApply(op: ObjectOperation): number {
       break;
   }
   return count;
+}
+
+/** The text a function, view, enum or sequence would show, close to what PostgreSQL writes. */
+export function mockDefinition(kind: string, schema: string, name: string): ObjectDefinition {
+  const target = `${schema}.${name}`;
+  switch (kind) {
+    case "function":
+      return {
+        title: `${name}()`,
+        sql: `CREATE OR REPLACE FUNCTION ${target}(p_name text DEFAULT 'world'::text)\n RETURNS text\n LANGUAGE plpgsql\nAS $function$\nDECLARE\n  msg text := 'Hello; ' || p_name || '! -- not a comment';\nBEGIN\n  RETURN msg || ' /* not a comment either */';\nEND;\n$function$;\n`,
+      };
+    case "view":
+      return {
+        title: name,
+        sql: `CREATE OR REPLACE VIEW ${target} AS\nSELECT u.id AS user_id,\n    u.email\n   FROM public.users u;\n`,
+      };
+    case "materializedView":
+      return {
+        title: name,
+        sql: `-- A materialized view can't be replaced in place: to change it, drop it and make it\n-- again. Dropping it also drops its indexes; they are made again below.\nDROP MATERIALIZED VIEW ${target};\nCREATE MATERIALIZED VIEW ${target} AS\nSELECT 1 AS n\nWITH DATA;\n`,
+      };
+    case "enumType":
+      return {
+        title: name,
+        sql: `CREATE TYPE ${target} AS ENUM (${mockEnumValues()
+          .map((v) => `'${v}'`)
+          .join(", ")});\n`,
+      };
+    default:
+      throw appError("VALIDATION", "Tables have their DDL in the Structure view.");
+  }
+}
+
+export function mockSequenceInfo(schema: string, name: string): SequenceInfo {
+  const state = mockSequence(schema, name);
+  return {
+    dataType: "bigint",
+    start: schema === "billing" ? "1000" : "1",
+    increment: "1",
+    min: "1",
+    max: "9223372036854775807",
+    cache: "1",
+    cycle: false,
+    lastValue: state.called ? state.last : null,
+    ownedBy: schema === "public" ? "public.orders.id" : null,
+  };
 }

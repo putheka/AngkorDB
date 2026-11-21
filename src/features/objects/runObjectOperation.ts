@@ -30,9 +30,7 @@ export async function runObjectOperation(
         true,
       );
     }
-  } else if (operation.kind === "truncate") {
-    // The rows are gone: the grid has been told to read them again above.
-  } else {
+  } else if (operation.kind === "createTable") {
     tabs.openTable({ schema: operation.schema, name: operation.name, kind: "table" }, true);
   }
 }

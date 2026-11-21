@@ -20,6 +20,10 @@ import {
 } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { CreateTableDialog } from "@/features/objects/CreateTableDialog";
+import { EnumDialog } from "@/features/objects/EnumDialog";
+import { SequenceDialog } from "@/features/objects/SequenceDialog";
+import { openSavedQuery } from "@/features/query/history/openSavedQuery";
+import { commands } from "@/lib/ipc";
 import { ObjectActionDialog, type ObjectAction } from "@/features/objects/ObjectActionDialog";
 import { useTableViews } from "@/features/grid/tableViews";
 import { ObjectRow } from "@/features/sidebar/ObjectRow";
@@ -49,6 +53,17 @@ export function ObjectTree({ connectionId }: { connectionId: string }) {
   const [cursorKey, setCursorKey] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [action, setAction] = useState<{ kind: ObjectAction; object: DbObject } | null>(null);
+  const [details, setDetails] = useState<DbObject | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+
+  /** The SQL that defines a function or view, in a query tab to read and edit. */
+  const openDefinition = (object: DbObject) => {
+    setProblem(null);
+    commands
+      .objectDefinition(connectionId, object.kind, object.schema, object.name, object.oid)
+      .then((definition) => openSavedQuery(definition.sql))
+      .catch((error: unknown) => setProblem(errorMessage(error)));
+  };
   const inputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -82,8 +97,14 @@ export function ObjectTree({ connectionId }: { connectionId: string }) {
 
   const open = (index: number, pin: boolean) => {
     const row = rows[index];
-    if (row?.type === "object" && isOpenable(row.object.kind)) {
-      openTable({ schema: row.object.schema, name: row.object.name, kind: row.object.kind }, pin);
+    if (row?.type !== "object") return;
+    const { object } = row;
+    if (isOpenable(object.kind)) {
+      openTable({ schema: object.schema, name: object.name, kind: object.kind }, pin);
+    } else if (pin && (object.kind === "function" || object.kind === "procedure")) {
+      openDefinition(object);
+    } else if (pin && (object.kind === "sequence" || object.kind === "enumType")) {
+      setDetails(object);
     }
   };
 
@@ -231,6 +252,11 @@ export function ObjectTree({ connectionId }: { connectionId: string }) {
           )}
         </InputGroup>
 
+        {problem && (
+          <p role="alert" className="text-xs text-destructive">
+            {problem}
+          </p>
+        )}
         {switchDatabase.error && (
           <p role="alert" className="text-xs text-destructive">
             {errorMessage(switchDatabase.error)}
@@ -308,6 +334,8 @@ export function ObjectTree({ connectionId }: { connectionId: string }) {
                       });
                   }}
                   onAction={(kind) => setAction({ kind, object: row.object })}
+                  onDefinition={() => openDefinition(row.object)}
+                  onDetails={() => setDetails(row.object)}
                 />
               );
             })}
@@ -321,6 +349,16 @@ export function ObjectTree({ connectionId }: { connectionId: string }) {
           schema={schema}
           onClose={() => setCreating(false)}
         />
+      )}
+      {details?.kind === "sequence" && (
+        <SequenceDialog
+          connectionId={connectionId}
+          object={details}
+          onClose={() => setDetails(null)}
+        />
+      )}
+      {details?.kind === "enumType" && (
+        <EnumDialog connectionId={connectionId} object={details} onClose={() => setDetails(null)} />
       )}
       {action && (
         <ObjectActionDialog

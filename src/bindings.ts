@@ -84,6 +84,13 @@ export const commands = {
 	 *  connection. Returns how many statements ran.
 	 */
 	applyObjectOperation: (connectionId: string, operation: ObjectOperation, options?: InvokeOptions) => __TAURI_INVOKE<number>("apply_object_operation", { connectionId, operation }, options),
+	/**
+	 *  The SQL that defines a function, view, materialized view, sequence or enum type, to read or
+	 *  to edit in a query tab (running it changes the definition). `oid` tells overloads apart.
+	 */
+	objectDefinition: (connectionId: string, kind: ObjectKind, schema: string, name: string, oid: number, options?: InvokeOptions) => __TAURI_INVOKE<ObjectDefinition>("object_definition", { connectionId, kind, schema, name, oid }, options),
+	/**  The settings and current value of a sequence. */
+	sequenceInfo: (connectionId: string, schema: string, name: string, options?: InvokeOptions) => __TAURI_INVOKE<SequenceInfo>("sequence_info", { connectionId, schema, name }, options),
 	/**  The SQL that `apply_changes` would run, values written in. Nothing is executed. */
 	previewChanges: (connectionId: string, schema: string, table: string, changes: TableChanges, options?: InvokeOptions) => __TAURI_INVOKE<string>("preview_changes", { connectionId, schema, table, changes }, options),
 	/**
@@ -144,6 +151,15 @@ export type AddColumn = {
 	nullable: boolean,
 	defaultValue: string | null,
 	comment: string | null,
+};
+
+export type AddEnumValue = {
+	schema: string,
+	name: string,
+	value: string,
+	/**  `None`: at the end. */
+	position: EnumPosition | null,
+	ifNotExists: boolean,
 };
 
 /**  Everything about one existing column that is to change; `None` leaves it as it is. */
@@ -396,6 +412,12 @@ export type DropObject = {
 	cascade: boolean,
 };
 
+export type EnumPosition = {
+	/**  `true`: before `existing`; `false`: after it. */
+	before: boolean,
+	existing: string,
+};
+
 /**  What `EXPLAIN` gave back. */
 export type ExplainOutcome = 
 /**  The plan as the server wrote it: `EXPLAIN (FORMAT JSON …)`'s single value. */
@@ -547,6 +569,13 @@ export type Notice = {
 	code: string,
 };
 
+/**  Text to read and edit: running it (in a query tab) changes the definition in the database. */
+export type ObjectDefinition = {
+	/**  What to call the query tab. */
+	title: string,
+	sql: string,
+};
+
 export type ObjectKind = "table" | "partitionedTable" | "foreignTable" | "view" | "materializedView" | "sequence" | "function" | "procedure" | "enumType";
 
 export type ObjectOperation = {
@@ -557,7 +586,13 @@ export type ObjectOperation = {
 	kind: "truncate",
 } & TruncateTable | {
 	kind: "drop",
-} & DropObject;
+} & DropObject | {
+	kind: "refreshMaterializedView",
+} & RefreshMaterializedView | {
+	kind: "setSequence",
+} & SetSequence | {
+	kind: "addEnumValue",
+} & AddEnumValue;
 
 /**  Fields extracted from a `postgres://` URL, used to fill the connection form. */
 export type ParsedConnectionUrl = {
@@ -606,6 +641,15 @@ export type QueryRun = {
 };
 
 export type RefAction = "noAction" | "restrict" | "cascade" | "setNull" | "setDefault";
+
+export type RefreshMaterializedView = {
+	schema: string,
+	name: string,
+	/**  Keeps the old rows readable while it refreshes; needs a unique index on the view. */
+	concurrently: boolean,
+	/**  Empties it instead of filling it again (it can't be read until the next refresh). */
+	withNoData: boolean,
+};
 
 export type RenameObject = {
 	/**  Not `kind`: that is what tells the operations apart. */
@@ -714,6 +758,34 @@ export type SchemaInfo = {
 	owner: string,
 	/**  `pg_*` and `information_schema`. */
 	isSystem: boolean,
+};
+
+/**  Numbers are text: a sequence can reach 9223372036854775807, which a JS number can't hold. */
+export type SequenceInfo = {
+	dataType: string,
+	start: string,
+	increment: string,
+	min: string,
+	max: string,
+	cache: string,
+	cycle: boolean,
+	/**  The last value handed out; `None` while the sequence has not been used. */
+	lastValue: string | null,
+	/**  `schema.table.column` if a column owns it (serial, identity). */
+	ownedBy: string | null,
+};
+
+/**  `setval`: the next value handed out depends on `is_called`. */
+export type SetSequence = {
+	schema: string,
+	name: string,
+	/**  A whole number, as text (a sequence can go past what a JS number holds). */
+	value: string,
+	/**
+	 *  `true`: `value` was already handed out, so the next is the one after it. `false`: the
+	 *  next value is `value` itself.
+	 */
+	isCalled: boolean,
 };
 
 export type SortDir = "asc" | "desc";

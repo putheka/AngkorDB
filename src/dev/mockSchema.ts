@@ -337,7 +337,10 @@ export function createSchemaHandlers(requireOpen: (id: string) => void): Record<
     list_enum_values: (args) => {
       requireOpen(String(args["connectionId"]));
       // The one enum in the mock schema.
-      return args["typeOid"] === 16500 ? ["active", "invited", "suspended"] : [];
+      const isEnum = (OBJECTS["public"] ?? []).some(
+        (o) => o.kind === "enumType" && o.oid === args["typeOid"],
+      );
+      return isEnum || args["typeOid"] === 16500 ? mockEnumValues() : [];
     },
 
     describe_table: (args): TableDescription => {
@@ -416,4 +419,46 @@ export function mockDropObject(schema: string, name: string): void {
 
 export function mockHasObject(schema: string, name: string): boolean {
   return (OBJECTS[schema] ?? []).some((o) => o.name === name);
+}
+
+// ---- Definitions, sequences and the enum (ANG-39) ----------------------------------------------
+
+/** The values of the one enum in the mock schema; an added value is appended or inserted. */
+const ENUM_VALUES = ["active", "invited", "suspended"];
+export const mockEnumValues = () => [...ENUM_VALUES];
+
+export function mockAddEnumValue(
+  value: string,
+  position: { before: boolean; existing: string } | null,
+  ifNotExists: boolean,
+): void {
+  if (ENUM_VALUES.includes(value)) {
+    if (ifNotExists) return;
+    throw appError("POSTGRES", `enum label "${value}" already exists`, { pgCode: "42710" });
+  }
+  const at = position ? ENUM_VALUES.indexOf(position.existing) : -1;
+  if (position && at === -1) {
+    throw appError("POSTGRES", `"${position.existing}" is not an existing enum label`, {
+      pgCode: "22023",
+    });
+  }
+  if (position) ENUM_VALUES.splice(position.before ? at : at + 1, 0, value);
+  else ENUM_VALUES.push(value);
+}
+
+/** What the mock sequences are at: the last value and whether it was handed out. */
+const SEQUENCES: Record<string, { last: string; called: boolean }> = {
+  "public.orders_id_seq": { last: "1000", called: true },
+  "billing.invoice_no_seq": { last: "1000", called: false },
+};
+
+export function mockSequence(schema: string, name: string) {
+  const state = SEQUENCES[`${schema}.${name}`];
+  if (!state) throw unknownObject(schema, name);
+  return state;
+}
+
+export function mockSetSequence(schema: string, name: string, value: string, called: boolean) {
+  mockSequence(schema, name);
+  SEQUENCES[`${schema}.${name}`] = { last: value, called };
 }
