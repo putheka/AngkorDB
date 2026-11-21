@@ -39,6 +39,9 @@ pub fn specta_builder<R: tauri::Runtime>() -> Builder<R> {
         // Our types have the same shape in both directions → one TS type each, no _Serialize split.
         .disable_serde_phases()
         .commands(collect_commands![
+            commands::activity::list_activity,
+            commands::activity::cancel_backend,
+            commands::activity::terminate_backend,
             commands::app::app_info,
             commands::app::set_unsaved_changes,
             commands::app::quit_app,

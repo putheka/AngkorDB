@@ -1,5 +1,6 @@
 //! Tauri command handlers, grouped by feature (connections, schema, rows, query, ...).
 
+pub mod activity;
 pub mod alter;
 pub mod app;
 pub mod changes;

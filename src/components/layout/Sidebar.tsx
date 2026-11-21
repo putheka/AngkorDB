@@ -1,4 +1,4 @@
-import { PlugZapIcon } from "lucide-react";
+import { ActivityIcon, PlugZapIcon } from "lucide-react";
 
 import { SidebarResizer } from "@/components/layout/SidebarResizer";
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,7 @@ import { ObjectTree } from "@/features/sidebar/ObjectTree";
 import { useConnections } from "@/features/connections/useConnections";
 import { useLayoutStore } from "@/stores/layout";
 import { useSessionStore } from "@/stores/session";
+import { useTabsStore } from "@/stores/tabs";
 
 /** The open connection on top, then its databases, schemas and objects. */
 export function Sidebar() {
@@ -26,6 +27,19 @@ export function Sidebar() {
       <div className="flex h-9 shrink-0 items-center gap-2 border-b border-sidebar-border pr-1 pl-3">
         {active && <ColorDot color={active.color} />}
         <span className="min-w-0 flex-1 truncate text-sm font-medium">{active?.name}</span>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Activity"
+              onClick={() => useTabsStore.getState().openActivity()}
+            >
+              <ActivityIcon />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Activity: processes and locks</TooltipContent>
+        </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
             <Button

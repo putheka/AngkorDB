@@ -13,6 +13,7 @@ import type {
   StructureChange,
 } from "@/bindings";
 
+import { mockCancelBackend, mockListActivity, mockTerminateBackend } from "@/dev/mockActivity";
 import { createChangeHandlers } from "@/dev/mockChanges";
 import { createHistoryHandlers } from "@/dev/mockHistory";
 import { createQueryHandlers } from "@/dev/mockQuery";
@@ -132,6 +133,12 @@ function requireOpen(id: string) {
   if (!openConnections.has(id)) throw appError("NOT_CONNECTED", `not connected to ${id}`);
 }
 
+function requireWritable(id: string) {
+  if (connections.find((c) => c.id === id)?.safeMode === "read-only") {
+    throw appError("VALIDATION", "This connection is read-only (safe mode).");
+  }
+}
+
 const handlers: Record<string, Handler> = {
   app_info: () => ({ name: "AngkorDB", version: "0.1.0 (browser mock)" }),
 
@@ -214,6 +221,20 @@ const handlers: Record<string, Handler> = {
   table_structure: (args) => {
     requireOpen(String(args["connectionId"]));
     return mockTableStructure(String(args["schema"]), String(args["table"]));
+  },
+  list_activity: (args) => {
+    requireOpen(String(args["connectionId"]));
+    return mockListActivity();
+  },
+  cancel_backend: (args) => {
+    requireOpen(String(args["connectionId"]));
+    requireWritable(String(args["connectionId"]));
+    return mockCancelBackend(Number(args["pid"]));
+  },
+  terminate_backend: (args) => {
+    requireOpen(String(args["connectionId"]));
+    requireWritable(String(args["connectionId"]));
+    return mockTerminateBackend(Number(args["pid"]));
   },
   database_options: (args) => {
     requireOpen(String(args["connectionId"]));

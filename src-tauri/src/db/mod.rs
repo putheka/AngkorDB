@@ -16,6 +16,7 @@
 //! - `structure` — columns, indexes, constraints, triggers and the DDL of one table
 //! - `session` — one open connection: metadata pool + dedicated client per query tab
 
+pub mod activity;
 pub mod alter;
 pub mod changes;
 pub mod classify;

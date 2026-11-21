@@ -22,11 +22,19 @@ export interface QueryTab extends TabBase {
   number: number;
 }
 
-export type Tab = TableTab | QueryTab;
+/** The process list. There is one per connection. */
+export interface ActivityTab extends TabBase {
+  kind: "activity";
+}
+
+export type Tab = TableTab | QueryTab | ActivityTab;
+
+export const ACTIVITY_TAB_ID = "activity";
 
 export const tableTabId = (schema: string, name: string) => `table:${schema}.${name}`;
 
-export const tabTitle = (tab: Tab) => (tab.kind === "table" ? tab.name : `Query ${tab.number}`);
+export const tabTitle = (tab: Tab) =>
+  tab.kind === "table" ? tab.name : tab.kind === "activity" ? "Activity" : `Query ${tab.number}`;
 
 interface TabsState {
   tabs: Tab[];
@@ -39,6 +47,8 @@ interface TabsState {
    */
   openTable: (object: { schema: string; name: string; kind: ObjectKind }, pin?: boolean) => void;
   newQuery: () => void;
+  /** Show the process list: focus its tab, or open one. */
+  openActivity: () => void;
   activate: (id: string) => void;
   /** 0-based; out of range picks the last tab. */
   activateIndex: (index: number) => void;
@@ -89,6 +99,13 @@ export const useTabsStore = create<TabsState>()((set) => ({
       const number = state.nextQueryNumber;
       const tab: QueryTab = { id: `query:${number}`, kind: "query", number, preview: false };
       return { tabs: [...state.tabs, tab], activeId: tab.id, nextQueryNumber: number + 1 };
+    }),
+
+  openActivity: () =>
+    set((state) => {
+      if (state.tabs.some((t) => t.id === ACTIVITY_TAB_ID)) return { activeId: ACTIVITY_TAB_ID };
+      const tab: ActivityTab = { id: ACTIVITY_TAB_ID, kind: "activity", preview: false };
+      return { tabs: [...state.tabs, tab], activeId: tab.id };
     }),
 
   activate: (id) =>

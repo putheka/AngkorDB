@@ -6,6 +6,15 @@ import type { InvokeOptions } from "@tauri-apps/api/core";
 
 /** Commands */
 export const commands = {
+	/**  Every client connection of the server. Reading only, so it works on a read-only connection. */
+	listActivity: (connectionId: string, options?: InvokeOptions) => __TAURI_INVOKE<Backend[]>("list_activity", { connectionId }, options),
+	/**  Stop the query a backend runs (`pg_cancel_backend`). `false`: it was gone already. */
+	cancelBackend: (connectionId: string, pid: number, options?: InvokeOptions) => __TAURI_INVOKE<boolean>("cancel_backend", { connectionId, pid }, options),
+	/**
+	 *  Close a backend's connection (`pg_terminate_backend`); its open transaction is rolled back.
+	 *  `false`: it was gone already.
+	 */
+	terminateBackend: (connectionId: string, pid: number, options?: InvokeOptions) => __TAURI_INVOKE<boolean>("terminate_backend", { connectionId, pid }, options),
 	/**
 	 *  Smoke-test command: proves the React ⇄ Rust bridge works.
 	 * 
@@ -204,6 +213,32 @@ export type ApplyResult = {
 	 *  as text in table column order, in the order of `TableChanges::inserts`.
 	 */
 	inserted: ((string | null)[])[],
+};
+
+/**  One client connection of the server, from `pg_stat_activity`. */
+export type Backend = {
+	pid: number,
+	database: string | null,
+	user: string | null,
+	application: string,
+	/**  The client's address; `None` for a connection over a Unix socket. */
+	client: string | null,
+	/**  `active`, `idle`, `idle in transaction`, … (`None` when the role may not see it). */
+	state: string | null,
+	waitEventType: string | null,
+	waitEvent: string | null,
+	/**  How long it has been in this state: running the query while `active`, waiting otherwise. */
+	stateSecs: number | null,
+	/**  How long its transaction has been open. */
+	transactionSecs: number | null,
+	/**  The query it runs, or ran last, cut to a few thousand characters. */
+	query: string,
+	/**  The pids it waits for. */
+	blockedBy: number[],
+	/**  What it waits for when it is blocked: `ShareLock on public.orders`. */
+	lockWait: string | null,
+	/**  The connection the app used to ask. It can't be stopped from here. */
+	isSelf: boolean,
 };
 
 /**

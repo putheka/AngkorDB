@@ -1,5 +1,6 @@
 import { TableIcon } from "lucide-react";
 
+import { ActivityView } from "@/features/admin/ActivityView";
 import { TableTabView } from "@/features/structure/TableTabView";
 import { QueryView } from "@/features/query/QueryView";
 import { useSessionStore } from "@/stores/session";
@@ -29,6 +30,14 @@ export function ConnectedView() {
     return (
       <div className="min-h-0 flex-1">
         <QueryView key={tab.id} connectionId={connectionId} tab={tab} />
+      </div>
+    );
+  }
+
+  if (tab.kind === "activity") {
+    return (
+      <div className="min-h-0 flex-1">
+        <ActivityView key={connectionId} connectionId={connectionId} />
       </div>
     );
   }

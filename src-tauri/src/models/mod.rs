@@ -1,5 +1,6 @@
 //! Serializable types shared with the frontend.
 
+pub mod activity;
 pub mod alter;
 pub mod changes;
 pub mod connection;

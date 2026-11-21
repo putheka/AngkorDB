@@ -393,6 +393,15 @@ fn schema_commands_need_an_open_connection() {
             json!({ "connectionId": "nope", "tabId": "query:1" }),
         ),
         ("database_options", json!({ "connectionId": "nope" })),
+        ("list_activity", json!({ "connectionId": "nope" })),
+        (
+            "cancel_backend",
+            json!({ "connectionId": "nope", "pid": 1 }),
+        ),
+        (
+            "terminate_backend",
+            json!({ "connectionId": "nope", "pid": 1 }),
+        ),
         (
             "database_connections",
             json!({ "connectionId": "nope", "name": "x" }),
@@ -1773,4 +1782,80 @@ fn databases_and_schemas_through_ipc() {
         )
         .unwrap_err();
     assert_eq!(err["code"], "VALIDATION");
+}
+
+#[test]
+fn the_process_list_through_ipc() {
+    if !dev_db_available() {
+        return;
+    }
+    let ipc = setup();
+    let mut form = config("Dev", "localhost", 54329);
+    form["user"] = json!("angkor");
+    form["database"] = json!("angkordb_dev");
+    let saved = ipc
+        .call(
+            "save_connection",
+            json!({ "config": form, "password": { "kind": "set", "value": "angkor" } }),
+        )
+        .unwrap();
+    let id = saved["id"].as_str().unwrap();
+    ipc.call("connect_connection", json!({ "id": id })).unwrap();
+
+    let list = ipc
+        .call("list_activity", json!({ "connectionId": id }))
+        .unwrap();
+    let rows = list.as_array().unwrap();
+    let me = rows
+        .iter()
+        .find(|r| r["isSelf"] == json!(true))
+        .expect("this connection is in the list");
+    assert_eq!(me["application"], "AngkorDB");
+    assert!(me["pid"].is_u64());
+    assert!(me["blockedBy"].is_array());
+
+    // Stopping the connection the list is read with is refused; a pid nobody has is "not found".
+    let own = me["pid"].as_u64().unwrap();
+    let err = ipc
+        .call(
+            "terminate_backend",
+            json!({ "connectionId": id, "pid": own }),
+        )
+        .unwrap_err();
+    assert_eq!(err["code"], "VALIDATION");
+    let gone = ipc
+        .call(
+            "cancel_backend",
+            json!({ "connectionId": id, "pid": 2_000_000_000u64 }),
+        )
+        .unwrap();
+    assert_eq!(gone, json!(false));
+}
+
+#[test]
+fn a_read_only_connection_refuses_to_stop_a_backend() {
+    if !dev_db_available() {
+        return;
+    }
+    let ipc = setup();
+    let mut form = config("Dev", "localhost", 54329);
+    form["user"] = json!("angkor");
+    form["database"] = json!("angkordb_dev");
+    form["safeMode"] = json!("read-only");
+    let saved = ipc
+        .call(
+            "save_connection",
+            json!({ "config": form, "password": { "kind": "set", "value": "angkor" } }),
+        )
+        .unwrap();
+    let id = saved["id"].as_str().unwrap();
+    ipc.call("connect_connection", json!({ "id": id })).unwrap();
+    // Looking is fine; changing what others run is not.
+    ipc.call("list_activity", json!({ "connectionId": id }))
+        .unwrap();
+    let err = ipc
+        .call("cancel_backend", json!({ "connectionId": id, "pid": 1 }))
+        .unwrap_err();
+    assert_eq!(err["code"], "VALIDATION");
+    assert!(err["message"].as_str().unwrap().contains("read-only"));
 }

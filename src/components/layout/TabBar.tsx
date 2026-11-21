@@ -1,4 +1,4 @@
-import { PlusIcon, SquareTerminalIcon, XIcon } from "lucide-react";
+import { ActivityIcon, PlusIcon, SquareTerminalIcon, XIcon } from "lucide-react";
 import { useEffect, useRef, useState, type PointerEvent, type WheelEvent } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -142,7 +142,12 @@ function TabItem({ tab, active, dragging, ...handlers }: TabItemProps) {
   const dirty = useIsDirty(tab.id);
   const count = useTabsStore((s) => s.tabs.length);
   const index = useTabsStore((s) => s.tabs.findIndex((t) => t.id === tab.id));
-  const Icon = tab.kind === "table" ? OBJECT_ICONS[tab.objectKind] : SquareTerminalIcon;
+  const Icon =
+    tab.kind === "table"
+      ? OBJECT_ICONS[tab.objectKind]
+      : tab.kind === "activity"
+        ? ActivityIcon
+        : SquareTerminalIcon;
   const title = tabTitle(tab);
 
   return (

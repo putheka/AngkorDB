@@ -239,6 +239,12 @@ function CommandResults({
       run: () => useTabsStore.getState().newQuery(),
     },
     {
+      id: "activity",
+      group: "Commands",
+      label: "Open activity (processes and locks)",
+      run: () => useTabsStore.getState().openActivity(),
+    },
+    {
       id: "reload",
       group: "Commands",
       label: "Reload schema and rows",
