@@ -24,6 +24,36 @@ pub struct ConnectionConfig {
     /// True when a password is saved in the Keychain. Maintained by the backend, ignored on input.
     /// Kept here so listing connections never has to touch the Keychain.
     pub has_password: bool,
+    /// Reach the database through an SSH server (ANG-43). `None`: connect directly. Missing in
+    /// files saved before ANG-43.
+    #[serde(default)]
+    pub ssh: Option<SshConfig>,
+}
+
+/// An SSH server to tunnel through. `host`/`port` of the connection are then as the SSH server
+/// sees them (`localhost` is the SSH server itself).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SshConfig {
+    pub host: String,
+    pub port: u16,
+    pub user: String,
+    pub auth: SshAuth,
+    /// True when the SSH password, or the key's passphrase, is saved in the Keychain.
+    /// Maintained by the backend, ignored on input.
+    #[serde(default)]
+    pub has_secret: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, specta::Type)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum SshAuth {
+    /// The SSH account's password (kept in the Keychain).
+    Password,
+    /// A private key file (its passphrase, if it has one, is kept in the Keychain).
+    PrivateKey { path: String },
+    /// Whatever keys the running ssh-agent (`SSH_AUTH_SOCK`) holds.
+    Agent,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, specta::Type)]
@@ -55,6 +85,19 @@ pub enum SafeMode {
     Confirm,
     TouchId,
     ReadOnly,
+}
+
+/// What "Test SSH" found out.
+#[derive(Debug, Clone, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SshTestResult {
+    /// `SHA256:…` of the SSH server's host key, which is in known_hosts.
+    pub fingerprint: String,
+    pub key_type: String,
+    /// The SSH server could open a connection to the database's host and port.
+    pub reaches_database: bool,
+    /// Why not, when it could not.
+    pub database_problem: Option<String>,
 }
 
 /// What to do with the saved password when saving or testing a connection.

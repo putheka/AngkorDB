@@ -4,6 +4,7 @@ import type {
   ParsedConnectionUrl,
   PasswordChange,
   SafeMode,
+  SshAuth,
   SslMode,
 } from "@/bindings";
 
@@ -28,6 +29,20 @@ export interface ConnectionForm {
   hasPassword: boolean;
   /** The user asked to remove the saved password. */
   removePassword: boolean;
+  /** Reach the database through an SSH server. */
+  useSsh: boolean;
+  sshHost: string;
+  sshPort: string;
+  sshUser: string;
+  sshAuth: SshAuth["kind"];
+  /** The private key file, when `sshAuth` is `privateKey`. */
+  sshKeyPath: string;
+  /** What the user typed: the SSH password, or the key's passphrase. Empty: leave the saved one. */
+  sshSecret: string;
+  /** An SSH secret is already saved in the Keychain. */
+  hasSshSecret: boolean;
+  /** The user asked to remove the saved SSH secret. */
+  removeSshSecret: boolean;
 }
 
 export const emptyForm: ConnectionForm = {
@@ -45,7 +60,22 @@ export const emptyForm: ConnectionForm = {
   statementTimeout: "",
   hasPassword: false,
   removePassword: false,
+  useSsh: false,
+  sshHost: "",
+  sshPort: "22",
+  sshUser: "",
+  sshAuth: "privateKey",
+  sshKeyPath: "",
+  sshSecret: "",
+  hasSshSecret: false,
+  removeSshSecret: false,
 };
+
+export const SSH_AUTH_METHODS: { value: SshAuth["kind"]; label: string }[] = [
+  { value: "privateKey", label: "Private key file" },
+  { value: "password", label: "Password" },
+  { value: "agent", label: "SSH agent" },
+];
 
 export const SSL_MODES: { value: SslMode; label: string }[] = [
   { value: "disable", label: "Disable" },
@@ -96,6 +126,15 @@ export function formFromConnection(connection: ConnectionConfig): ConnectionForm
     statementTimeout: secondsText(connection.statementTimeoutMs),
     hasPassword: connection.hasPassword,
     removePassword: false,
+    useSsh: connection.ssh !== null,
+    sshHost: connection.ssh?.host ?? "",
+    sshPort: String(connection.ssh?.port ?? 22),
+    sshUser: connection.ssh?.user ?? "",
+    sshAuth: connection.ssh?.auth.kind ?? "privateKey",
+    sshKeyPath: connection.ssh?.auth.kind === "privateKey" ? connection.ssh.auth.path : "",
+    sshSecret: "",
+    hasSshSecret: connection.ssh?.hasSecret ?? false,
+    removeSshSecret: false,
   };
 }
 
@@ -113,8 +152,40 @@ export function formToConfig(form: ConnectionForm): ConnectionConfig {
     safeMode: form.safeMode,
     statementTimeoutMs: timeoutMs(form.statementTimeout),
     hasPassword: form.hasPassword,
+    ssh: form.useSsh
+      ? {
+          host: form.sshHost,
+          port: Number(form.sshPort),
+          user: form.sshUser,
+          auth: sshAuthOf(form),
+          hasSecret: form.hasSshSecret,
+        }
+      : null,
   };
 }
+
+function sshAuthOf(form: ConnectionForm): SshAuth {
+  switch (form.sshAuth) {
+    case "privateKey":
+      return { kind: "privateKey", path: form.sshKeyPath };
+    case "password":
+      return { kind: "password" };
+    case "agent":
+      return { kind: "agent" };
+  }
+}
+
+/** What to do with the saved SSH password or passphrase. The agent has none. */
+export function formToSshSecretChange(form: ConnectionForm): PasswordChange {
+  if (!form.useSsh || form.sshAuth === "agent") return { kind: "keep" };
+  if (form.sshSecret !== "") return { kind: "set", value: form.sshSecret };
+  if (form.removeSshSecret) return { kind: "clear" };
+  return { kind: "keep" };
+}
+
+/** What the secret field is for, in words. */
+export const sshSecretLabel = (auth: SshAuth["kind"]) =>
+  auth === "password" ? "SSH password" : "Key passphrase";
 
 export function formToPasswordChange(form: ConnectionForm): PasswordChange {
   if (form.password !== "") return { kind: "set", value: form.password };
@@ -137,7 +208,18 @@ export function timeoutMs(text: string): number | null {
 }
 
 export type FormErrors = Partial<
-  Record<"host" | "port" | "user" | "database" | "statementTimeout", string>
+  Record<
+    | "host"
+    | "port"
+    | "user"
+    | "database"
+    | "statementTimeout"
+    | "sshHost"
+    | "sshPort"
+    | "sshUser"
+    | "sshKeyPath",
+    string
+  >
 >;
 
 export function validateForm(form: ConnectionForm): FormErrors {
@@ -147,6 +229,15 @@ export function validateForm(form: ConnectionForm): FormErrors {
   if (!/^\d+$/.test(form.port.trim()) || port < 1 || port > 65535) errors.port = "1 to 65535";
   if (!form.user.trim()) errors.user = "Required";
   if (!form.database.trim()) errors.database = "Required";
+  if (form.useSsh) {
+    if (!form.sshHost.trim()) errors.sshHost = "Required";
+    const sshPort = Number(form.sshPort.trim());
+    if (!/^\d+$/.test(form.sshPort.trim()) || sshPort < 1 || sshPort > 65535) {
+      errors.sshPort = "1 to 65535";
+    }
+    if (!form.sshUser.trim()) errors.sshUser = "Required";
+    if (form.sshAuth === "privateKey" && !form.sshKeyPath.trim()) errors.sshKeyPath = "Required";
+  }
   const timeout = form.statementTimeout.trim();
   if (timeout !== "") {
     const seconds = Number(timeout);
@@ -174,7 +265,9 @@ export function applyParsedUrl(form: ConnectionForm, parsed: ParsedConnectionUrl
 
 /** What the connection looks like in a list: user@host:port/database */
 export function describeConnection(
-  c: Pick<ConnectionConfig, "user" | "host" | "port" | "database">,
+  c: Pick<ConnectionConfig, "user" | "host" | "port" | "database"> &
+    Partial<Pick<ConnectionConfig, "ssh">>,
 ) {
-  return `${c.user}@${c.host}:${c.port}/${c.database}`;
+  const base = `${c.user}@${c.host}:${c.port}/${c.database}`;
+  return c.ssh ? `${base} · via ${c.ssh.user}@${c.ssh.host}` : base;
 }

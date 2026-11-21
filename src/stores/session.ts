@@ -1,6 +1,7 @@
 import { create } from "zustand";
 
 import type { ConnectionConfig } from "@/bindings";
+import { hostKeyStop, type HostKeyStop } from "@/features/connections/hostKey";
 import { errorMessage } from "@/lib/errors";
 import { guardUnsaved } from "@/features/grid/editing/unsavedGuard";
 import { commands } from "@/lib/ipc";
@@ -18,7 +19,12 @@ interface SessionState {
   connectingId: string | null;
   /** Why the last connect failed. */
   error: string | null;
+  /** The SSH server's host key that the last connect stopped at, waiting to be trusted or not. */
+  hostKey: { connection: ConnectionConfig; stop: HostKeyStop } | null;
   connect: (connection: ConnectionConfig) => Promise<void>;
+  /** Trust the host key the connect stopped at, then connect again. */
+  trustHostKey: () => Promise<void>;
+  dismissHostKey: () => void;
   /** `false` when the person chose to stay because of unsaved edits. */
   disconnect: () => Promise<boolean>;
   clearError: () => void;
@@ -29,10 +35,11 @@ export const useSessionStore = create<SessionState>()((set, get) => ({
   serverVersion: null,
   connectingId: null,
   error: null,
+  hostKey: null,
 
   connect: async (connection) => {
     if (get().connectingId) return;
-    set({ connectingId: connection.id, error: null });
+    set({ connectingId: connection.id, error: null, hostKey: null });
     try {
       const info = await commands.connectConnection(connection.id);
       set({
@@ -41,12 +48,33 @@ export const useSessionStore = create<SessionState>()((set, get) => ({
         connectingId: null,
       });
     } catch (error) {
+      const stop = hostKeyStop(error);
+      if (stop?.kind === "unknown") {
+        // Not a failure yet: the person decides whether this is the server they mean.
+        set({ connectingId: null, hostKey: { connection, stop } });
+        return;
+      }
       set({
         connectingId: null,
         error: `Could not connect to “${connection.name}”: ${errorMessage(error)}`,
       });
     }
   },
+
+  trustHostKey: async () => {
+    const pending = get().hostKey;
+    if (!pending) return;
+    try {
+      await commands.trustSshHost(pending.stop.fingerprint);
+    } catch (error) {
+      set({ hostKey: null, error: errorMessage(error) });
+      return;
+    }
+    set({ hostKey: null });
+    await get().connect(pending.connection);
+  },
+
+  dismissHostKey: () => set({ hostKey: null }),
 
   disconnect: async () => {
     const id = get().activeConnectionId;

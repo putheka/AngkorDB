@@ -1,8 +1,8 @@
 import { useMutation } from "@tanstack/react-query";
-import { CheckIcon, Loader2Icon } from "lucide-react";
+import { CheckIcon, Loader2Icon, TriangleAlertIcon } from "lucide-react";
 import { useState, type ClipboardEvent, type FormEvent, type ReactNode } from "react";
 
-import type { ColorTag, ConnectionConfig, SafeMode, SslMode } from "@/bindings";
+import type { ColorTag, ConnectionConfig, SafeMode, SshAuth, SslMode } from "@/bindings";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -30,11 +30,16 @@ import {
   formFromConnection,
   formToConfig,
   formToPasswordChange,
+  formToSshSecretChange,
   SAFE_MODES,
+  SSH_AUTH_METHODS,
+  sshSecretLabel,
   SSL_MODES,
   validateForm,
   type ConnectionForm,
 } from "@/features/connections/form";
+import { HostKeyDetails } from "@/features/connections/HostKeyDialog";
+import { hostKeyStop, type HostKeyStop } from "@/features/connections/hostKey";
 import { useSaveConnection } from "@/features/connections/useConnections";
 import { errorDetails, errorMessage } from "@/lib/errors";
 import { commands } from "@/lib/ipc";
@@ -75,8 +80,18 @@ function ConnectionFormBody({ connection, groups, onClose }: ConnectionDialogPro
   const save = useSaveConnection();
   const test = useMutation({
     mutationFn: (values: ConnectionForm) =>
-      commands.testConnection(formToConfig(values), formToPasswordChange(values)),
+      commands.testConnection(
+        formToConfig(values),
+        formToPasswordChange(values),
+        formToSshSecretChange(values),
+      ),
   });
+  const sshTest = useMutation({
+    mutationFn: (values: ConnectionForm) =>
+      commands.testSsh(formToConfig(values), formToSshSecretChange(values)),
+  });
+  const [trusting, setTrusting] = useState(false);
+  const [trustError, setTrustError] = useState<unknown>(null);
 
   const errors = validateForm(form);
   const isValid = Object.keys(errors).length === 0;
@@ -86,6 +101,8 @@ function ConnectionFormBody({ connection, groups, onClose }: ConnectionDialogPro
   function update(patch: Partial<ConnectionForm>) {
     setForm((current) => ({ ...current, ...patch }));
     test.reset();
+    sshTest.reset();
+    setTrustError(null);
   }
 
   async function importUrl(text: string) {
@@ -95,6 +112,7 @@ function ConnectionFormBody({ connection, groups, onClose }: ConnectionDialogPro
       setUrlText("");
       setUrlError(null);
       test.reset();
+      sshTest.reset();
     } catch (error) {
       setUrlError(errorMessage(error));
     }
@@ -111,21 +129,55 @@ function ConnectionFormBody({ connection, groups, onClose }: ConnectionDialogPro
 
   function handleTest() {
     if (!isValid) return setShowErrors(true);
+    sshTest.reset();
     test.mutate(form);
+  }
+
+  function handleTestSsh() {
+    if (!isValid) return setShowErrors(true);
+    test.reset();
+    sshTest.mutate(form);
+  }
+
+  /** The host key the last test stopped at is trusted; the same test runs again. */
+  async function trustAndRetry(stop: HostKeyStop, again: "connection" | "ssh") {
+    setTrusting(true);
+    setTrustError(null);
+    try {
+      await commands.trustSshHost(stop.fingerprint);
+      if (again === "ssh") sshTest.mutate(form);
+      else test.mutate(form);
+    } catch (error) {
+      (again === "ssh" ? sshTest : test).reset();
+      setTrustError(error);
+    } finally {
+      setTrusting(false);
+    }
   }
 
   async function handleSave(event: FormEvent) {
     event.preventDefault();
     if (!isValid) return setShowErrors(true);
     try {
-      await save.mutateAsync({ config: formToConfig(form), password: formToPasswordChange(form) });
+      await save.mutateAsync({
+        config: formToConfig(form),
+        password: formToPasswordChange(form),
+        sshSecret: formToSshSecretChange(form),
+      });
       onClose();
     } catch {
       // The error is shown under the buttons.
     }
   }
 
-  const busy = save.isPending || test.isPending;
+  const busy = save.isPending || test.isPending || sshTest.isPending || trusting;
+  const sshSecretPlaceholder = form.removeSshSecret
+    ? "The saved secret will be removed"
+    : form.hasSshSecret
+      ? "Saved in Keychain. Type to replace"
+      : form.sshAuth === "password"
+        ? "Required"
+        : "Only if the key has one";
   const passwordPlaceholder = form.removePassword
     ? "The saved password will be removed"
     : form.hasPassword
@@ -265,6 +317,155 @@ function ConnectionFormBody({ connection, groups, onClose }: ConnectionDialogPro
           </Select>
         </Field>
 
+        <div className="col-span-6 flex flex-col gap-3 rounded-lg border p-3">
+          <label className="flex items-center gap-2 text-sm font-medium">
+            <input
+              type="checkbox"
+              checked={form.useSsh}
+              onChange={(e) => update({ useSsh: e.target.checked })}
+            />
+            Connect through an SSH tunnel
+          </label>
+          {form.useSsh && (
+            <div className="grid grid-cols-6 gap-x-3 gap-y-3">
+              <p className="col-span-6 text-xs text-muted-foreground">
+                The host and port above are the database as the SSH server sees it:{" "}
+                <span className="font-mono">localhost</span> is the SSH server itself.
+              </p>
+              <Field
+                label="SSH host"
+                htmlFor="ssh-host"
+                error={fieldError("sshHost")}
+                className="col-span-4"
+              >
+                <Input
+                  id="ssh-host"
+                  value={form.sshHost}
+                  onChange={(e) => update({ sshHost: e.target.value })}
+                  aria-invalid={!!fieldError("sshHost")}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </Field>
+              <Field
+                label="SSH port"
+                htmlFor="ssh-port"
+                error={fieldError("sshPort")}
+                className="col-span-2"
+              >
+                <Input
+                  id="ssh-port"
+                  value={form.sshPort}
+                  onChange={(e) => update({ sshPort: e.target.value })}
+                  inputMode="numeric"
+                  aria-invalid={!!fieldError("sshPort")}
+                  autoComplete="off"
+                />
+              </Field>
+              <Field
+                label="SSH user"
+                htmlFor="ssh-user"
+                error={fieldError("sshUser")}
+                className="col-span-3"
+              >
+                <Input
+                  id="ssh-user"
+                  value={form.sshUser}
+                  onChange={(e) => update({ sshUser: e.target.value })}
+                  aria-invalid={!!fieldError("sshUser")}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </Field>
+              <Field label="Log in with" htmlFor="ssh-auth" className="col-span-3">
+                <Select
+                  value={form.sshAuth}
+                  onValueChange={(v) =>
+                    // A saved secret belongs to the way it was saved for.
+                    update({
+                      sshAuth: v as SshAuth["kind"],
+                      sshSecret: "",
+                      removeSshSecret: form.hasSshSecret,
+                    })
+                  }
+                >
+                  <SelectTrigger id="ssh-auth" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {SSH_AUTH_METHODS.map((method) => (
+                      <SelectItem key={method.value} value={method.value}>
+                        {method.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+              {form.sshAuth === "privateKey" && (
+                <Field
+                  label="Private key file"
+                  htmlFor="ssh-key"
+                  error={fieldError("sshKeyPath")}
+                  className="col-span-6"
+                >
+                  <Input
+                    id="ssh-key"
+                    value={form.sshKeyPath}
+                    onChange={(e) => update({ sshKeyPath: e.target.value })}
+                    placeholder="~/.ssh/id_ed25519"
+                    aria-invalid={!!fieldError("sshKeyPath")}
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                </Field>
+              )}
+              {form.sshAuth !== "agent" && (
+                <Field
+                  label={sshSecretLabel(form.sshAuth)}
+                  htmlFor="ssh-secret"
+                  className="col-span-6"
+                >
+                  <Input
+                    id="ssh-secret"
+                    type="password"
+                    value={form.sshSecret}
+                    onChange={(e) => update({ sshSecret: e.target.value })}
+                    placeholder={sshSecretPlaceholder}
+                    autoComplete="new-password"
+                  />
+                  {form.hasSshSecret && !form.sshSecret && (
+                    <button
+                      type="button"
+                      onClick={() => update({ removeSshSecret: !form.removeSshSecret })}
+                      className="self-start text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                    >
+                      {form.removeSshSecret ? "Keep the saved secret" : "Remove saved secret"}
+                    </button>
+                  )}
+                </Field>
+              )}
+              {form.sshAuth === "agent" && (
+                <p className="col-span-6 text-xs text-muted-foreground">
+                  The keys of the running ssh-agent (
+                  <span className="font-mono">SSH_AUTH_SOCK</span>) are tried in turn. Add yours
+                  with <span className="font-mono">ssh-add</span>.
+                </p>
+              )}
+              <div className="col-span-6">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleTestSsh}
+                  disabled={busy}
+                >
+                  Test SSH
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+
         <Field label="Group" htmlFor="conn-group" className="col-span-3">
           <Input
             id="conn-group"
@@ -330,7 +531,40 @@ function ConnectionFormBody({ connection, groups, onClose }: ConnectionDialogPro
             Connected · PostgreSQL {test.data.serverVersion} · {test.data.latencyMs} ms
           </p>
         )}
-        {test.isError && <ErrorNote error={test.error} />}
+        {sshTest.isPending && (
+          <p className="flex items-center gap-2 text-muted-foreground">
+            <Loader2Icon className="size-4 animate-spin" /> Testing SSH…
+          </p>
+        )}
+        {sshTest.isSuccess && (
+          <div className="flex flex-col gap-1">
+            <p className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400">
+              <CheckIcon className="size-4" />
+              SSH login works · host key {sshTest.data.fingerprint || "known"}
+            </p>
+            {sshTest.data.reachesDatabase ? (
+              <p className="pl-6 text-xs text-muted-foreground">
+                The SSH server can reach {form.host}:{form.port}.
+              </p>
+            ) : (
+              <p className="flex items-start gap-2 pl-0.5 text-xs text-amber-700 dark:text-amber-300">
+                <TriangleAlertIcon className="mt-0.5 size-3.5 shrink-0" />
+                {sshTest.data.databaseProblem ?? "The SSH server can't reach the database."}
+              </p>
+            )}
+          </div>
+        )}
+        <TestFailure
+          error={test.error}
+          busy={trusting}
+          onTrust={(stop) => void trustAndRetry(stop, "connection")}
+        />
+        <TestFailure
+          error={sshTest.error}
+          busy={trusting}
+          onTrust={(stop) => void trustAndRetry(stop, "ssh")}
+        />
+        {trustError !== null && <ErrorNote error={trustError} />}
         {save.isError && <ErrorNote error={save.error} />}
       </div>
 
@@ -401,6 +635,35 @@ function ColorPicker({
           )}
         />
       ))}
+    </div>
+  );
+}
+
+/** A failed test: a new SSH host key asks to be trusted; anything else is shown as an error. */
+function TestFailure({
+  error,
+  busy,
+  onTrust,
+}: {
+  error: unknown;
+  busy: boolean;
+  onTrust: (stop: HostKeyStop) => void;
+}) {
+  if (error === null || error === undefined) return null;
+  const stop = hostKeyStop(error);
+  if (stop?.kind !== "unknown") return <ErrorNote error={error} />;
+  return (
+    <div role="alert" className="flex flex-col gap-2">
+      <p className="flex items-start gap-2 text-amber-700 dark:text-amber-300">
+        <TriangleAlertIcon className="mt-0.5 size-4 shrink-0" />
+        {stop.message}
+      </p>
+      <HostKeyDetails summary={stop.summary} fingerprint={stop.fingerprint} />
+      <div>
+        <Button type="button" size="sm" disabled={busy} onClick={() => onTrust(stop)}>
+          {busy ? "Working…" : "Trust and test again"}
+        </Button>
+      </div>
     </div>
   );
 }

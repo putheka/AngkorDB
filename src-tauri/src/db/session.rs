@@ -9,6 +9,7 @@ use tokio::sync::Mutex;
 use tokio_postgres::{AsyncMessage, Client, Config};
 use tokio_postgres_rustls::MakeRustlsConnect;
 
+use crate::db::ssh::{SshSetup, SshTunnel};
 use crate::db::{config, tls};
 use crate::error::{AppError, AppResult};
 use crate::models::connection::{ConnectionConfig, ConnectionInfo};
@@ -32,13 +33,28 @@ pub struct Session {
     tabs: Mutex<HashMap<String, Arc<Client>>>,
     /// What each tab's server connection has said (`RAISE NOTICE`, …) since it was last read.
     notices: std::sync::Mutex<HashMap<String, Arc<std::sync::Mutex<Vec<Notice>>>>>,
+    /// The SSH tunnel the connections go through, if the connection has one. Shared with the
+    /// sessions made by `switch_database`; the tunnel closes when the last of them goes.
+    tunnel: std::sync::Mutex<Option<Arc<SshTunnel>>>,
 }
 
 impl Session {
     /// Connect and read the server version. Fails fast on bad host, credentials or TLS.
     pub async fn open(config: ConnectionConfig, password: Option<&str>) -> AppResult<Self> {
-        let pg_config = config::pg_config(&config, password);
-        Self::connect(config, pg_config).await
+        Self::open_with_ssh(config, password, None).await
+    }
+
+    /// Like [`Session::open`], through the SSH tunnel the connection asks for (`ssh`: its
+    /// password or passphrase and where host keys are kept; `None` uses the defaults).
+    pub async fn open_with_ssh(
+        config: ConnectionConfig,
+        password: Option<&str>,
+        ssh: Option<SshSetup>,
+    ) -> AppResult<Self> {
+        let tunnel = open_tunnel(&config, ssh).await?;
+        let pg_config =
+            config::pg_config_via(&config, password, tunnel.as_ref().map(|t| t.local_port()));
+        Self::connect(config, pg_config, tunnel).await
     }
 
     /// Open another database on the same server with the same credentials: a new session
@@ -48,10 +64,19 @@ impl Session {
         config.database = database.to_owned();
         let mut pg_config = self.pg_config.clone();
         pg_config.dbname(database);
-        Self::connect(config, pg_config).await
+        let tunnel = self
+            .tunnel
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        Self::connect(config, pg_config, tunnel).await
     }
 
-    async fn connect(config: ConnectionConfig, pg_config: Config) -> AppResult<Self> {
+    async fn connect(
+        config: ConnectionConfig,
+        pg_config: Config,
+        tunnel: Option<Arc<SshTunnel>>,
+    ) -> AppResult<Self> {
         let started = Instant::now();
         let tls = tls::make_tls()?;
 
@@ -91,7 +116,17 @@ impl Session {
             meta_pool,
             tabs: Mutex::new(HashMap::new()),
             notices: std::sync::Mutex::new(HashMap::new()),
+            tunnel: std::sync::Mutex::new(tunnel),
         })
+    }
+
+    /// The local port of the SSH tunnel, when the connection goes through one.
+    pub fn tunnel_port(&self) -> Option<u16> {
+        self.tunnel
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .map(|t| t.local_port())
     }
 
     pub fn config(&self) -> &ConnectionConfig {
@@ -190,7 +225,22 @@ impl Session {
         }
         self.tabs.lock().await.clear();
         self.meta_pool.close();
+        // Let go of the tunnel: it closes with the last session that uses it.
+        self.tunnel.lock().unwrap_or_else(|e| e.into_inner()).take();
     }
+}
+
+/// Open the SSH tunnel of a connection that has one.
+async fn open_tunnel(
+    config: &ConnectionConfig,
+    setup: Option<SshSetup>,
+) -> AppResult<Option<Arc<SshTunnel>>> {
+    let Some(ssh) = &config.ssh else {
+        return Ok(None);
+    };
+    let setup = setup.unwrap_or_else(|| SshSetup::new(None));
+    let tunnel = SshTunnel::open(ssh, &setup, &config.host, config.port).await?;
+    Ok(Some(Arc::new(tunnel)))
 }
 
 async fn server_version(client: &Client) -> AppResult<String> {
@@ -214,8 +264,20 @@ pub async fn test_connection(
     config: &ConnectionConfig,
     password: Option<&str>,
 ) -> AppResult<ConnectionInfo> {
+    test_connection_with_ssh(config, password, None).await
+}
+
+/// [`test_connection`] through the SSH tunnel the settings ask for. The tunnel is closed again
+/// afterwards; logging in to the SSH server has its own time limit.
+pub async fn test_connection_with_ssh(
+    config: &ConnectionConfig,
+    password: Option<&str>,
+    ssh: Option<SshSetup>,
+) -> AppResult<ConnectionInfo> {
     let started = Instant::now();
-    let pg_config = config::pg_config(config, password);
+    let tunnel = open_tunnel(config, ssh).await?;
+    let pg_config =
+        config::pg_config_via(config, password, tunnel.as_ref().map(|t| t.local_port()));
     let tls = tls::make_tls()?;
 
     let attempt = async {

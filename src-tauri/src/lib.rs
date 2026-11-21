@@ -50,6 +50,8 @@ pub fn specta_builder<R: tauri::Runtime>() -> Builder<R> {
             commands::connections::delete_connection,
             commands::connections::duplicate_connection,
             commands::connections::test_connection,
+            commands::connections::test_ssh,
+            commands::connections::trust_ssh_host,
             commands::connections::parse_connection_url,
             commands::connections::connect_connection,
             commands::connections::disconnect_connection,

@@ -1,10 +1,12 @@
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tokio::sync::RwLock;
 
 use crate::db::session::Session;
+use crate::db::ssh::{self, HostKeyProblem};
 use crate::error::{AppError, AppResult};
 use crate::storage::ConnectionManager;
 use crate::storage::history::HistoryStore;
@@ -28,6 +30,10 @@ pub struct AppState {
     unsaved: AtomicU32,
     hooks: Mutex<Option<WindowHooks>>,
     history: HistoryStore,
+    /// Where SSH host keys are recorded (`~/.ssh/known_hosts`).
+    known_hosts: PathBuf,
+    /// Host keys an SSH tunnel stopped at, by fingerprint, until the person trusts one or not.
+    pending_host_keys: Mutex<HashMap<String, HostKeyProblem>>,
 }
 
 impl AppState {
@@ -39,7 +45,40 @@ impl AppState {
             hooks: Mutex::new(None),
             // Without a file (tests): history that lasts as long as the app does.
             history: HistoryStore::in_memory().expect("an in-memory SQLite database"),
+            known_hosts: ssh::default_known_hosts(),
+            pending_host_keys: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Record SSH host keys in this file instead of `~/.ssh/known_hosts` (tests).
+    pub fn with_known_hosts(mut self, path: PathBuf) -> Self {
+        self.known_hosts = path;
+        self
+    }
+
+    pub fn known_hosts(&self) -> &Path {
+        &self.known_hosts
+    }
+
+    /// Keep a host key the person is asked about, so that "trust" can record exactly it.
+    pub fn remember_host_key(&self, problem: HostKeyProblem) {
+        if problem.changed {
+            return; // never offered
+        }
+        if let Ok(mut pending) = self.pending_host_keys.lock() {
+            if pending.len() >= 16 {
+                pending.clear();
+            }
+            pending.insert(problem.fingerprint.clone(), problem);
+        }
+    }
+
+    /// The host key with this fingerprint, once, for trusting it.
+    pub fn take_host_key(&self, fingerprint: &str) -> Option<HostKeyProblem> {
+        self.pending_host_keys
+            .lock()
+            .ok()
+            .and_then(|mut pending| pending.remove(fingerprint))
     }
 
     /// Keep query history and saved queries in this store (a file) instead of in memory.

@@ -31,6 +31,7 @@ pub mod roles;
 pub mod rows;
 pub mod script;
 pub mod session;
+pub mod ssh;
 pub mod structure;
 pub mod tls;
 pub mod url;

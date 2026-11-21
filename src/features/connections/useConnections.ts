@@ -17,8 +17,11 @@ function useRefreshConnections() {
 export function useSaveConnection() {
   const refresh = useRefreshConnections();
   return useMutation({
-    mutationFn: (input: { config: ConnectionConfig; password: PasswordChange }) =>
-      commands.saveConnection(input.config, input.password),
+    mutationFn: (input: {
+      config: ConnectionConfig;
+      password: PasswordChange;
+      sshSecret: PasswordChange | null;
+    }) => commands.saveConnection(input.config, input.password, input.sshSecret),
     onSuccess: refresh,
   });
 }

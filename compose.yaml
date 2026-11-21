@@ -27,5 +27,18 @@ services:
       timeout: 3s
       retries: 60
 
+  # An SSH server to test the SSH tunnel against (ANG-43): ssh -p 2222 tunnel@localhost,
+  # password `tunnel`. From in there the database is `postgres:5432`.
+  sshd:
+    build: ./dev/sshd
+    container_name: angkordb-sshd
+    restart: unless-stopped
+    depends_on:
+      - postgres
+    ports:
+      - "2222:22"
+    volumes:
+      - ./dev/sshd/authorized:/authorized:ro
+
 volumes:
   pgdata:

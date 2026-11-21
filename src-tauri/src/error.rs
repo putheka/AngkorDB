@@ -1,6 +1,8 @@
 use serde::{Serialize, Serializer};
 use tokio_postgres::error::ErrorPosition;
 
+use crate::db::ssh::HostKeyProblem;
+
 /// Every command returns `AppResult<T>`. The UI receives errors as
 /// `{ code, message, pgCode?, detail?, hint?, position? }` (ANG-8 D9).
 #[derive(Debug, thiserror::Error)]
@@ -53,6 +55,14 @@ pub enum AppError {
     #[error("{0}")]
     Auth(String),
 
+    /// The SSH tunnel could not be set up: server unreachable, login refused, bad key file.
+    #[error("SSH: {0}")]
+    Ssh(String),
+
+    /// The SSH server's host key is not in known_hosts yet, or is not the one that is.
+    #[error("{}", .0.message())]
+    SshHostKey(HostKeyProblem),
+
     /// One change of a batch failed, so the whole batch was rolled back (ANG-23).
     #[error("{what}: {source}")]
     Change {
@@ -74,6 +84,9 @@ impl AppError {
             Self::Timeout(_) => "TIMEOUT",
             Self::Tls(_) => "TLS",
             Self::Validation(_) => "VALIDATION",
+            Self::Ssh(_) => "SSH",
+            Self::SshHostKey(problem) if problem.changed => "SSH_HOST_CHANGED",
+            Self::SshHostKey(_) => "SSH_HOST_UNKNOWN",
             Self::Storage(_) => "STORAGE",
             Self::Keychain(_) => "KEYCHAIN",
             Self::Internal(_) => "INTERNAL",
@@ -104,6 +117,14 @@ impl AppError {
     /// True when the server could not be reached at all (refused, DNS, timeout).
     pub fn is_connection_error(&self) -> bool {
         matches!(self.code(), "CONNECTION" | "TIMEOUT")
+    }
+
+    /// The host key an SSH tunnel stopped at, when that is why it failed.
+    pub fn host_key(&self) -> Option<&HostKeyProblem> {
+        match self {
+            Self::SshHostKey(problem) => Some(problem),
+            _ => None,
+        }
     }
 
     /// SQLSTATE code, e.g. `23505` for a unique violation.
@@ -153,8 +174,14 @@ impl From<&AppError> for AppErrorPayload {
             code: err.code().to_owned(),
             message: err.message(),
             pg_code: db.map(|d| d.code().code().to_owned()),
-            detail: db.and_then(|d| d.detail()).map(str::to_owned),
-            hint: db.and_then(|d| d.hint()).map(str::to_owned),
+            detail: db
+                .and_then(|d| d.detail())
+                .map(str::to_owned)
+                .or_else(|| err.host_key().map(|k| k.fingerprint.clone())),
+            hint: db
+                .and_then(|d| d.hint())
+                .map(str::to_owned)
+                .or_else(|| err.host_key().map(HostKeyProblem::summary)),
             // A batch has no single SQL text the offset could point into.
             position: db
                 .filter(|_| !matches!(err, AppError::Change { .. }))

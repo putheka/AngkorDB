@@ -4,7 +4,7 @@ use std::fs;
 use std::sync::Arc;
 
 use angkordb_lib::models::connection::{
-    ColorTag, ConnectionConfig, PasswordChange, SafeMode, SslMode,
+    ColorTag, ConnectionConfig, PasswordChange, SafeMode, SshAuth, SshConfig, SslMode,
 };
 use angkordb_lib::storage::ConnectionManager;
 use angkordb_lib::storage::connections::FILE_NAME;
@@ -45,6 +45,7 @@ fn config(name: &str) -> ConnectionConfig {
         safe_mode: SafeMode::Off,
         statement_timeout_ms: None,
         has_password: false,
+        ssh: None,
     }
 }
 
@@ -353,4 +354,279 @@ fn connections_saved_before_the_statement_timeout_existed_still_load() {
     ))
     .unwrap();
     assert_eq!(with.statement_timeout_ms, Some(5000));
+}
+
+// ---- SSH tunnel settings (ANG-43) ------------------------------------------------------------
+
+fn with_ssh(name: &str, auth: SshAuth) -> ConnectionConfig {
+    ConnectionConfig {
+        ssh: Some(SshConfig {
+            host: " bastion.example.com ".into(),
+            port: 22,
+            user: " deploy ".into(),
+            auth,
+            has_secret: true, // ignored: the backend decides
+        }),
+        ..config(name)
+    }
+}
+
+#[tokio::test]
+async fn the_ssh_secret_lives_in_the_keychain_under_its_own_account_and_never_in_the_file() {
+    let f = fixture();
+    let saved = f
+        .manager
+        .save_with_ssh(
+            with_ssh("Prod", SshAuth::Password),
+            PasswordChange::Keep,
+            set("s3cret"),
+        )
+        .await
+        .unwrap();
+    let ssh = saved.ssh.as_ref().unwrap();
+    assert_eq!(
+        (ssh.host.as_str(), ssh.user.as_str()),
+        ("bastion.example.com", "deploy")
+    );
+    assert!(ssh.has_secret);
+    assert_eq!(
+        f.secrets
+            .get(&format!("{}:ssh", saved.id))
+            .unwrap()
+            .as_deref(),
+        Some("s3cret")
+    );
+    // The database password is a different secret.
+    assert_eq!(f.secrets.get(&saved.id).unwrap(), None);
+    assert_eq!(
+        f.manager.ssh_secret(&saved.id).await.unwrap().as_deref(),
+        Some("s3cret")
+    );
+    let file = fs::read_to_string(f.dir.path().join(FILE_NAME)).unwrap();
+    assert!(!file.contains("s3cret"), "{file}");
+    assert!(file.contains("bastion.example.com"));
+
+    // Keep leaves it, Clear removes it.
+    let kept = f
+        .manager
+        .save_with_ssh(
+            ConnectionConfig {
+                id: saved.id.clone(),
+                ..with_ssh("Prod", SshAuth::Password)
+            },
+            PasswordChange::Keep,
+            PasswordChange::Keep,
+        )
+        .await
+        .unwrap();
+    assert!(kept.ssh.as_ref().unwrap().has_secret);
+    let cleared = f
+        .manager
+        .save_with_ssh(
+            ConnectionConfig {
+                id: saved.id.clone(),
+                ..with_ssh("Prod", SshAuth::Password)
+            },
+            PasswordChange::Keep,
+            PasswordChange::Clear,
+        )
+        .await
+        .unwrap();
+    assert!(!cleared.ssh.as_ref().unwrap().has_secret);
+    assert_eq!(f.secrets.get(&format!("{}:ssh", saved.id)).unwrap(), None);
+    assert_eq!(f.manager.ssh_secret(&saved.id).await.unwrap(), None);
+}
+
+#[tokio::test]
+async fn switching_to_the_agent_or_removing_the_tunnel_removes_the_secret() {
+    let f = fixture();
+    let saved = f
+        .manager
+        .save_with_ssh(
+            with_ssh("Prod", SshAuth::Password),
+            PasswordChange::Keep,
+            set("s3cret"),
+        )
+        .await
+        .unwrap();
+    let account = format!("{}:ssh", saved.id);
+
+    let agent = f
+        .manager
+        .save_with_ssh(
+            ConnectionConfig {
+                id: saved.id.clone(),
+                ..with_ssh("Prod", SshAuth::Agent)
+            },
+            PasswordChange::Keep,
+            PasswordChange::Keep,
+        )
+        .await
+        .unwrap();
+    assert!(!agent.ssh.as_ref().unwrap().has_secret);
+    assert_eq!(f.secrets.get(&account).unwrap(), None);
+
+    // And again with a secret, then no tunnel at all.
+    f.manager
+        .save_with_ssh(
+            ConnectionConfig {
+                id: saved.id.clone(),
+                ..with_ssh("Prod", SshAuth::Password)
+            },
+            PasswordChange::Keep,
+            set("again"),
+        )
+        .await
+        .unwrap();
+    assert!(f.secrets.get(&account).unwrap().is_some());
+    let direct = f
+        .manager
+        .save_with_ssh(
+            ConnectionConfig {
+                id: saved.id.clone(),
+                ..config("Prod")
+            },
+            PasswordChange::Keep,
+            PasswordChange::Keep,
+        )
+        .await
+        .unwrap();
+    assert!(direct.ssh.is_none());
+    assert_eq!(f.secrets.get(&account).unwrap(), None);
+}
+
+#[tokio::test]
+async fn an_ssh_secret_is_copied_with_a_duplicate_and_deleted_with_its_connection() {
+    let f = fixture();
+    let saved = f
+        .manager
+        .save_with_ssh(
+            with_ssh(
+                "Prod",
+                SshAuth::PrivateKey {
+                    path: " ~/.ssh/id_ed25519 ".into(),
+                },
+            ),
+            PasswordChange::Keep,
+            set("passphrase"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        saved.ssh.as_ref().unwrap().auth,
+        SshAuth::PrivateKey {
+            path: "~/.ssh/id_ed25519".into()
+        }
+    );
+    let copy = f.manager.duplicate(&saved.id).await.unwrap();
+    assert!(copy.ssh.as_ref().unwrap().has_secret);
+    assert_eq!(
+        f.secrets
+            .get(&format!("{}:ssh", copy.id))
+            .unwrap()
+            .as_deref(),
+        Some("passphrase")
+    );
+
+    f.manager.delete(&saved.id).await.unwrap();
+    assert_eq!(f.secrets.get(&format!("{}:ssh", saved.id)).unwrap(), None);
+    assert!(
+        f.secrets
+            .get(&format!("{}:ssh", copy.id))
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[tokio::test]
+async fn ssh_settings_are_checked() {
+    let f = fixture();
+    type Break = (fn(&mut SshConfig), &'static str);
+    let cases: [Break; 4] = [
+        (|s| s.host = "  ".into(), "SSH host"),
+        (|s| s.port = 0, "SSH port"),
+        (|s| s.user = "".into(), "SSH user"),
+        (
+            |s| s.auth = SshAuth::PrivateKey { path: " ".into() },
+            "private key",
+        ),
+    ];
+    for (break_it, expected) in cases {
+        let mut config = with_ssh("Bad", SshAuth::Password);
+        break_it(config.ssh.as_mut().unwrap());
+        let error = f
+            .manager
+            .save(config, PasswordChange::Keep)
+            .await
+            .unwrap_err();
+        assert!(
+            error.message().contains(expected),
+            "{expected}: {}",
+            error.message()
+        );
+    }
+    let empty = f
+        .manager
+        .save_with_ssh(
+            with_ssh("Bad", SshAuth::Password),
+            PasswordChange::Keep,
+            set(""),
+        )
+        .await
+        .unwrap_err();
+    assert!(empty.message().contains("SSH password is empty"));
+    assert!(f.manager.list().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_connection_file_from_before_ssh_still_loads() {
+    let f = fixture();
+    fs::write(
+        f.dir.path().join(FILE_NAME),
+        r#"{ "version": 1, "connections": [ { "id": "1", "name": "Old", "host": "h", "port": 5432,
+            "user": "u", "database": "d", "sslMode": "prefer", "color": "none", "group": null,
+            "safeMode": "off", "hasPassword": false } ] }"#,
+    )
+    .unwrap();
+    let listed = f.manager.list().unwrap();
+    assert_eq!(listed.len(), 1);
+    assert!(listed[0].ssh.is_none());
+}
+
+#[tokio::test]
+async fn testing_a_form_resolves_the_ssh_secret_like_the_password() {
+    let f = fixture();
+    let saved = f
+        .manager
+        .save_with_ssh(
+            with_ssh("Prod", SshAuth::Password),
+            PasswordChange::Keep,
+            set("saved-secret"),
+        )
+        .await
+        .unwrap();
+    let resolve = |ssh: PasswordChange, id: &str| {
+        let config = ConnectionConfig {
+            id: id.into(),
+            ..with_ssh("Prod", SshAuth::Password)
+        };
+        let manager = &f.manager;
+        async move {
+            manager
+                .resolve_for_test_with_ssh(config, PasswordChange::Keep, ssh)
+                .await
+                .unwrap()
+                .2
+        }
+    };
+    assert_eq!(
+        resolve(PasswordChange::Keep, &saved.id).await.as_deref(),
+        Some("saved-secret")
+    );
+    assert_eq!(
+        resolve(set("typed"), &saved.id).await.as_deref(),
+        Some("typed")
+    );
+    assert_eq!(resolve(PasswordChange::Clear, &saved.id).await, None);
+    assert_eq!(resolve(PasswordChange::Keep, "").await, None); // an unsaved form
 }

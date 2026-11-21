@@ -31,12 +31,22 @@ export const commands = {
 	quitApp: (options?: InvokeOptions) => __TAURI_INVOKE<void>("quit_app", undefined, options),
 	listConnections: (options?: InvokeOptions) => __TAURI_INVOKE<ConnectionConfig[]>("list_connections", undefined, options),
 	/**  Create (empty `config.id`) or update a connection. Returns the saved connection. */
-	saveConnection: (config: ConnectionConfig, password: PasswordChange, options?: InvokeOptions) => __TAURI_INVOKE<ConnectionConfig>("save_connection", { config, password }, options),
+	saveConnection: (config: ConnectionConfig, password: PasswordChange, sshSecret: PasswordChange | null, options?: InvokeOptions) => __TAURI_INVOKE<ConnectionConfig>("save_connection", { config, password, sshSecret }, options),
 	/**  Delete a connection and its saved password; closes it first if it is open. */
 	deleteConnection: (id: string, options?: InvokeOptions) => __TAURI_INVOKE<null>("delete_connection", { id }, options),
 	duplicateConnection: (id: string, options?: InvokeOptions) => __TAURI_INVOKE<ConnectionConfig>("duplicate_connection", { id }, options),
 	/**  Try to connect with the form values, without saving. Fails after 6 seconds at the latest. */
-	testConnection: (config: ConnectionConfig, password: PasswordChange, options?: InvokeOptions) => __TAURI_INVOKE<ConnectionInfo>("test_connection", { config, password }, options),
+	testConnection: (config: ConnectionConfig, password: PasswordChange, sshSecret: PasswordChange | null, options?: InvokeOptions) => __TAURI_INVOKE<ConnectionInfo>("test_connection", { config, password, sshSecret }, options),
+	/**
+	 *  Try the SSH leg of the form alone: log in to the SSH server (checking its host key) and ask it
+	 *  to open the database's host and port. Nothing is saved.
+	 */
+	testSsh: (config: ConnectionConfig, sshSecret: PasswordChange | null, options?: InvokeOptions) => __TAURI_INVOKE<SshTestResult>("test_ssh", { config, sshSecret }, options),
+	/**
+	 *  Trust the SSH host key that the last attempt stopped at (identified by its fingerprint):
+	 *  it is added to known_hosts, as `ssh` does when you answer "yes". Then try again.
+	 */
+	trustSshHost: (fingerprint: string, options?: InvokeOptions) => __TAURI_INVOKE<null>("trust_ssh_host", { fingerprint }, options),
 	/**  Fill the connection form from a `postgres://` URL. */
 	parseConnectionUrl: (url: string, options?: InvokeOptions) => __TAURI_INVOKE<ParsedConnectionUrl>("parse_connection_url", { url }, options),
 	/**  Open a saved connection (replaces an already open session of the same connection). */
@@ -381,6 +391,11 @@ export type ConnectionConfig = {
 	 *  Kept here so listing connections never has to touch the Keychain.
 	 */
 	hasPassword: boolean,
+	/**
+	 *  Reach the database through an SSH server (ANG-43). `None`: connect directly. Missing in
+	 *  files saved before ANG-43.
+	 */
+	ssh?: SshConfig | null,
 };
 
 /**  Result of a successful connect or connection test. */
@@ -1034,6 +1049,41 @@ export type SortDir = "asc" | "desc";
 export type SortSpec = {
 	column: string,
 	dir: SortDir,
+};
+
+export type SshAuth = 
+/**  The SSH account's password (kept in the Keychain). */
+{ kind: "password" } | 
+/**  A private key file (its passphrase, if it has one, is kept in the Keychain). */
+{ kind: "privateKey"; path: string } | 
+/**  Whatever keys the running ssh-agent (`SSH_AUTH_SOCK`) holds. */
+{ kind: "agent" };
+
+/**
+ *  An SSH server to tunnel through. `host`/`port` of the connection are then as the SSH server
+ *  sees them (`localhost` is the SSH server itself).
+ */
+export type SshConfig = {
+	host: string,
+	port: number,
+	user: string,
+	auth: SshAuth,
+	/**
+	 *  True when the SSH password, or the key's passphrase, is saved in the Keychain.
+	 *  Maintained by the backend, ignored on input.
+	 */
+	hasSecret?: boolean,
+};
+
+/**  What "Test SSH" found out. */
+export type SshTestResult = {
+	/**  `SHA256:…` of the SSH server's host key, which is in known_hosts. */
+	fingerprint: string,
+	keyType: string,
+	/**  The SSH server could open a connection to the database's host and port. */
+	reachesDatabase: boolean,
+	/**  Why not, when it could not. */
+	databaseProblem: string | null,
 };
 
 export type SslMode = "disable" | "prefer" | "require" | "verify-ca" | "verify-full";

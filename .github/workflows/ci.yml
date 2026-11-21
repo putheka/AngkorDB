@@ -58,6 +58,10 @@ jobs:
     env:
       # An unreachable database fails the tests instead of skipping them.
       ANGKORDB_REQUIRE_DB: "1"
+      # The SSH tunnel tests: the SSH server runs on the host network (below), so the database
+      # is `localhost:54329` from where it stands.
+      ANGKORDB_TEST_SSH_DB_HOST: localhost
+      ANGKORDB_TEST_SSH_DB_PORT: "54329"
     steps:
       - uses: actions/checkout@v7
 
@@ -84,6 +88,13 @@ jobs:
         with:
           workspaces: src-tauri
           cache-on-failure: true
+
+      - name: Start the test SSH server
+        run: |
+          docker build -t angkordb-sshd dev/sshd
+          docker run -d --name angkordb-sshd --network host \
+            -v "$PWD/dev/sshd/authorized:/authorized:ro" \
+            angkordb-sshd /usr/sbin/sshd -D -e -p 2222
 
       - name: Load dev seed data
         run: >-

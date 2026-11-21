@@ -15,6 +15,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ConnectionDialog } from "@/features/connections/ConnectionDialog";
+import { HostKeyDialog } from "@/features/connections/HostKeyDialog";
 import { ConnectionRow } from "@/features/connections/ConnectionRow";
 import {
   useConnections,
@@ -195,6 +196,8 @@ export function WelcomeScreen() {
           </div>
         )}
       </div>
+
+      <HostKeyDialog />
 
       {dialog !== null && (
         <ConnectionDialog

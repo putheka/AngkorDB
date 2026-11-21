@@ -5,6 +5,7 @@
  */
 import type {
   ConnectionConfig,
+  SshTestResult,
   PrivilegeChange,
   PrivilegeTarget,
   RoleOperation,
@@ -104,6 +105,53 @@ let connections: ConnectionConfig[] = [
   },
 ];
 
+/** SSH servers the person trusted; the first time a host is seen the connection stops there. */
+const trustedHosts = new Set<string>();
+const pendingHostKeys = new Map<string, string>();
+
+const fingerprintOf = (host: string) =>
+  `SHA256:${btoa(host).replace(/=+$/, "").padEnd(43, "x").slice(0, 43)}`;
+
+/** What opening the SSH tunnel of this connection would say. */
+function checkSsh(config: ConnectionConfig) {
+  const ssh = config.ssh;
+  if (!ssh) return;
+  const where = `${ssh.host}:${ssh.port}`;
+  if (ssh.host.includes("bad")) {
+    throw appError("SSH", `could not connect to ${where}: Connection refused (os error 61)`);
+  }
+  const fingerprint = fingerprintOf(ssh.host);
+  if (ssh.host.includes("changed")) {
+    throw appError(
+      "SSH_HOST_CHANGED",
+      `The SSH host key of ${where} has changed (line 3). It is not the one in known_hosts: the server may have been reinstalled, or someone may be intercepting the connection. Connection refused.`,
+      { detail: fingerprint, hint: `ssh-ed25519 · ${where}` },
+    );
+  }
+  if (!trustedHosts.has(where)) {
+    pendingHostKeys.set(fingerprint, where);
+    throw appError(
+      "SSH_HOST_UNKNOWN",
+      `The authenticity of the SSH host ${where} can't be established: it is not in known_hosts yet.`,
+      { detail: fingerprint, hint: `ssh-ed25519 · ${where}` },
+    );
+  }
+  if (ssh.auth.kind === "password" && !ssh.hasSecret && !secretTyped) {
+    throw appError("VALIDATION", "Enter the SSH password.");
+  }
+  if (ssh.auth.kind === "password" && sshSecretValue === "wrong") {
+    throw appError("SSH", `the SSH server ${where} refused the login of ${ssh.user} (password)`);
+  }
+}
+
+/** The SSH secret of the request being handled, for `checkSsh`. */
+let secretTyped = false;
+let sshSecretValue: string | null = null;
+function noteSshSecret(change: PasswordChange | null | undefined) {
+  secretTyped = change?.kind === "set";
+  sshSecretValue = change?.kind === "set" ? change.value : null;
+}
+
 function parseUrl(text: string): ParsedConnectionUrl {
   let url: URL;
   try {
@@ -164,7 +212,11 @@ const handlers: Record<string, Handler> = {
   list_connections: () => structuredClone(connections),
 
   save_connection: async (args) => {
-    const { config, password } = args as { config: ConnectionConfig; password: PasswordChange };
+    const { config, password, sshSecret } = args as {
+      config: ConnectionConfig;
+      password: PasswordChange;
+      sshSecret: PasswordChange | null;
+    };
     await sleep(150);
     const previous = connections.find((c) => c.id === config.id);
     const saved: ConnectionConfig = {
@@ -178,6 +230,19 @@ const handlers: Record<string, Handler> = {
           : password.kind === "clear"
             ? false
             : !!previous?.hasPassword,
+      ssh: config.ssh
+        ? {
+            ...config.ssh,
+            hasSecret:
+              config.ssh.auth.kind === "agent"
+                ? false
+                : sshSecret?.kind === "set"
+                  ? true
+                  : sshSecret?.kind === "clear"
+                    ? false
+                    : !!previous?.ssh?.hasSecret,
+          }
+        : null,
     };
     connections = previous
       ? connections.map((c) => (c.id === saved.id ? saved : c))
@@ -199,8 +264,14 @@ const handlers: Record<string, Handler> = {
   },
 
   test_connection: async (args): Promise<ConnectionInfo> => {
-    const { config, password } = args as { config: ConnectionConfig; password: PasswordChange };
+    const { config, password, sshSecret } = args as {
+      config: ConnectionConfig;
+      password: PasswordChange;
+      sshSecret: PasswordChange | null;
+    };
     await sleep(600);
+    noteSshSecret(sshSecret);
+    checkSsh(config);
     if (config.host.includes("bad")) {
       throw appError("CONNECTION", "error connecting to server: Connection refused (os error 61)");
     }
@@ -212,11 +283,51 @@ const handlers: Record<string, Handler> = {
     return { serverVersion: "16.4", latencyMs: 12 };
   },
 
+  test_ssh: async (args): Promise<SshTestResult> => {
+    const { config, sshSecret } = args as {
+      config: ConnectionConfig;
+      sshSecret: PasswordChange | null;
+    };
+    await sleep(500);
+    if (!config.ssh) {
+      throw appError("VALIDATION", "This connection does not use an SSH tunnel.");
+    }
+    noteSshSecret(sshSecret);
+    checkSsh(config);
+    const unreachable = config.host.includes("unreachable");
+    return {
+      fingerprint: fingerprintOf(config.ssh.host),
+      keyType: "ssh-ed25519",
+      reachesDatabase: !unreachable,
+      databaseProblem: unreachable
+        ? `the SSH server could not open ${config.host}:${config.port} (ConnectFailed)`
+        : null,
+    };
+  },
+
+  trust_ssh_host: (args) => {
+    const where = pendingHostKeys.get(String(args["fingerprint"]));
+    if (!where) {
+      throw appError(
+        "VALIDATION",
+        "That host key is not waiting to be trusted. Try connecting again.",
+      );
+    }
+    pendingHostKeys.delete(String(args["fingerprint"]));
+    trustedHosts.add(where);
+    return null;
+  },
+
   parse_connection_url: (args) => parseUrl(String(args["url"])),
 
   connect_connection: async (args): Promise<ConnectionInfo> => {
     await sleep(500);
     const target = connections.find((c) => c.id === args["id"]);
+    if (target) {
+      secretTyped = !!target.ssh?.hasSecret;
+      sshSecretValue = null;
+      checkSsh(target);
+    }
     if (target?.host.includes("example.com")) {
       throw appError("CONNECTION", "error connecting to server: Connection timed out");
     }

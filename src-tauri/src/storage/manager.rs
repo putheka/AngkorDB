@@ -5,9 +5,14 @@ use tokio::sync::Mutex;
 use uuid::Uuid;
 
 use crate::error::{AppError, AppResult};
-use crate::models::connection::{ConnectionConfig, PasswordChange};
+use crate::models::connection::{ConnectionConfig, PasswordChange, SshAuth, SshConfig};
 use crate::storage::connections::ConnectionStore;
 use crate::storage::secrets::SecretStore;
+
+/// The Keychain account of a connection's SSH password or key passphrase.
+fn ssh_account(id: &str) -> String {
+    format!("{id}:ssh")
+}
 
 /// Saved connections (JSON file) + their passwords (Keychain), kept in sync.
 pub struct ConnectionManager {
@@ -44,11 +49,30 @@ impl ConnectionManager {
         self.secret_get(id).await
     }
 
-    /// Create (empty `id`) or update a connection.
+    /// The saved SSH password or key passphrase of a connection.
+    pub async fn ssh_secret(&self, id: &str) -> AppResult<Option<String>> {
+        if !self.get(id)?.ssh.is_some_and(|s| s.has_secret) {
+            return Ok(None);
+        }
+        self.secret_get(&ssh_account(id)).await
+    }
+
+    /// Create (empty `id`) or update a connection. An SSH secret already saved is kept.
     pub async fn save(
         &self,
         config: ConnectionConfig,
         password: PasswordChange,
+    ) -> AppResult<ConnectionConfig> {
+        self.save_with_ssh(config, password, PasswordChange::Keep)
+            .await
+    }
+
+    /// [`ConnectionManager::save`], and what to do with the SSH password or key passphrase.
+    pub async fn save_with_ssh(
+        &self,
+        config: ConnectionConfig,
+        password: PasswordChange,
+        ssh_secret: PasswordChange,
     ) -> AppResult<ConnectionConfig> {
         let _guard = self.write_lock.lock().await;
         let mut config = normalize(config)?;
@@ -85,14 +109,58 @@ impl ConnectionManager {
             }
         };
 
+        let had_ssh_secret = previous
+            .as_ref()
+            .and_then(|p| p.ssh.as_ref())
+            .is_some_and(|s| s.has_secret);
+        match config.ssh.as_mut() {
+            None => {
+                // No tunnel any more: its secret goes with it.
+                if had_ssh_secret {
+                    self.secret_delete(&ssh_account(&config.id)).await?;
+                }
+            }
+            // Logging in with the ssh-agent needs no secret: one saved before is thrown away.
+            Some(ssh) if ssh.auth == SshAuth::Agent => {
+                if had_ssh_secret {
+                    self.secret_delete(&ssh_account(&config.id)).await?;
+                }
+                ssh.has_secret = false;
+            }
+            Some(ssh) => {
+                ssh.has_secret = match ssh_secret {
+                    PasswordChange::Keep => had_ssh_secret,
+                    PasswordChange::Set { value } => {
+                        if value.is_empty() {
+                            return Err(AppError::Validation(
+                                "The SSH password is empty. Leave it unchanged or remove the saved one"
+                                    .into(),
+                            ));
+                        }
+                        self.secret_set(&ssh_account(&config.id), &value).await?;
+                        true
+                    }
+                    PasswordChange::Clear => {
+                        self.secret_delete(&ssh_account(&config.id)).await?;
+                        false
+                    }
+                };
+            }
+        }
+
         match items.iter_mut().find(|c| c.id == config.id) {
             Some(slot) => *slot = config.clone(),
             None => items.push(config.clone()),
         }
         if let Err(e) = self.store.write(&items) {
-            if is_new && config.has_password {
+            if is_new {
                 // Don't leave a password behind for a connection that was never saved.
-                let _ = self.secret_delete(&config.id).await;
+                if config.has_password {
+                    let _ = self.secret_delete(&config.id).await;
+                }
+                if config.ssh.as_ref().is_some_and(|s| s.has_secret) {
+                    let _ = self.secret_delete(&ssh_account(&config.id)).await;
+                }
             }
             return Err(e);
         }
@@ -108,6 +176,9 @@ impl ConnectionManager {
 
         if config.has_password {
             self.secret_delete(id).await?;
+        }
+        if config.ssh.as_ref().is_some_and(|s| s.has_secret) {
+            self.secret_delete(&ssh_account(id)).await?;
         }
         items.retain(|c| c.id != id);
         self.store.write(&items)
@@ -132,10 +203,20 @@ impl ConnectionManager {
             }
         }
 
+        if let Some(ssh) = copy.ssh.as_mut().filter(|s| s.has_secret) {
+            match self.secret_get(&ssh_account(&original.id)).await? {
+                Some(secret) => self.secret_set(&ssh_account(&copy.id), &secret).await?,
+                None => ssh.has_secret = false,
+            }
+        }
+
         items.push(copy.clone());
         if let Err(e) = self.store.write(&items) {
             if copy.has_password {
                 let _ = self.secret_delete(&copy.id).await;
+            }
+            if copy.ssh.as_ref().is_some_and(|s| s.has_secret) {
+                let _ = self.secret_delete(&ssh_account(&copy.id)).await;
             }
             return Err(e);
         }
@@ -149,7 +230,30 @@ impl ConnectionManager {
         config: ConnectionConfig,
         password: PasswordChange,
     ) -> AppResult<(ConnectionConfig, Option<String>)> {
+        let (config, password, _) = self
+            .resolve_for_test_with_ssh(config, password, PasswordChange::Keep)
+            .await?;
+        Ok((config, password))
+    }
+
+    /// [`ConnectionManager::resolve_for_test`], with the SSH password or passphrase as well.
+    pub async fn resolve_for_test_with_ssh(
+        &self,
+        config: ConnectionConfig,
+        password: PasswordChange,
+        ssh_secret: PasswordChange,
+    ) -> AppResult<(ConnectionConfig, Option<String>, Option<String>)> {
         let config = normalize(config)?;
+        let ssh_secret = match ssh_secret {
+            PasswordChange::Set { value } => Some(value),
+            PasswordChange::Clear => None,
+            PasswordChange::Keep if config.id.is_empty() => None,
+            PasswordChange::Keep => match self.ssh_secret(&config.id).await {
+                Ok(secret) => secret,
+                Err(AppError::ConnectionNotFound(_)) => None,
+                Err(e) => return Err(e),
+            },
+        };
         let password = match password {
             PasswordChange::Set { value } => Some(value),
             PasswordChange::Clear => None,
@@ -160,7 +264,7 @@ impl ConnectionManager {
                 Err(e) => return Err(e),
             },
         };
-        Ok((config, password))
+        Ok((config, password, ssh_secret))
     }
 
     async fn secret_get(&self, id: &str) -> AppResult<Option<String>> {
@@ -216,10 +320,42 @@ fn normalize(mut config: ConnectionConfig) -> AppResult<ConnectionConfig> {
     if config.database.is_empty() {
         return Err(AppError::Validation("Database is required".into()));
     }
+    if let Some(ssh) = config.ssh.take() {
+        config.ssh = Some(normalize_ssh(ssh)?);
+    }
     if config.name.is_empty() {
         config.name = format!("{} @ {}", config.database, config.host);
     }
     Ok(config)
+}
+
+fn normalize_ssh(mut ssh: SshConfig) -> AppResult<SshConfig> {
+    ssh.host = ssh.host.trim().to_owned();
+    ssh.user = ssh.user.trim().to_owned();
+    if ssh.host.is_empty() {
+        return Err(AppError::Validation("The SSH host is required".into()));
+    }
+    if ssh.port == 0 {
+        return Err(AppError::Validation(
+            "The SSH port must be between 1 and 65535".into(),
+        ));
+    }
+    if ssh.user.is_empty() {
+        return Err(AppError::Validation("The SSH user is required".into()));
+    }
+    if let SshAuth::PrivateKey { path } = &mut ssh.auth {
+        *path = path.trim().to_owned();
+        if path.is_empty() {
+            return Err(AppError::Validation(
+                "Give the path of the private key file".into(),
+            ));
+        }
+    }
+    // A key or password that is no longer used would be a secret kept for nothing.
+    if ssh.auth == SshAuth::Agent {
+        ssh.has_secret = false;
+    }
+    Ok(ssh)
 }
 
 fn unique_copy_name(items: &[ConnectionConfig], name: &str) -> String {

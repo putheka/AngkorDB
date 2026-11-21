@@ -1,0 +1,18 @@
+# Account `tunnel`, password `tunnel`, or any key listed in dev/sshd/authorized/tunnel
+# (the tests write their generated public keys there). Forwarding to the database is allowed.
+Port 22
+PasswordAuthentication yes
+PubkeyAuthentication yes
+AuthorizedKeysFile /authorized/%u
+StrictModes no
+UsePAM no
+AllowUsers tunnel
+AllowTcpForwarding yes
+PermitRootLogin no
+X11Forwarding no
+LogLevel VERBOSE
+# Every test connects from the same address, and several turn the host key down on purpose:
+# don't let sshd's abuse protection throttle them.
+PerSourcePenalties no
+MaxStartups 100:30:200
+MaxAuthTries 20

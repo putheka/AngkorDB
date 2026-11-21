@@ -11,9 +11,20 @@ const KEEPALIVE_IDLE: Duration = Duration::from_secs(60);
 
 /// Build a driver config from saved settings. The password comes from the Keychain, never disk.
 pub fn pg_config(conn: &ConnectionConfig, password: Option<&str>) -> Config {
+    pg_config_via(conn, password, None)
+}
+
+/// [`pg_config`], dialling a local port that an SSH tunnel listens on (ANG-43). The host name is
+/// kept, so TLS and `verify-full` still check the database's own name; `hostaddr` is where to
+/// actually connect.
+pub fn pg_config_via(
+    conn: &ConnectionConfig,
+    password: Option<&str>,
+    tunnel_port: Option<u16>,
+) -> Config {
     let mut cfg = Config::new();
     cfg.host(&conn.host)
-        .port(conn.port)
+        .port(tunnel_port.unwrap_or(conn.port))
         .user(&conn.user)
         .dbname(&conn.database)
         .application_name(APPLICATION_NAME)
@@ -21,6 +32,9 @@ pub fn pg_config(conn: &ConnectionConfig, password: Option<&str>) -> Config {
         .keepalives(true)
         .keepalives_idle(KEEPALIVE_IDLE)
         .ssl_mode(pg_ssl_mode(conn.ssl_mode));
+    if tunnel_port.is_some() {
+        cfg.hostaddr(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
+    }
     if let Some(password) = password {
         cfg.password(password);
     }

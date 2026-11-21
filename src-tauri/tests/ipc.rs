@@ -29,7 +29,9 @@ struct Ipc {
 fn setup() -> Ipc {
     let dir = tempfile::tempdir().unwrap();
     let secrets = Arc::new(MemorySecrets::default());
-    let state = AppState::new(ConnectionManager::new(dir.path(), secrets.clone()));
+    // Host keys go to a file of their own: never the real ~/.ssh/known_hosts.
+    let state = AppState::new(ConnectionManager::new(dir.path(), secrets.clone()))
+        .with_known_hosts(dir.path().join("known_hosts"));
 
     let app = mock_builder()
         .manage(state)
@@ -2060,4 +2062,145 @@ fn a_read_only_connection_refuses_role_and_privilege_changes() {
         assert_eq!(err["code"], "VALIDATION", "{cmd}");
         assert!(err["message"].as_str().unwrap().contains("read-only"));
     }
+}
+
+fn ssh_env(name: &str, default: &str) -> String {
+    std::env::var(name).unwrap_or_else(|_| default.into())
+}
+
+/// The test SSH server (`npm run db:up`), or `false` to skip.
+fn ssh_available() -> bool {
+    let port: u16 = ssh_env("ANGKORDB_TEST_SSH_PORT", "2222").parse().unwrap();
+    let addr: SocketAddr = format!("127.0.0.1:{port}").parse().unwrap();
+    if TcpStream::connect_timeout(&addr, Duration::from_secs(1)).is_ok() {
+        return true;
+    }
+    assert!(
+        std::env::var("ANGKORDB_REQUIRE_DB").as_deref() != Ok("1"),
+        "the test SSH server is not reachable: run `npm run db:up`"
+    );
+    eprintln!("SKIPPED: test SSH server not reachable. Run `npm run db:up`.");
+    false
+}
+
+#[test]
+fn trusting_and_testing_ssh_need_nothing_open() {
+    let ipc = setup();
+    let unknown = ipc
+        .call("trust_ssh_host", json!({ "fingerprint": "SHA256:nothing" }))
+        .unwrap_err();
+    assert_eq!(unknown["code"], "VALIDATION");
+    // A form without a tunnel has nothing to test.
+    let direct = ipc
+        .call(
+            "test_ssh",
+            json!({ "config": config("Plain", "localhost", 5432), "sshSecret": null }),
+        )
+        .unwrap_err();
+    assert_eq!(direct["code"], "VALIDATION");
+}
+
+#[test]
+fn an_ssh_tunnel_through_ipc_asks_about_the_host_key_then_connects() {
+    if !dev_db_available() || !ssh_available() {
+        return;
+    }
+    let ipc = setup();
+    let ssh_host = ssh_env("ANGKORDB_TEST_SSH_HOST", "localhost");
+    let mut form = config(
+        "Over SSH",
+        &ssh_env("ANGKORDB_TEST_SSH_DB_HOST", "postgres"),
+        5432,
+    );
+    form["port"] = json!(
+        ssh_env("ANGKORDB_TEST_SSH_DB_PORT", "5432")
+            .parse::<u16>()
+            .unwrap()
+    );
+    form["user"] = json!("angkor");
+    form["database"] = json!("angkordb_dev");
+    form["ssh"] = json!({
+        "host": ssh_host,
+        "port": ssh_env("ANGKORDB_TEST_SSH_PORT", "2222").parse::<u16>().unwrap(),
+        "user": "tunnel", "auth": { "kind": "password" }, "hasSecret": false
+    });
+    let saved = ipc
+        .call(
+            "save_connection",
+            json!({ "config": form, "password": { "kind": "set", "value": "angkor" },
+                    "sshSecret": { "kind": "set", "value": "tunnel" } }),
+        )
+        .unwrap();
+    let id = saved["id"].as_str().unwrap();
+    assert_eq!(saved["ssh"]["hasSecret"], json!(true));
+    // The secret is in the Keychain stand-in under its own account; the file has none of it.
+    assert_eq!(
+        ipc.secrets.get(&format!("{id}:ssh")).unwrap().as_deref(),
+        Some("tunnel")
+    );
+    let listed = ipc.call("list_connections", json!({})).unwrap();
+    assert!(!listed.to_string().contains("sshSecret"));
+
+    // First time: the host key is not trusted. The error carries what the dialog shows.
+    let stopped = ipc
+        .call("connect_connection", json!({ "id": id }))
+        .unwrap_err();
+    assert_eq!(stopped["code"], "SSH_HOST_UNKNOWN");
+    let fingerprint = stopped["detail"].as_str().unwrap().to_owned();
+    assert!(fingerprint.starts_with("SHA256:"), "{stopped}");
+    assert!(stopped["hint"].as_str().unwrap().contains(&ssh_host));
+    // The form's test stops there too, and the SSH-only test as well.
+    let test = ipc
+        .call(
+            "test_connection",
+            json!({ "config": saved, "password": { "kind": "keep" }, "sshSecret": null }),
+        )
+        .unwrap_err();
+    assert_eq!(test["code"], "SSH_HOST_UNKNOWN");
+    let ssh_only = ipc
+        .call("test_ssh", json!({ "config": saved, "sshSecret": null }))
+        .unwrap_err();
+    assert_eq!(ssh_only["code"], "SSH_HOST_UNKNOWN");
+
+    ipc.call("trust_ssh_host", json!({ "fingerprint": fingerprint }))
+        .unwrap();
+    // Trusting is once: the same fingerprint is not waiting any more.
+    assert_eq!(
+        ipc.call("trust_ssh_host", json!({ "fingerprint": fingerprint }))
+            .unwrap_err()["code"],
+        "VALIDATION"
+    );
+
+    let report = ipc
+        .call("test_ssh", json!({ "config": saved, "sshSecret": null }))
+        .unwrap();
+    assert_eq!(report["reachesDatabase"], json!(true));
+    assert_eq!(report["fingerprint"], json!(fingerprint));
+    let tested = ipc
+        .call(
+            "test_connection",
+            json!({ "config": saved, "password": { "kind": "keep" }, "sshSecret": null }),
+        )
+        .unwrap();
+    assert!(tested["serverVersion"].as_str().unwrap().starts_with("16"));
+
+    ipc.call("connect_connection", json!({ "id": id })).unwrap();
+    let schemas = ipc
+        .call(
+            "list_schemas",
+            json!({ "connectionId": id, "includeSystem": false }),
+        )
+        .unwrap();
+    assert!(
+        schemas
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["name"] == "public")
+    );
+    ipc.call("disconnect_connection", json!({ "id": id }))
+        .unwrap();
+
+    ipc.call("delete_connection", json!({ "id": id })).unwrap();
+    assert_eq!(ipc.secrets.get(&format!("{id}:ssh")).unwrap(), None);
 }
