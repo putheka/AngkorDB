@@ -25,7 +25,7 @@ use tokio::sync::Mutex;
 use tokio::task::{JoinHandle, JoinSet};
 
 use crate::error::{AppError, AppResult};
-use crate::models::connection::{SshAuth, SshConfig};
+use crate::models::connection::{SshAuth, SshConfig, SshJump};
 
 /// How long to wait for the SSH server to answer and log us in.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -36,6 +36,8 @@ const KEEPALIVE: Duration = Duration::from_secs(30);
 pub struct SshSetup {
     /// The SSH password, or the key's passphrase.
     pub secret: Option<String>,
+    /// The same for the jump host, if there is one.
+    pub jump_secret: Option<String>,
     /// Where host keys are recorded: `~/.ssh/known_hosts`.
     pub known_hosts: PathBuf,
     /// The ssh-agent socket; `None` reads `SSH_AUTH_SOCK`.
@@ -46,6 +48,7 @@ impl SshSetup {
     pub fn new(secret: Option<String>) -> Self {
         Self {
             secret,
+            jump_secret: None,
             known_hosts: default_known_hosts(),
             agent_socket: None,
         }
@@ -57,6 +60,10 @@ impl std::fmt::Debug for SshSetup {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SshSetup")
             .field("secret", &self.secret.as_ref().map(|_| "<redacted>"))
+            .field(
+                "jump_secret",
+                &self.jump_secret.as_ref().map(|_| "<redacted>"),
+            )
             .field("known_hosts", &self.known_hosts)
             .finish_non_exhaustive()
     }
@@ -229,7 +236,7 @@ fn preferred_for(host: &str, port: u16, known_hosts: &Path) -> Preferred {
     preferred
 }
 
-fn expand_home(path: &str) -> PathBuf {
+pub(crate) fn expand_home(path: &str) -> PathBuf {
     match path.strip_prefix("~/") {
         Some(rest) => std::env::home_dir()
             .unwrap_or_else(|| PathBuf::from("."))
@@ -238,24 +245,122 @@ fn expand_home(path: &str) -> PathBuf {
     }
 }
 
-/// Connect, check the host key and log in.
-async fn connect(ssh: &SshConfig, setup: &SshSetup) -> AppResult<Handle<Client>> {
+/// One server of the chain: where it is, who to log in as, and with what.
+struct Hop<'a> {
+    host: &'a str,
+    port: u16,
+    user: &'a str,
+    auth: &'a SshAuth,
+    secret: Option<&'a str>,
+}
+
+impl<'a> Hop<'a> {
+    fn of(ssh: &'a SshConfig, secret: Option<&'a str>) -> Self {
+        Self {
+            host: &ssh.host,
+            port: ssh.port,
+            user: &ssh.user,
+            auth: &ssh.auth,
+            secret,
+        }
+    }
+
+    fn of_jump(jump: &'a SshJump, secret: Option<&'a str>) -> Self {
+        Self {
+            host: &jump.host,
+            port: jump.port,
+            user: &jump.user,
+            auth: &jump.auth,
+            secret,
+        }
+    }
+}
+
+/// A login to the SSH server, and the jump host it goes through, kept open as long as it is
+/// used (the jump host's connection carries the other one).
+struct Connection {
+    handle: Handle<Client>,
+    jump: Option<Handle<Client>>,
+}
+
+impl Connection {
+    fn is_closed(&self) -> bool {
+        self.handle.is_closed() || self.jump.as_ref().is_some_and(Handle::is_closed)
+    }
+}
+
+/// Connect to the SSH server (through the jump host, if there is one), check the host keys and
+/// log in.
+async fn connect(ssh: &SshConfig, setup: &SshSetup) -> AppResult<Connection> {
+    let jump = match &ssh.jump {
+        None => None,
+        Some(jump) => {
+            let hop = Hop::of_jump(jump, setup.jump_secret.as_deref());
+            let handle = open_hop(&hop, setup, None).await.map_err(|e| match e {
+                AppError::Ssh(m) => AppError::Ssh(format!("jump host {}: {m}", jump.host)),
+                AppError::Validation(m) => {
+                    AppError::Validation(format!("Jump host {}: {m}", jump.host))
+                }
+                AppError::Timeout(m) => AppError::Timeout(format!("the jump host: {m}")),
+                other => other,
+            })?;
+            Some(handle)
+        }
+    };
+    let hop = Hop::of(ssh, setup.secret.as_deref());
+    let handle = open_hop(&hop, setup, jump.as_ref()).await?;
+    Ok(Connection { handle, jump })
+}
+
+/// Connect to one server, straight or through `via` (a channel of the server before it), check
+/// its host key and log in.
+async fn open_hop(
+    hop: &Hop<'_>,
+    setup: &SshSetup,
+    via: Option<&Handle<Client>>,
+) -> AppResult<Handle<Client>> {
     let verdict = Arc::new(StdMutex::new(Verdict::default()));
     let handler = Client {
-        host: ssh.host.clone(),
-        port: ssh.port,
+        host: hop.host.to_owned(),
+        port: hop.port,
         known_hosts: setup.known_hosts.clone(),
         verdict: Arc::clone(&verdict),
     };
     let config = Arc::new(client::Config {
         keepalive_interval: Some(KEEPALIVE),
         keepalive_max: 3,
-        preferred: preferred_for(&ssh.host, ssh.port, &setup.known_hosts),
+        preferred: preferred_for(hop.host, hop.port, &setup.known_hosts),
         ..client::Config::default()
     });
 
-    let connecting = client::connect(config, (ssh.host.as_str(), ssh.port), handler);
-    let result = tokio::time::timeout(CONNECT_TIMEOUT, connecting).await;
+    let result = match via {
+        None => {
+            let connecting = client::connect(config, (hop.host, hop.port), handler);
+            tokio::time::timeout(CONNECT_TIMEOUT, connecting).await
+        }
+        Some(jump) => {
+            // The next server is reached by asking the one before it to open a connection to it.
+            let opening =
+                jump.channel_open_direct_tcpip(hop.host, u32::from(hop.port), "127.0.0.1", 0);
+            let channel = match tokio::time::timeout(CONNECT_TIMEOUT, opening).await {
+                Ok(Ok(channel)) => channel,
+                Ok(Err(e)) => {
+                    return Err(ssh_error(
+                        &format!("the jump host could not reach {}:{}", hop.host, hop.port),
+                        e,
+                    ));
+                }
+                Err(_) => {
+                    return Err(AppError::Timeout(format!(
+                        "the jump host reaching {}:{}",
+                        hop.host, hop.port
+                    )));
+                }
+            };
+            let connecting = client::connect_stream(config, channel.into_stream(), handler);
+            tokio::time::timeout(CONNECT_TIMEOUT, connecting).await
+        }
+    };
     // Whatever went wrong, a host key the handler turned down is the real reason.
     {
         let mut verdict = verdict.lock().unwrap_or_else(|e| e.into_inner());
@@ -270,25 +375,25 @@ async fn connect(ssh: &SshConfig, setup: &SshSetup) -> AppResult<Handle<Client>>
         Ok(Ok(handle)) => handle,
         Ok(Err(e)) => {
             return Err(ssh_error(
-                &format!("could not connect to {}:{}", ssh.host, ssh.port),
+                &format!("could not connect to {}:{}", hop.host, hop.port),
                 e,
             ));
         }
         Err(_) => {
             return Err(AppError::Timeout(format!(
                 "connecting to the SSH server {}:{}",
-                ssh.host, ssh.port
+                hop.host, hop.port
             )));
         }
     };
 
-    tokio::time::timeout(CONNECT_TIMEOUT, authenticate(&mut handle, ssh, setup))
+    tokio::time::timeout(CONNECT_TIMEOUT, authenticate(&mut handle, hop, setup))
         .await
         .map_err(|_| AppError::Timeout("logging in to the SSH server".into()))??;
     Ok(handle)
 }
 
-fn refused(ssh: &SshConfig, how: &str) -> AppError {
+fn refused(ssh: &Hop<'_>, how: &str) -> AppError {
     AppError::Ssh(format!(
         "the SSH server {}:{} refused the login of {} ({how})",
         ssh.host, ssh.port, ssh.user
@@ -297,17 +402,16 @@ fn refused(ssh: &SshConfig, how: &str) -> AppError {
 
 async fn authenticate(
     handle: &mut Handle<Client>,
-    ssh: &SshConfig,
+    ssh: &Hop<'_>,
     setup: &SshSetup,
 ) -> AppResult<()> {
     match &ssh.auth {
         SshAuth::Password => {
-            let password = setup
+            let password = ssh
                 .secret
-                .as_deref()
                 .ok_or_else(|| AppError::Validation("Enter the SSH password.".into()))?;
             let result = handle
-                .authenticate_password(ssh.user.clone(), password)
+                .authenticate_password(ssh.user.to_owned(), password)
                 .await
                 .map_err(|e| ssh_error("login failed", e))?;
             if !result.success() {
@@ -316,8 +420,8 @@ async fn authenticate(
         }
         SshAuth::PrivateKey { path } => {
             let file = expand_home(path);
-            let key = load_secret_key(&file, setup.secret.as_deref().filter(|s| !s.is_empty()))
-                .map_err(|e| match e {
+            let key = load_secret_key(&file, ssh.secret.filter(|s| !s.is_empty())).map_err(
+                |e| match e {
                     keys::Error::KeyIsEncrypted => AppError::Validation(format!(
                         "The key {} is protected by a passphrase: enter it.",
                         file.display()
@@ -329,7 +433,8 @@ async fn authenticate(
                         "Can't use the key {} ({other}). A wrong passphrase looks like this too.",
                         file.display()
                     )),
-                })?;
+                },
+            )?;
             let hash = handle
                 .best_supported_rsa_hash()
                 .await
@@ -337,7 +442,7 @@ async fn authenticate(
                 .flatten();
             let result = handle
                 .authenticate_publickey(
-                    ssh.user.clone(),
+                    ssh.user.to_owned(),
                     PrivateKeyWithHashAlg::new(Arc::new(key), hash),
                 )
                 .await
@@ -353,7 +458,7 @@ async fn authenticate(
 
 async fn authenticate_with_agent(
     handle: &mut Handle<Client>,
-    ssh: &SshConfig,
+    ssh: &Hop<'_>,
     setup: &SshSetup,
 ) -> AppResult<()> {
     let no_agent = |e: &dyn std::fmt::Display| {
@@ -387,7 +492,7 @@ async fn authenticate_with_agent(
             continue;
         };
         let result = handle
-            .authenticate_publickey_with(ssh.user.clone(), key, hash, &mut agent)
+            .authenticate_publickey_with(ssh.user.to_owned(), key, hash, &mut agent)
             .await
             .map_err(|e| ssh_error("login failed", e))?;
         if result.success() {
@@ -403,20 +508,21 @@ async fn authenticate_with_agent(
 struct Link {
     ssh: SshConfig,
     setup: SshSetup,
-    handle: Mutex<Option<Handle<Client>>>,
+    handle: Mutex<Option<Connection>>,
 }
 
 impl Link {
     async fn channel(&self, host: &str, port: u16) -> AppResult<russh::Channel<client::Msg>> {
         let mut guard = self.handle.lock().await;
         for attempt in 0..2 {
-            if guard.as_ref().is_none_or(Handle::is_closed) {
+            if guard.as_ref().is_none_or(Connection::is_closed) {
                 *guard = Some(connect(&self.ssh, &self.setup).await?);
             }
-            let Some(handle) = guard.as_ref() else {
+            let Some(connection) = guard.as_ref() else {
                 continue;
             };
-            match handle
+            match connection
+                .handle
                 .channel_open_direct_tcpip(host, u32::from(port), "127.0.0.1", 0)
                 .await
             {
@@ -499,12 +605,13 @@ impl SshTunnel {
     #[doc(hidden)]
     pub async fn drop_ssh_connection(&self) {
         let guard = self.link.handle.lock().await;
-        if let Some(handle) = guard.as_ref() {
-            let _ = handle
+        if let Some(connection) = guard.as_ref() {
+            let _ = connection
+                .handle
                 .disconnect(russh::Disconnect::ByApplication, "", "en")
                 .await;
             for _ in 0..40 {
-                if handle.is_closed() {
+                if connection.handle.is_closed() {
                     break;
                 }
                 tokio::time::sleep(Duration::from_millis(25)).await;
@@ -545,7 +652,7 @@ pub async fn test(
     db_host: &str,
     db_port: u16,
 ) -> AppResult<SshTestReport> {
-    let handle = connect(ssh, setup).await?;
+    let connection = connect(ssh, setup).await?;
     // The host key was accepted, so it is the recorded one.
     let key = known_host_keys_path(&ssh.host, ssh.port, &setup.known_hosts)
         .ok()
@@ -553,7 +660,8 @@ pub async fn test(
         .map(|(_, key)| describe(&key));
     let (fingerprint, key_type) = key.unwrap_or_default();
 
-    let opened = handle
+    let opened = connection
+        .handle
         .channel_open_direct_tcpip(db_host, u32::from(db_port), "127.0.0.1", 0)
         .await;
     let (reaches_database, database_problem) = match opened {
@@ -568,9 +676,15 @@ pub async fn test(
             )),
         ),
     };
-    let _ = handle
+    let _ = connection
+        .handle
         .disconnect(russh::Disconnect::ByApplication, "", "en")
         .await;
+    if let Some(jump) = &connection.jump {
+        let _ = jump
+            .disconnect(russh::Disconnect::ByApplication, "", "en")
+            .await;
+    }
     Ok(SshTestReport {
         fingerprint,
         key_type,

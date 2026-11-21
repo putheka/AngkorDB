@@ -4,7 +4,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::models::connection::{
-    ColorTag, ConnectionConfig, SafeMode, SshConfig, SslFiles, SslMode,
+    ColorTag, ConnectionConfig, SafeMode, SshConfig, SshJump, SslFiles, SslMode,
 };
 
 pub const FILE_KIND: &str = "angkordb-connections";
@@ -36,6 +36,8 @@ pub struct SharedConnection {
     pub needs_ssh_secret: bool,
     #[serde(default)]
     pub needs_ssl_key_secret: bool,
+    #[serde(default)]
+    pub needs_ssh_jump_secret: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -64,10 +66,12 @@ impl SharedConnection {
             needs_password: config.has_password,
             needs_ssh_secret: config.ssh.as_ref().is_some_and(|s| s.has_secret),
             needs_ssl_key_secret: config.ssl_files.as_ref().is_some_and(|f| f.has_key_secret),
-            ssh: config.ssh.clone().map(|s| SshConfig {
-                has_secret: false,
-                ..s
-            }),
+            needs_ssh_jump_secret: config
+                .ssh
+                .as_ref()
+                .and_then(|s| s.jump.as_ref())
+                .is_some_and(|j| j.has_secret),
+            ssh: config.ssh.clone().map(without_secret_flags),
             ssl_files: config.ssl_files.clone().map(|f| SslFiles {
                 has_key_secret: false,
                 ..f
@@ -90,10 +94,7 @@ impl SharedConnection {
             safe_mode: self.safe_mode,
             statement_timeout_ms: self.statement_timeout_ms,
             has_password: false,
-            ssh: self.ssh.map(|s| SshConfig {
-                has_secret: false,
-                ..s
-            }),
+            ssh: self.ssh.map(without_secret_flags),
             ssl_files: self.ssl_files.map(|f| SslFiles {
                 has_key_secret: false,
                 ..f
@@ -102,22 +103,37 @@ impl SharedConnection {
     }
 }
 
-/// One connection of the file to import, with the secrets the person typed for it.
+/// The SSH settings with no claim about saved secrets: a new connection has none yet.
+fn without_secret_flags(ssh: SshConfig) -> SshConfig {
+    SshConfig {
+        has_secret: false,
+        jump: ssh.jump.map(|j| SshJump {
+            has_secret: false,
+            ..j
+        }),
+        ..ssh
+    }
+}
+
+/// One connection to import, with the secrets the person typed for it. It carries the settings
+/// that were shown, not a place in the file: what is saved is exactly what was on screen, even if
+/// the file changed since it was read.
 #[derive(Clone, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportEntry {
-    /// Its place in the file (0-based).
-    pub index: u32,
+    pub connection: SharedConnection,
     pub password: Option<String>,
     pub ssh_secret: Option<String>,
     pub ssl_key_secret: Option<String>,
+    #[serde(default)]
+    pub ssh_jump_secret: Option<String>,
 }
 
 // Never print a password, even in debug logs.
 impl std::fmt::Debug for ImportEntry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ImportEntry")
-            .field("index", &self.index)
+            .field("connection", &self.connection.name)
             .finish_non_exhaustive()
     }
 }

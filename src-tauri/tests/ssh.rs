@@ -14,7 +14,7 @@ use std::time::Duration;
 use angkordb_lib::db::session::Session;
 use angkordb_lib::db::ssh::{self, SshSetup, SshTunnel};
 use angkordb_lib::error::AppError;
-use angkordb_lib::models::connection::{SshAuth, SshConfig};
+use angkordb_lib::models::connection::{SshAuth, SshConfig, SshJump};
 use common::{DEV_PASSWORD, db_required, dev_config};
 use tempfile::TempDir;
 
@@ -136,6 +136,7 @@ fn config(auth: SshAuth) -> SshConfig {
         user: "tunnel".into(),
         auth,
         has_secret: false,
+        jump: None,
     }
 }
 
@@ -148,6 +149,7 @@ fn key_auth(path: &Path) -> SshAuth {
 fn setup(secret: Option<&str>, known_hosts: &Path) -> SshSetup {
     SshSetup {
         secret: secret.map(str::to_owned),
+        jump_secret: None,
         known_hosts: known_hosts.to_path_buf(),
         agent_socket: None,
     }
@@ -601,4 +603,309 @@ async fn a_recorded_key_of_another_type_is_not_a_new_host() {
     assert_eq!(problem.line, Some(1));
     assert!(ssh::trust(problem, &known).is_err());
     assert_eq!(std::fs::read_to_string(&known).unwrap(), line);
+}
+
+// ---- a jump host (ANG-49) -----------------------------------------------------------------------
+//
+// you -> `sshd` (the bastion, localhost:2222) -> `sshd-inner` (no published port) -> `postgres`.
+
+fn inner_host() -> String {
+    env_or("ANGKORDB_TEST_SSH_INNER_HOST", "sshd-inner")
+}
+
+fn inner_port() -> u16 {
+    env_or("ANGKORDB_TEST_SSH_INNER_PORT", "22")
+        .parse()
+        .unwrap()
+}
+
+/// The server behind the bastion, reached through it.
+fn chained(inner_auth: SshAuth, jump_auth: SshAuth) -> SshConfig {
+    SshConfig {
+        host: inner_host(),
+        port: inner_port(),
+        user: "tunnel".into(),
+        auth: inner_auth,
+        has_secret: false,
+        jump: Some(SshJump {
+            host: ssh_host(),
+            port: ssh_port(),
+            user: "tunnel".into(),
+            auth: jump_auth,
+            has_secret: false,
+        }),
+    }
+}
+
+fn chain_setup(secret: Option<&str>, jump_secret: Option<&str>, known_hosts: &Path) -> SshSetup {
+    SshSetup {
+        jump_secret: jump_secret.map(str::to_owned),
+        ..setup(secret, known_hosts)
+    }
+}
+
+/// Open the chain, trusting each host key it stops at (as a person would, one dialog each).
+async fn open_trusting(
+    ssh: &SshConfig,
+    setup: &SshSetup,
+) -> (Result<SshTunnel, AppError>, Vec<(String, u16)>) {
+    let mut trusted = Vec::new();
+    for _ in 0..4 {
+        match open(ssh, setup).await {
+            Err(AppError::SshHostKey(problem)) => {
+                ssh::trust(&problem, &setup.known_hosts).unwrap();
+                trusted.push((problem.host.clone(), problem.port));
+            }
+            other => return (other, trusted),
+        }
+    }
+    panic!("the host keys kept being asked for");
+}
+
+/// `true` when the chain can be tested: the bastion is up and can reach `sshd-inner`.
+async fn chain_available() -> bool {
+    if !available() {
+        return false;
+    }
+    let dir = TempDir::new().unwrap();
+    let known = dir.path().join("known_hosts");
+    let ssh = chained(SshAuth::Password, SshAuth::Password);
+    let (result, _) =
+        open_trusting(&ssh, &chain_setup(Some("tunnel"), Some("tunnel"), &known)).await;
+    match result {
+        Ok(_) => true,
+        Err(e) => {
+            assert!(
+                !db_required(),
+                "the chain is not usable (is `sshd-inner` up? `npm run db:up`): {}",
+                e.message()
+            );
+            eprintln!(
+                "SKIPPED: the inner SSH server is not reachable: {}",
+                e.message()
+            );
+            false
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_database_behind_a_bastion_is_reached_through_both_hosts() {
+    if !chain_available().await {
+        return;
+    }
+    let dir = TempDir::new().unwrap();
+    let known = dir.path().join("known_hosts");
+    let ssh = chained(SshAuth::Password, SshAuth::Password);
+    let setup = chain_setup(Some("tunnel"), Some("tunnel"), &known);
+
+    // Each server's key is asked about by itself: the bastion first, then the one behind it.
+    let (result, asked) = open_trusting(&ssh, &setup).await;
+    result.unwrap();
+    assert_eq!(
+        asked,
+        vec![(ssh_host(), ssh_port()), (inner_host(), inner_port())]
+    );
+
+    let config = dev_over_ssh(ssh);
+    let session = Session::open_with_ssh(config, Some(DEV_PASSWORD), Some(setup))
+        .await
+        .unwrap();
+    let database: String = session
+        .meta()
+        .await
+        .unwrap()
+        .query_one("SELECT current_database()::text", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(database, "angkordb_dev");
+    session.close().await;
+}
+
+#[tokio::test]
+async fn each_host_of_the_chain_can_log_in_in_its_own_way() {
+    if !chain_available().await {
+        return;
+    }
+    let keys = keys();
+    let dir = TempDir::new().unwrap();
+    let known = dir.path().join("known_hosts");
+
+    // A key for the bastion, a password for the one behind it.
+    let (result, _) = open_trusting(
+        &chained(SshAuth::Password, key_auth(&keys.plain)),
+        &chain_setup(Some("tunnel"), None, &known),
+    )
+    .await;
+    result.unwrap();
+
+    // A passphrase-protected key for the jump host takes its own passphrase, not the other's.
+    let ssh = chained(SshAuth::Password, key_auth(&keys.protected));
+    let (result, _) =
+        open_trusting(&ssh, &chain_setup(Some("tunnel"), Some(PASSPHRASE), &known)).await;
+    result.unwrap();
+    let (result, _) =
+        open_trusting(&ssh, &chain_setup(Some("tunnel"), Some("tunnel"), &known)).await;
+    let error = expect_err(result);
+    assert!(
+        error.message().starts_with("Jump host") || error.message().contains("jump host"),
+        "{}",
+        error.message()
+    );
+}
+
+#[tokio::test]
+async fn a_problem_with_the_jump_host_says_so() {
+    if !chain_available().await {
+        return;
+    }
+    let dir = TempDir::new().unwrap();
+    let known = dir.path().join("known_hosts");
+
+    // The bastion refuses the password.
+    let ssh = chained(SshAuth::Password, SshAuth::Password);
+    let (result, _) =
+        open_trusting(&ssh, &chain_setup(Some("tunnel"), Some("wrong"), &known)).await;
+    let error = expect_err(result);
+    assert_eq!(error.code(), "SSH");
+    assert!(error.message().contains("jump host"), "{}", error.message());
+    assert!(
+        error.message().contains("refused the login"),
+        "{}",
+        error.message()
+    );
+
+    // No password for it at all.
+    let (result, _) = open_trusting(&ssh, &chain_setup(Some("tunnel"), None, &known)).await;
+    let error = expect_err(result);
+    assert_eq!(error.code(), "VALIDATION");
+    assert!(error.message().contains("Jump host"), "{}", error.message());
+
+    // The bastion is trusted, the server behind it refuses: that one is not blamed on the bastion.
+    let (result, _) =
+        open_trusting(&ssh, &chain_setup(Some("wrong"), Some("tunnel"), &known)).await;
+    let error = expect_err(result);
+    assert_eq!(error.code(), "SSH");
+    assert!(
+        !error.message().contains("jump host"),
+        "{}",
+        error.message()
+    );
+}
+
+#[tokio::test]
+async fn a_server_the_bastion_cannot_reach_is_reported_as_such() {
+    if !chain_available().await {
+        return;
+    }
+    let dir = TempDir::new().unwrap();
+    let known = dir.path().join("known_hosts");
+    let mut ssh = chained(SshAuth::Password, SshAuth::Password);
+    ssh.host = "no-such-host.invalid".into();
+    let (result, _) =
+        open_trusting(&ssh, &chain_setup(Some("tunnel"), Some("tunnel"), &known)).await;
+    let error = expect_err(result);
+    assert!(error.message().contains("jump host"), "{}", error.message());
+    assert!(
+        error.message().contains("no-such-host.invalid"),
+        "{}",
+        error.message()
+    );
+}
+
+#[tokio::test]
+async fn a_changed_key_of_the_jump_host_is_refused() {
+    if !chain_available().await {
+        return;
+    }
+    let dir = TempDir::new().unwrap();
+    let known = dir.path().join("known_hosts");
+    let ssh = chained(SshAuth::Password, SshAuth::Password);
+    let setup = chain_setup(Some("tunnel"), Some("tunnel"), &known);
+    let (result, _) = open_trusting(&ssh, &setup).await;
+    result.unwrap();
+
+    // Record another key for the bastion than the one it has.
+    let other = keys().other_public.trim().to_owned();
+    let recorded = std::fs::read_to_string(&known).unwrap();
+    let rewritten: String = recorded
+        .lines()
+        .map(|line| {
+            if line.starts_with(&format!("[{}]:{}", ssh_host(), ssh_port())) {
+                let host = line.split(' ').next().unwrap();
+                let mut parts = other.split(' ');
+                format!(
+                    "{host} {} {}\n",
+                    parts.next().unwrap(),
+                    parts.next().unwrap()
+                )
+            } else {
+                format!("{line}\n")
+            }
+        })
+        .collect();
+    std::fs::write(&known, rewritten).unwrap();
+
+    let error = expect_err(open(&ssh, &setup).await);
+    assert_eq!(error.code(), "SSH_HOST_CHANGED");
+    assert_eq!(error.host_key().unwrap().host, ssh_host());
+}
+
+#[tokio::test]
+async fn the_chain_is_made_again_after_it_dropped() {
+    if !chain_available().await {
+        return;
+    }
+    let dir = TempDir::new().unwrap();
+    let known = dir.path().join("known_hosts");
+    let ssh = chained(SshAuth::Password, SshAuth::Password);
+    let setup = chain_setup(Some("tunnel"), Some("tunnel"), &known);
+    let (result, _) = open_trusting(&ssh, &setup).await;
+    result.unwrap();
+
+    let tunnel = open(&ssh, &setup).await.unwrap();
+    assert!(select_one(tunnel.local_port()).await);
+    tunnel.drop_ssh_connection().await;
+    assert!(
+        select_one(tunnel.local_port()).await,
+        "no new chain after the drop"
+    );
+}
+
+async fn select_one(port: u16) -> bool {
+    let mut config = tokio_postgres::Config::new();
+    config
+        .host("127.0.0.1")
+        .port(port)
+        .user("angkor")
+        .password(DEV_PASSWORD)
+        .dbname("angkordb_dev");
+    let Ok((client, connection)) = config.connect(tokio_postgres::NoTls).await else {
+        return false;
+    };
+    tokio::spawn(connection);
+    client.simple_query("SELECT 1").await.is_ok()
+}
+
+#[tokio::test]
+async fn test_ssh_goes_through_the_bastion_too() {
+    if !chain_available().await {
+        return;
+    }
+    let dir = TempDir::new().unwrap();
+    let known = dir.path().join("known_hosts");
+    let ssh = chained(SshAuth::Password, SshAuth::Password);
+    let setup = chain_setup(Some("tunnel"), Some("tunnel"), &known);
+    let (result, _) = open_trusting(&ssh, &setup).await;
+    result.unwrap();
+
+    let (host, port) = db_target();
+    let report = ssh::test(&ssh, &setup, &host, port).await.unwrap();
+    assert!(report.reaches_database, "{:?}", report.database_problem);
+    assert!(report.fingerprint.starts_with("SHA256:"));
+    let report = ssh::test(&ssh, &setup, "nothing.invalid", 5432)
+        .await
+        .unwrap();
+    assert!(!report.reaches_database);
 }

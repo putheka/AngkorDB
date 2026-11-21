@@ -12,6 +12,7 @@ import type {
   ExportRequest,
   ExportStatus,
   ConnectionConfig,
+  SshAlias,
   SshTestResult,
   PrivilegeChange,
   PrivilegeTarget,
@@ -256,11 +257,19 @@ const mockConnectionFile: SharedConnection[] = [
       user: "deploy",
       auth: { kind: "password" },
       hasSecret: false,
+      jump: {
+        host: "gateway.example.com",
+        port: 2200,
+        user: "hop",
+        auth: { kind: "password" },
+        hasSecret: false,
+      },
     },
     sslFiles: null,
     needsPassword: true,
     needsSshSecret: true,
     needsSslKeySecret: false,
+    needsSshJumpSecret: true,
   },
   {
     name: "Local scratch",
@@ -275,6 +284,7 @@ const mockConnectionFile: SharedConnection[] = [
     needsPassword: false,
     needsSshSecret: false,
     needsSslKeySecret: false,
+    needsSshJumpSecret: false,
   },
 ];
 
@@ -291,11 +301,12 @@ const handlers: Record<string, Handler> = {
   list_connections: () => structuredClone(connections),
 
   save_connection: async (args) => {
-    const { config, password, sshSecret, sslKeySecret } = args as {
+    const { config, password, sshSecret, sslKeySecret, sshJumpSecret } = args as {
       config: ConnectionConfig;
       password: PasswordChange;
       sshSecret: PasswordChange | null;
       sslKeySecret: PasswordChange | null;
+      sshJumpSecret: PasswordChange | null;
     };
     await sleep(150);
     const previous = connections.find((c) => c.id === config.id);
@@ -333,6 +344,19 @@ const handlers: Record<string, Handler> = {
                   : sshSecret?.kind === "clear"
                     ? false
                     : !!previous?.ssh?.hasSecret,
+            jump: config.ssh.jump
+              ? {
+                  ...config.ssh.jump,
+                  hasSecret:
+                    config.ssh.jump.auth.kind === "agent"
+                      ? false
+                      : sshJumpSecret?.kind === "set"
+                        ? true
+                        : sshJumpSecret?.kind === "clear"
+                          ? false
+                          : !!previous?.ssh?.jump?.hasSecret,
+                }
+              : null,
           }
         : null,
     };
@@ -476,13 +500,21 @@ const handlers: Record<string, Handler> = {
     if (ids.length === 0) throw appError("VALIDATION", "Choose at least one connection.");
     return ids.length;
   },
+  resolve_ssh_alias: (args): SshAlias | null =>
+    String(args["host"]).trim() === "prod-db"
+      ? {
+          host: "10.0.0.5",
+          port: 22,
+          user: "admin",
+          identityFile: "~/.ssh/work_ed25519",
+          jump: { host: "bastion.example.com", port: 22, user: "deploy", identityFile: null },
+        }
+      : null,
   read_connection_file: (): SharedConnection[] => structuredClone(mockConnectionFile),
   import_connections: (args) => {
-    const entries = args["entries"] as { index: number; password: string | null }[];
-    const incoming = structuredClone(mockConnectionFile);
+    const entries = args["entries"] as { connection: SharedConnection; password: string | null }[];
     const added = entries.flatMap((entry) => {
-      const shared = incoming[entry.index];
-      if (!shared) return [];
+      const shared = entry.connection;
       const name = connections.some((c) => c.name === shared.name)
         ? `${shared.name} (2)`
         : shared.name;
@@ -493,7 +525,13 @@ const handlers: Record<string, Handler> = {
         name,
         group: shared.group,
         hasPassword: !!entry.password,
-        ssh: shared.ssh ? { ...shared.ssh, hasSecret: false } : null,
+        ssh: shared.ssh
+          ? {
+              ...shared.ssh,
+              hasSecret: false,
+              jump: shared.ssh.jump ? { ...shared.ssh.jump, hasSecret: false } : null,
+            }
+          : null,
         sslFiles: null,
       };
       return [config];

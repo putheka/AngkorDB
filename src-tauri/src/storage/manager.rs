@@ -5,7 +5,9 @@ use tokio::sync::Mutex;
 use uuid::Uuid;
 
 use crate::error::{AppError, AppResult};
-use crate::models::connection::{ConnectionConfig, PasswordChange, SshAuth, SshConfig, SslFiles};
+use crate::models::connection::{
+    ConnectionConfig, PasswordChange, SshAuth, SshConfig, SshJump, SslFiles,
+};
 use crate::storage::connections::ConnectionStore;
 use crate::storage::secrets::SecretStore;
 
@@ -15,6 +17,11 @@ fn ssh_account(id: &str) -> String {
 }
 
 /// The Keychain account of the passphrase of a connection's TLS client key.
+/// Where the jump host's SSH password or key passphrase is kept.
+fn ssh_jump_account(id: &str) -> String {
+    format!("{id}:sshjump")
+}
+
 fn ssl_key_account(id: &str) -> String {
     format!("{id}:sslkey")
 }
@@ -25,6 +32,7 @@ pub struct TestSecrets {
     pub password: Option<String>,
     pub ssh: Option<String>,
     pub ssl_key: Option<String>,
+    pub jump: Option<String>,
 }
 
 /// Saved connections (JSON file) + their passwords (Keychain), kept in sync.
@@ -70,6 +78,19 @@ impl ConnectionManager {
         self.secret_get(&ssh_account(id)).await
     }
 
+    /// The saved SSH password or key passphrase of a connection's jump host.
+    pub async fn ssh_jump_secret(&self, id: &str) -> AppResult<Option<String>> {
+        if !self
+            .get(id)?
+            .ssh
+            .and_then(|s| s.jump)
+            .is_some_and(|j| j.has_secret)
+        {
+            return Ok(None);
+        }
+        self.secret_get(&ssh_jump_account(id)).await
+    }
+
     /// The saved passphrase of the TLS client key of a connection.
     pub async fn ssl_key_secret(&self, id: &str) -> AppResult<Option<String>> {
         if !self.get(id)?.ssl_files.is_some_and(|f| f.has_key_secret) {
@@ -107,6 +128,26 @@ impl ConnectionManager {
         password: PasswordChange,
         ssh_secret: PasswordChange,
         ssl_key_secret: PasswordChange,
+    ) -> AppResult<ConnectionConfig> {
+        self.save_with_all(
+            config,
+            password,
+            ssh_secret,
+            ssl_key_secret,
+            PasswordChange::Keep,
+        )
+        .await
+    }
+
+    /// [`ConnectionManager::save_with_secrets`], and what to do with the jump host's SSH
+    /// password or key passphrase.
+    pub async fn save_with_all(
+        &self,
+        config: ConnectionConfig,
+        password: PasswordChange,
+        ssh_secret: PasswordChange,
+        ssl_key_secret: PasswordChange,
+        jump_secret: PasswordChange,
     ) -> AppResult<ConnectionConfig> {
         let _guard = self.write_lock.lock().await;
         let mut config = normalize(config)?;
@@ -182,6 +223,46 @@ impl ConnectionManager {
             }
         }
 
+        let had_jump_secret = previous
+            .as_ref()
+            .and_then(|p| p.ssh.as_ref())
+            .and_then(|s| s.jump.as_ref())
+            .is_some_and(|j| j.has_secret);
+        match config.ssh.as_mut().and_then(|s| s.jump.as_mut()) {
+            // No jump host any more (or no tunnel): its secret goes with it.
+            None => {
+                if had_jump_secret {
+                    self.secret_delete(&ssh_jump_account(&config.id)).await?;
+                }
+            }
+            Some(jump) if jump.auth == SshAuth::Agent => {
+                if had_jump_secret {
+                    self.secret_delete(&ssh_jump_account(&config.id)).await?;
+                }
+                jump.has_secret = false;
+            }
+            Some(jump) => {
+                jump.has_secret = match jump_secret {
+                    PasswordChange::Keep => had_jump_secret,
+                    PasswordChange::Set { value } => {
+                        if value.is_empty() {
+                            return Err(AppError::Validation(
+                                "The jump host's password is empty. Leave it unchanged or remove the saved one"
+                                    .into(),
+                            ));
+                        }
+                        self.secret_set(&ssh_jump_account(&config.id), &value)
+                            .await?;
+                        true
+                    }
+                    PasswordChange::Clear => {
+                        self.secret_delete(&ssh_jump_account(&config.id)).await?;
+                        false
+                    }
+                };
+            }
+        }
+
         let had_ssl_secret = previous
             .as_ref()
             .and_then(|p| p.ssl_files.as_ref())
@@ -237,6 +318,9 @@ impl ConnectionManager {
                 if config.ssh.as_ref().is_some_and(|s| s.has_secret) {
                     let _ = self.secret_delete(&ssh_account(&config.id)).await;
                 }
+                if has_jump_secret(&config) {
+                    let _ = self.secret_delete(&ssh_jump_account(&config.id)).await;
+                }
             }
             return Err(e);
         }
@@ -255,6 +339,9 @@ impl ConnectionManager {
         }
         if config.ssh.as_ref().is_some_and(|s| s.has_secret) {
             self.secret_delete(&ssh_account(id)).await?;
+        }
+        if has_jump_secret(config) {
+            self.secret_delete(&ssh_jump_account(id)).await?;
         }
         if config.ssl_files.as_ref().is_some_and(|f| f.has_key_secret) {
             self.secret_delete(&ssl_key_account(id)).await?;
@@ -289,6 +376,21 @@ impl ConnectionManager {
             }
         }
 
+        if let Some(jump) = copy
+            .ssh
+            .as_mut()
+            .and_then(|s| s.jump.as_mut())
+            .filter(|j| j.has_secret)
+        {
+            match self.secret_get(&ssh_jump_account(&original.id)).await? {
+                Some(secret) => {
+                    self.secret_set(&ssh_jump_account(&copy.id), &secret)
+                        .await?;
+                }
+                None => jump.has_secret = false,
+            }
+        }
+
         if let Some(files) = copy.ssl_files.as_mut().filter(|f| f.has_key_secret) {
             match self.secret_get(&ssl_key_account(&original.id)).await? {
                 Some(secret) => {
@@ -308,6 +410,9 @@ impl ConnectionManager {
             }
             if copy.ssh.as_ref().is_some_and(|s| s.has_secret) {
                 let _ = self.secret_delete(&ssh_account(&copy.id)).await;
+            }
+            if has_jump_secret(&copy) {
+                let _ = self.secret_delete(&ssh_jump_account(&copy.id)).await;
             }
             return Err(e);
         }
@@ -348,7 +453,36 @@ impl ConnectionManager {
         ssh_secret: PasswordChange,
         ssl_key_secret: PasswordChange,
     ) -> AppResult<(ConnectionConfig, TestSecrets)> {
+        self.resolve_for_test_full(
+            config,
+            password,
+            ssh_secret,
+            ssl_key_secret,
+            PasswordChange::Keep,
+        )
+        .await
+    }
+
+    /// [`ConnectionManager::resolve_for_test_all`], with the jump host's secret as well.
+    pub async fn resolve_for_test_full(
+        &self,
+        config: ConnectionConfig,
+        password: PasswordChange,
+        ssh_secret: PasswordChange,
+        ssl_key_secret: PasswordChange,
+        jump_secret: PasswordChange,
+    ) -> AppResult<(ConnectionConfig, TestSecrets)> {
         let config = normalize(config)?;
+        let jump = match jump_secret {
+            PasswordChange::Set { value } => Some(value),
+            PasswordChange::Clear => None,
+            PasswordChange::Keep if config.id.is_empty() => None,
+            PasswordChange::Keep => match self.ssh_jump_secret(&config.id).await {
+                Ok(secret) => secret,
+                Err(AppError::ConnectionNotFound(_)) => None,
+                Err(e) => return Err(e),
+            },
+        };
         let ssl_key = match ssl_key_secret {
             PasswordChange::Set { value } => Some(value),
             PasswordChange::Clear => None,
@@ -385,6 +519,7 @@ impl ConnectionManager {
                 password,
                 ssh: ssh_secret,
                 ssl_key,
+                jump,
             },
         ))
     }
@@ -472,6 +607,44 @@ fn normalize_ssl_files(mut files: SslFiles) -> AppResult<Option<SslFiles>> {
     Ok(Some(files))
 }
 
+fn has_jump_secret(config: &ConnectionConfig) -> bool {
+    config
+        .ssh
+        .as_ref()
+        .and_then(|s| s.jump.as_ref())
+        .is_some_and(|j| j.has_secret)
+}
+
+fn normalize_jump(mut jump: SshJump) -> AppResult<SshJump> {
+    jump.host = jump.host.trim().to_owned();
+    jump.user = jump.user.trim().to_owned();
+    if jump.host.is_empty() {
+        return Err(AppError::Validation("The jump host is required".into()));
+    }
+    if jump.port == 0 {
+        return Err(AppError::Validation(
+            "The jump host's port must be between 1 and 65535".into(),
+        ));
+    }
+    if jump.user.is_empty() {
+        return Err(AppError::Validation(
+            "The jump host's user is required".into(),
+        ));
+    }
+    if let SshAuth::PrivateKey { path } = &mut jump.auth {
+        *path = path.trim().to_owned();
+        if path.is_empty() {
+            return Err(AppError::Validation(
+                "Give the path of the jump host's private key file".into(),
+            ));
+        }
+    }
+    if jump.auth == SshAuth::Agent {
+        jump.has_secret = false;
+    }
+    Ok(jump)
+}
+
 fn normalize_ssh(mut ssh: SshConfig) -> AppResult<SshConfig> {
     ssh.host = ssh.host.trim().to_owned();
     ssh.user = ssh.user.trim().to_owned();
@@ -497,6 +670,9 @@ fn normalize_ssh(mut ssh: SshConfig) -> AppResult<SshConfig> {
     // A key or password that is no longer used would be a secret kept for nothing.
     if ssh.auth == SshAuth::Agent {
         ssh.has_secret = false;
+    }
+    if let Some(jump) = ssh.jump.take() {
+        ssh.jump = Some(normalize_jump(jump)?);
     }
     Ok(ssh)
 }

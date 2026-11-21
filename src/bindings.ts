@@ -37,28 +37,34 @@ export const commands = {
 	/**  What is in a connections file, to show before importing. Nothing is saved. */
 	readConnectionFile: (path: string, options?: InvokeOptions) => __TAURI_INVOKE<SharedConnection[]>("read_connection_file", { path }, options),
 	/**
-	 *  Save the chosen connections of a file as new ones, with the secrets typed for them (kept in
-	 *  the Keychain). A name that is taken gets a number. Returns the connections that were saved.
+	 *  Save the given connections (the ones shown from a file) as new ones, with the secrets typed
+	 *  for them (kept in the Keychain). A name that is taken gets a number. Returns the connections
+	 *  that were saved. The file is not read again: what was shown is what is saved.
 	 */
-	importConnections: (path: string, entries: ImportEntry[], options?: InvokeOptions) => __TAURI_INVOKE<ConnectionConfig[]>("import_connections", { path, entries }, options),
+	importConnections: (entries: ImportEntry[], options?: InvokeOptions) => __TAURI_INVOKE<ConnectionConfig[]>("import_connections", { entries }, options),
 	listConnections: (options?: InvokeOptions) => __TAURI_INVOKE<ConnectionConfig[]>("list_connections", undefined, options),
 	/**  Create (empty `config.id`) or update a connection. Returns the saved connection. */
-	saveConnection: (config: ConnectionConfig, password: PasswordChange, sshSecret: PasswordChange | null, sslKeySecret: PasswordChange | null, options?: InvokeOptions) => __TAURI_INVOKE<ConnectionConfig>("save_connection", { config, password, sshSecret, sslKeySecret }, options),
+	saveConnection: (config: ConnectionConfig, password: PasswordChange, sshSecret: PasswordChange | null, sslKeySecret: PasswordChange | null, sshJumpSecret: PasswordChange | null, options?: InvokeOptions) => __TAURI_INVOKE<ConnectionConfig>("save_connection", { config, password, sshSecret, sslKeySecret, sshJumpSecret }, options),
 	/**  Delete a connection and its saved password; closes it first if it is open. */
 	deleteConnection: (id: string, options?: InvokeOptions) => __TAURI_INVOKE<null>("delete_connection", { id }, options),
 	duplicateConnection: (id: string, options?: InvokeOptions) => __TAURI_INVOKE<ConnectionConfig>("duplicate_connection", { id }, options),
 	/**  Try to connect with the form values, without saving. Fails after 6 seconds at the latest. */
-	testConnection: (config: ConnectionConfig, password: PasswordChange, sshSecret: PasswordChange | null, sslKeySecret: PasswordChange | null, options?: InvokeOptions) => __TAURI_INVOKE<ConnectionInfo>("test_connection", { config, password, sshSecret, sslKeySecret }, options),
+	testConnection: (config: ConnectionConfig, password: PasswordChange, sshSecret: PasswordChange | null, sslKeySecret: PasswordChange | null, sshJumpSecret: PasswordChange | null, options?: InvokeOptions) => __TAURI_INVOKE<ConnectionInfo>("test_connection", { config, password, sshSecret, sslKeySecret, sshJumpSecret }, options),
 	/**
 	 *  Try the SSH leg of the form alone: log in to the SSH server (checking its host key) and ask it
 	 *  to open the database's host and port. Nothing is saved.
 	 */
-	testSsh: (config: ConnectionConfig, sshSecret: PasswordChange | null, options?: InvokeOptions) => __TAURI_INVOKE<SshTestResult>("test_ssh", { config, sshSecret }, options),
+	testSsh: (config: ConnectionConfig, sshSecret: PasswordChange | null, sshJumpSecret: PasswordChange | null, options?: InvokeOptions) => __TAURI_INVOKE<SshTestResult>("test_ssh", { config, sshSecret, sshJumpSecret }, options),
 	/**
 	 *  Trust the SSH host key that the last attempt stopped at (identified by its fingerprint):
 	 *  it is added to known_hosts, as `ssh` does when you answer "yes". Then try again.
 	 */
 	trustSshHost: (fingerprint: string, options?: InvokeOptions) => __TAURI_INVOKE<null>("trust_ssh_host", { fingerprint }, options),
+	/**
+	 *  What `~/.ssh/config` says about a host name (an alias, or a name with settings of its own),
+	 *  to fill the SSH section from. `None` when the file doesn't mention it.
+	 */
+	resolveSshAlias: (host: string, options?: InvokeOptions) => __TAURI_INVOKE<SshAlias | null>("resolve_ssh_alias", { host }, options),
 	/**  Fill the connection form from a `postgres://` URL. */
 	parseConnectionUrl: (url: string, options?: InvokeOptions) => __TAURI_INVOKE<ParsedConnectionUrl>("parse_connection_url", { url }, options),
 	/**  Open a saved connection (replaces an already open session of the same connection). */
@@ -816,13 +822,17 @@ export type HistoryEntry = {
 	ok: boolean,
 };
 
-/**  One connection of the file to import, with the secrets the person typed for it. */
+/**
+ *  One connection to import, with the secrets the person typed for it. It carries the settings
+ *  that were shown, not a place in the file: what is saved is exactly what was on screen, even if
+ *  the file changed since it was read.
+ */
 export type ImportEntry = {
-	/**  Its place in the file (0-based). */
-	index: number,
+	connection: SharedConnection,
 	password: string | null,
 	sshSecret: string | null,
 	sslKeySecret: string | null,
+	sshJumpSecret?: string | null,
 };
 
 export type ImportFormat = { kind: "csv"; 
@@ -1372,6 +1382,7 @@ export type SharedConnection = {
 	needsPassword?: boolean,
 	needsSshSecret?: boolean,
 	needsSslKeySecret?: boolean,
+	needsSshJumpSecret?: boolean,
 };
 
 export type SortDir = "asc" | "desc";
@@ -1379,6 +1390,25 @@ export type SortDir = "asc" | "desc";
 export type SortSpec = {
 	column: string,
 	dir: SortDir,
+};
+
+/**  What `~/.ssh/config` says about a host name: the fields of the SSH section to fill in. */
+export type SshAlias = {
+	/**  `HostName`, or the name that was asked about when there is none. */
+	host: string,
+	port: number,
+	user: string | null,
+	/**  The first `IdentityFile`. */
+	identityFile: string | null,
+	/**  The first hop of `ProxyJump`, looked up in the file the same way. */
+	jump: SshAliasJump | null,
+};
+
+export type SshAliasJump = {
+	host: string,
+	port: number,
+	user: string | null,
+	identityFile: string | null,
 };
 
 export type SshAuth = 
@@ -1400,6 +1430,27 @@ export type SshConfig = {
 	auth: SshAuth,
 	/**
 	 *  True when the SSH password, or the key's passphrase, is saved in the Keychain.
+	 *  Maintained by the backend, ignored on input.
+	 */
+	hasSecret?: boolean,
+	/**
+	 *  A server to go through to reach this one (a bastion). Missing in files saved before
+	 *  ANG-49.
+	 */
+	jump?: SshJump | null,
+};
+
+/**
+ *  The server in front of the SSH server: connected to first, then the SSH server is reached
+ *  through it.
+ */
+export type SshJump = {
+	host: string,
+	port: number,
+	user: string,
+	auth: SshAuth,
+	/**
+	 *  True when the jump host's SSH password, or its key's passphrase, is saved in the Keychain.
 	 *  Maintained by the backend, ignored on input.
 	 */
 	hasSecret?: boolean,

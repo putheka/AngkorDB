@@ -2656,7 +2656,9 @@ fn connections_move_between_macs_in_a_file_without_secrets() {
     prod["color"] = json!("red");
     prod["safeMode"] = json!("read-only");
     prod["ssh"] = json!({ "host": "bastion", "port": 22, "user": "deploy",
-        "auth": { "kind": "password" }, "hasSecret": false });
+        "auth": { "kind": "password" }, "hasSecret": false,
+        "jump": { "host": "gateway.example.com", "port": 2200, "user": "hop",
+                  "auth": { "kind": "password" }, "hasSecret": false } });
     prod["sslFiles"] = json!({ "rootCert": "/certs/ca.crt", "clientCert": "/certs/c.crt",
         "clientKey": "/certs/c.key", "hasKeySecret": false });
     let saved = source
@@ -2664,9 +2666,19 @@ fn connections_move_between_macs_in_a_file_without_secrets() {
             "save_connection",
             json!({ "config": prod, "password": { "kind": "set", "value": "db-pass-123" },
                     "sshSecret": { "kind": "set", "value": "ssh-pass-456" },
-                    "sslKeySecret": { "kind": "set", "value": "key-pass-789" } }),
+                    "sslKeySecret": { "kind": "set", "value": "key-pass-789" },
+                    "sshJumpSecret": { "kind": "set", "value": "jump-pass-321" } }),
         )
         .unwrap();
+    assert_eq!(saved["ssh"]["jump"]["hasSecret"], json!(true));
+    assert_eq!(
+        source
+            .secrets
+            .get(&format!("{}:sshjump", saved["id"].as_str().unwrap()))
+            .unwrap()
+            .as_deref(),
+        Some("jump-pass-321")
+    );
     let plain = source
         .call(
             "save_connection",
@@ -2701,13 +2713,19 @@ fn connections_move_between_macs_in_a_file_without_secrets() {
 
     // The file holds the settings and no secret, and not the connection's id.
     let text = std::fs::read_to_string(&file).unwrap();
-    for secret in ["db-pass-123", "ssh-pass-456", "key-pass-789"] {
+    for secret in [
+        "db-pass-123",
+        "ssh-pass-456",
+        "key-pass-789",
+        "jump-pass-321",
+    ] {
         assert!(!text.contains(secret), "{secret} is in the file");
     }
     assert!(!text.contains(saved["id"].as_str().unwrap()));
     assert!(
         text.contains("db.example.com")
             && text.contains("bastion")
+            && text.contains("gateway.example.com")
             && text.contains("/certs/ca.crt")
     );
     assert!(!dir.path().join("connections.json.part").exists());
@@ -2726,6 +2744,9 @@ fn connections_move_between_macs_in_a_file_without_secrets() {
         ),
         (json!(true), json!(true), json!(true))
     );
+    assert_eq!(shown[0]["needsSshJumpSecret"], json!(true));
+    assert_eq!(shown[0]["ssh"]["jump"]["host"], "gateway.example.com");
+    assert_eq!(shown[0]["ssh"]["jump"]["hasSecret"], json!(false));
     assert_eq!(shown[1]["needsPassword"], json!(false));
     assert_eq!(shown[0]["ssh"]["hasSecret"], json!(false));
     assert_eq!(shown[0]["color"], "red");
@@ -2733,9 +2754,9 @@ fn connections_move_between_macs_in_a_file_without_secrets() {
     let imported = target
         .call(
             "import_connections",
-            json!({ "path": path, "entries": [
-                { "index": 0, "password": "new-db-pass", "sshSecret": "new-ssh", "sslKeySecret": "new-key" },
-                { "index": 1, "password": null, "sshSecret": null, "sslKeySecret": null } ] }),
+            json!({ "entries": [
+                { "connection": shown[0], "password": "new-db-pass", "sshSecret": "new-ssh", "sslKeySecret": "new-key", "sshJumpSecret": "new-jump" },
+                { "connection": shown[1], "password": null, "sshSecret": null, "sslKeySecret": null } ] }),
         )
         .unwrap();
     let imported = imported.as_array().unwrap();
@@ -2766,12 +2787,21 @@ fn connections_move_between_macs_in_a_file_without_secrets() {
         Some("new-key")
     );
     assert_eq!(imported[0]["safeMode"], "read-only");
+    assert_eq!(imported[0]["ssh"]["jump"]["hasSecret"], json!(true));
+    assert_eq!(
+        target
+            .secrets
+            .get(&format!("{id}:sshjump"))
+            .unwrap()
+            .as_deref(),
+        Some("new-jump")
+    );
 
     // Again: the names are taken, so they get numbers; and only the chosen one is imported.
     let again = target
         .call(
             "import_connections",
-            json!({ "path": path, "entries": [{ "index": 1, "password": null, "sshSecret": null, "sslKeySecret": null }] }),
+            json!({ "entries": [{ "connection": shown[1], "password": null, "sshSecret": null, "sslKeySecret": null }] }),
         )
         .unwrap();
     assert_eq!(again[0]["name"], "Plain (2)");
@@ -2818,20 +2848,33 @@ fn connections_move_between_macs_in_a_file_without_secrets() {
             .unwrap()
             .contains("There is no file")
     );
-    for entries in [
-        json!([]),
-        json!([{ "index": 9, "password": null, "sshSecret": null, "sslKeySecret": null }]),
-    ] {
-        assert_eq!(
-            target
-                .call(
-                    "import_connections",
-                    json!({ "path": path, "entries": entries })
-                )
-                .unwrap_err()["code"],
-            "VALIDATION"
-        );
-    }
+    assert_eq!(
+        target
+            .call("import_connections", json!({ "entries": [] }))
+            .unwrap_err()["code"],
+        "VALIDATION"
+    );
+    // What is saved is what was shown, not what the file says by the time of the import.
+    let swapped = dir.path().join("swapped.json");
+    std::fs::copy(&file, &swapped).unwrap();
+    let swapped_path = swapped.display().to_string();
+    let shown_before = target
+        .call("read_connection_file", json!({ "path": swapped_path }))
+        .unwrap();
+    std::fs::write(
+        &swapped,
+        std::fs::read_to_string(&swapped)
+            .unwrap()
+            .replace("db.example.com", "evil.example.net"),
+    )
+    .unwrap();
+    let kept = target
+        .call(
+            "import_connections",
+            json!({ "entries": [{ "connection": shown_before[0], "password": null, "sshSecret": null, "sslKeySecret": null }] }),
+        )
+        .unwrap();
+    assert_eq!(kept[0]["host"], "db.example.com");
     // A connection with nothing to connect to is refused, by name, and the rest still stands.
     let broken = dir.path().join("broken.json");
     std::fs::write(
@@ -2841,12 +2884,18 @@ fn connections_move_between_macs_in_a_file_without_secrets() {
           {"name":"No host","host":"","port":5432,"user":"u","database":"d","sslMode":"prefer","color":"none","group":null,"safeMode":"off"}]}"#,
     )
     .unwrap();
+    let shown_broken = target
+        .call(
+            "read_connection_file",
+            json!({ "path": broken.display().to_string() }),
+        )
+        .unwrap();
     let err = target
         .call(
             "import_connections",
-            json!({ "path": broken.display().to_string(), "entries": [
-                { "index": 0, "password": null, "sshSecret": null, "sslKeySecret": null },
-                { "index": 1, "password": null, "sshSecret": null, "sslKeySecret": null }] }),
+            json!({ "entries": [
+                { "connection": shown_broken[0], "password": null, "sshSecret": null, "sslKeySecret": null },
+                { "connection": shown_broken[1], "password": null, "sshSecret": null, "sslKeySecret": null }] }),
         )
         .unwrap_err();
     assert!(
@@ -2856,5 +2905,23 @@ fn connections_move_between_macs_in_a_file_without_secrets() {
                 .unwrap()
                 .contains("Host is required"),
         "{err}"
+    );
+}
+
+#[test]
+fn resolve_ssh_alias_answers_nothing_for_a_blank_or_unknown_name() {
+    let ipc = setup();
+    assert_eq!(
+        ipc.call("resolve_ssh_alias", json!({ "host": "  " }))
+            .unwrap(),
+        json!(null)
+    );
+    assert_eq!(
+        ipc.call(
+            "resolve_ssh_alias",
+            json!({ "host": "angkordb-no-such-alias.invalid" })
+        )
+        .unwrap(),
+        json!(null)
     );
 }

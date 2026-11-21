@@ -62,6 +62,9 @@ jobs:
       # is `localhost:54329` from where it stands.
       ANGKORDB_TEST_SSH_DB_HOST: localhost
       ANGKORDB_TEST_SSH_DB_PORT: "54329"
+      # The jump host tests: a second SSH server on the host network, reached through the first.
+      ANGKORDB_TEST_SSH_INNER_HOST: localhost
+      ANGKORDB_TEST_SSH_INNER_PORT: "2223"
     steps:
       - uses: actions/checkout@v7
 
@@ -95,6 +98,10 @@ jobs:
           docker run -d --name angkordb-sshd --network host \
             -v "$PWD/dev/sshd/authorized:/authorized:ro" \
             angkordb-sshd /usr/sbin/sshd -D -e -p 2222
+          # The server behind it (the jump host tests).
+          docker run -d --name angkordb-sshd-inner --network host \
+            -v "$PWD/dev/sshd/authorized:/authorized:ro" \
+            angkordb-sshd /usr/sbin/sshd -D -e -p 2223
 
       - name: Start the TLS-only Postgres
         run: |

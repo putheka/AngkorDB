@@ -22,8 +22,15 @@ export function useSaveConnection() {
       password: PasswordChange;
       sshSecret: PasswordChange | null;
       sslKeySecret: PasswordChange | null;
+      sshJumpSecret: PasswordChange | null;
     }) =>
-      commands.saveConnection(input.config, input.password, input.sshSecret, input.sslKeySecret),
+      commands.saveConnection(
+        input.config,
+        input.password,
+        input.sshSecret,
+        input.sslKeySecret,
+        input.sshJumpSecret,
+      ),
     onSuccess: refresh,
   });
 }

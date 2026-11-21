@@ -18,7 +18,9 @@ import {
   defaultFileName,
   entriesOf,
   noSecrets,
+  routeOf,
   type Secrets,
+  warningsOf,
 } from "@/features/connections/connectionFile";
 import { connectionsKey } from "@/features/connections/useConnections";
 import { errorDetails, errorMessage } from "@/lib/errors";
@@ -29,6 +31,27 @@ interface Props {
   mode: "export" | "import";
   connections: ConnectionConfig[];
   onClose: () => void;
+}
+
+/** Where a connection of the file would send its secrets, and what to be careful about. */
+function ImportRoute({ connection }: { connection: SharedConnection }) {
+  const warnings = warningsOf(connection);
+  return (
+    <div className="flex flex-col gap-0.5 pl-6 text-[11px] text-muted-foreground">
+      {routeOf(connection)
+        .slice(1) // the database is already the line above
+        .map((line) => (
+          <span key={line} className="truncate font-mono" title={line}>
+            {line}
+          </span>
+        ))}
+      {warnings.map((line) => (
+        <span key={line} className="font-medium text-amber-600 dark:text-amber-400">
+          {line}
+        </span>
+      ))}
+    </div>
+  );
 }
 
 /** Write connections to a file (no secrets), or read a file and say which to add. */
@@ -86,10 +109,8 @@ export function ConnectionFileDialog({ mode, connections, onClose }: Props) {
     setWorking(true);
     setError(null);
     try {
-      const saved = await commands.importConnections(
-        file.path,
-        entriesOf(file.items.length, ticked, secrets),
-      );
+      // What was shown is what is saved: the file is not read again.
+      const saved = await commands.importConnections(entriesOf(file.items, ticked, secrets));
       await queryClient.invalidateQueries({ queryKey: connectionsKey });
       setSecrets(new Map()); // what was typed is not kept
       setDone(`Imported ${saved.length} ${saved.length === 1 ? "connection" : "connections"}`);
@@ -165,6 +186,9 @@ export function ConnectionFileDialog({ mode, connections, onClose }: Props) {
                           </span>
                         </span>
                       </label>
+                      {mode === "import" && file?.items[index] && (
+                        <ImportRoute connection={file.items[index]} />
+                      )}
                       {mode === "import" && ticked.has(index) && asks.length > 0 && (
                         <div className="flex flex-wrap gap-2 pl-6">
                           {file?.items[index]?.needsPassword && (
@@ -191,6 +215,21 @@ export function ConnectionFileDialog({ mode, connections, onClose }: Props) {
                               onChange={(e) => typed(index, { sshSecret: e.target.value })}
                             />
                           )}
+                          {file?.items[index]?.needsSshJumpSecret && (
+                            <Input
+                              type="password"
+                              aria-label={`Jump host secret for ${item.name}`}
+                              className="h-7 w-40 text-xs"
+                              placeholder={
+                                asks.includes("jump host password")
+                                  ? "Jump host password"
+                                  : "Jump host passphrase"
+                              }
+                              autoComplete="new-password"
+                              value={secrets.get(index)?.sshJumpSecret ?? ""}
+                              onChange={(e) => typed(index, { sshJumpSecret: e.target.value })}
+                            />
+                          )}
                           {file?.items[index]?.needsSslKeySecret && (
                             <Input
                               type="password"
@@ -211,7 +250,9 @@ export function ConnectionFileDialog({ mode, connections, onClose }: Props) {
             )}
             {mode === "import" && file && (
               <p className="text-xs text-muted-foreground">
-                Paths of key and certificate files are copied as they are: check them on this Mac.
+                A file decides where your passwords are sent. Only type them for a file you trust,
+                and read the servers listed under each connection first. Paths of key and
+                certificate files are copied as they are: check them on this Mac.
               </p>
             )}
           </div>

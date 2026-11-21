@@ -4,6 +4,7 @@ import type {
   ParsedConnectionUrl,
   PasswordChange,
   SafeMode,
+  SshAlias,
   SshAuth,
   SslMode,
 } from "@/bindings";
@@ -43,6 +44,17 @@ export interface ConnectionForm {
   hasSshSecret: boolean;
   /** The user asked to remove the saved SSH secret. */
   removeSshSecret: boolean;
+  /** Go through another SSH server (a bastion) to reach the SSH server. */
+  useJump: boolean;
+  jumpHost: string;
+  jumpPort: string;
+  jumpUser: string;
+  jumpAuth: SshAuth["kind"];
+  jumpKeyPath: string;
+  /** What the user typed: the jump host's password, or its key's passphrase. Empty: keep. */
+  jumpSecret: string;
+  hasJumpSecret: boolean;
+  removeJumpSecret: boolean;
   /** Certificate files for TLS: paths, as typed or picked. Empty: none. */
   sslRootCert: string;
   sslClientCert: string;
@@ -79,6 +91,15 @@ export const emptyForm: ConnectionForm = {
   sshSecret: "",
   hasSshSecret: false,
   removeSshSecret: false,
+  useJump: false,
+  jumpHost: "",
+  jumpPort: "22",
+  jumpUser: "",
+  jumpAuth: "privateKey",
+  jumpKeyPath: "",
+  jumpSecret: "",
+  hasJumpSecret: false,
+  removeJumpSecret: false,
   sslRootCert: "",
   sslClientCert: "",
   sslClientKey: "",
@@ -165,6 +186,16 @@ export function formFromConnection(connection: ConnectionConfig): ConnectionForm
     sshSecret: "",
     hasSshSecret: connection.ssh?.hasSecret ?? false,
     removeSshSecret: false,
+    useJump: Boolean(connection.ssh?.jump),
+    jumpHost: connection.ssh?.jump?.host ?? "",
+    jumpPort: String(connection.ssh?.jump?.port ?? 22),
+    jumpUser: connection.ssh?.jump?.user ?? "",
+    jumpAuth: connection.ssh?.jump?.auth.kind ?? "privateKey",
+    jumpKeyPath:
+      connection.ssh?.jump?.auth.kind === "privateKey" ? connection.ssh.jump.auth.path : "",
+    jumpSecret: "",
+    hasJumpSecret: connection.ssh?.jump?.hasSecret ?? false,
+    removeJumpSecret: false,
     sslRootCert: connection.sslFiles?.rootCert ?? "",
     sslClientCert: connection.sslFiles?.clientCert ?? "",
     sslClientKey: connection.sslFiles?.clientKey ?? "",
@@ -195,6 +226,15 @@ export function formToConfig(form: ConnectionForm): ConnectionConfig {
           user: form.sshUser,
           auth: sshAuthOf(form),
           hasSecret: form.hasSshSecret,
+          jump: form.useJump
+            ? {
+                host: form.jumpHost,
+                port: Number(form.jumpPort),
+                user: form.jumpUser,
+                auth: jumpAuthOf(form),
+                hasSecret: form.hasJumpSecret,
+              }
+            : null,
         }
       : null,
     sslFiles: sslFilesOf(form),
@@ -228,6 +268,53 @@ function sshAuthOf(form: ConnectionForm): SshAuth {
     case "agent":
       return { kind: "agent" };
   }
+}
+
+function jumpAuthOf(form: ConnectionForm): SshAuth {
+  switch (form.jumpAuth) {
+    case "privateKey":
+      return { kind: "privateKey", path: form.jumpKeyPath };
+    case "password":
+      return { kind: "password" };
+    case "agent":
+      return { kind: "agent" };
+  }
+}
+
+/** What to do with the saved password or passphrase of the jump host. The agent has none. */
+export function formToJumpSecretChange(form: ConnectionForm): PasswordChange {
+  if (!form.useSsh || !form.useJump || form.jumpAuth === "agent") return { kind: "keep" };
+  if (form.jumpSecret !== "") return { kind: "set", value: form.jumpSecret };
+  if (form.removeJumpSecret) return { kind: "clear" };
+  return { kind: "keep" };
+}
+
+/**
+ * Fill the SSH section from what `~/.ssh/config` says about the host that was typed: where it
+ * is, who to log in as, which key, and the jump host. What it doesn't say is left as it is.
+ */
+export function applySshAlias(form: ConnectionForm, alias: SshAlias): ConnectionForm {
+  const next: ConnectionForm = {
+    ...form,
+    sshHost: alias.host,
+    sshPort: String(alias.port),
+    sshUser: alias.user ?? form.sshUser,
+  };
+  if (alias.identityFile) {
+    next.sshAuth = "privateKey";
+    next.sshKeyPath = alias.identityFile;
+  }
+  if (alias.jump) {
+    next.useJump = true;
+    next.jumpHost = alias.jump.host;
+    next.jumpPort = String(alias.jump.port);
+    next.jumpUser = alias.jump.user ?? form.jumpUser;
+    if (alias.jump.identityFile) {
+      next.jumpAuth = "privateKey";
+      next.jumpKeyPath = alias.jump.identityFile;
+    }
+  }
+  return next;
 }
 
 /** What to do with the saved SSH password or passphrase. The agent has none. */
@@ -273,6 +360,10 @@ export type FormErrors = Partial<
     | "sshPort"
     | "sshUser"
     | "sshKeyPath"
+    | "jumpHost"
+    | "jumpPort"
+    | "jumpUser"
+    | "jumpKeyPath"
     | "sslClientCert",
     string
   >
@@ -293,6 +384,17 @@ export function validateForm(form: ConnectionForm): FormErrors {
     }
     if (!form.sshUser.trim()) errors.sshUser = "Required";
     if (form.sshAuth === "privateKey" && !form.sshKeyPath.trim()) errors.sshKeyPath = "Required";
+    if (form.useJump) {
+      if (!form.jumpHost.trim()) errors.jumpHost = "Required";
+      const jumpPort = Number(form.jumpPort.trim());
+      if (!/^\d+$/.test(form.jumpPort.trim()) || jumpPort < 1 || jumpPort > 65535) {
+        errors.jumpPort = "1 to 65535";
+      }
+      if (!form.jumpUser.trim()) errors.jumpUser = "Required";
+      if (form.jumpAuth === "privateKey" && !form.jumpKeyPath.trim()) {
+        errors.jumpKeyPath = "Required";
+      }
+    }
   }
   if ((form.sslClientCert.trim() === "") !== (form.sslClientKey.trim() === "")) {
     errors.sslClientCert = "Both, or neither";
@@ -328,5 +430,7 @@ export function describeConnection(
     Partial<Pick<ConnectionConfig, "ssh">>,
 ) {
   const base = `${c.user}@${c.host}:${c.port}/${c.database}`;
-  return c.ssh ? `${base} · via ${c.ssh.user}@${c.ssh.host}` : base;
+  if (!c.ssh) return base;
+  const jump = c.ssh.jump ? `${c.ssh.jump.user}@${c.ssh.jump.host} → ` : "";
+  return `${base} · via ${jump}${c.ssh.user}@${c.ssh.host}`;
 }

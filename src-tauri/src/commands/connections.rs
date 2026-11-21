@@ -8,7 +8,7 @@ use crate::db::{session, url};
 use crate::error::{AppError, AppResult};
 use crate::models::connection::{
     ConnectionConfig, ConnectionHealth, ConnectionInfo, ParsedConnectionUrl, PasswordChange,
-    SshAuth, SshTestResult,
+    SshAlias, SshAuth, SshTestResult,
 };
 use crate::state::AppState;
 
@@ -35,14 +35,16 @@ pub async fn save_connection(
     password: PasswordChange,
     ssh_secret: Option<PasswordChange>,
     ssl_key_secret: Option<PasswordChange>,
+    ssh_jump_secret: Option<PasswordChange>,
 ) -> AppResult<ConnectionConfig> {
     state
         .connections()
-        .save_with_secrets(
+        .save_with_all(
             config,
             password,
             ssh_secret.unwrap_or(PasswordChange::Keep),
             ssl_key_secret.unwrap_or(PasswordChange::Keep),
+            ssh_jump_secret.unwrap_or(PasswordChange::Keep),
         )
         .await
 }
@@ -73,19 +75,22 @@ pub async fn test_connection(
     password: PasswordChange,
     ssh_secret: Option<PasswordChange>,
     ssl_key_secret: Option<PasswordChange>,
+    ssh_jump_secret: Option<PasswordChange>,
 ) -> AppResult<ConnectionInfo> {
     let (config, secrets) = state
         .connections()
-        .resolve_for_test_all(
+        .resolve_for_test_full(
             config,
             password,
             ssh_secret.unwrap_or(PasswordChange::Keep),
             ssl_key_secret.unwrap_or(PasswordChange::Keep),
+            ssh_jump_secret.unwrap_or(PasswordChange::Keep),
         )
         .await?;
     let extras = Extras {
         ssh: Some(SshSetup {
             known_hosts: state.known_hosts().to_path_buf(),
+            jump_secret: secrets.jump,
             ..SshSetup::new(secrets.ssh)
         }),
         ssl_key_passphrase: secrets.ssl_key,
@@ -103,15 +108,19 @@ pub async fn test_ssh(
     state: State<'_, AppState>,
     config: ConnectionConfig,
     ssh_secret: Option<PasswordChange>,
+    ssh_jump_secret: Option<PasswordChange>,
 ) -> AppResult<SshTestResult> {
-    let (config, _, ssh_secret) = state
+    let (config, secrets) = state
         .connections()
-        .resolve_for_test_with_ssh(
+        .resolve_for_test_full(
             config,
             PasswordChange::Keep,
             ssh_secret.unwrap_or(PasswordChange::Keep),
+            PasswordChange::Keep,
+            ssh_jump_secret.unwrap_or(PasswordChange::Keep),
         )
         .await?;
+    let (ssh_secret, jump_secret) = (secrets.ssh, secrets.jump);
     let Some(settings) = config.ssh.as_ref() else {
         return Err(AppError::Validation(
             "This connection does not use an SSH tunnel.".into(),
@@ -120,8 +129,19 @@ pub async fn test_ssh(
     if settings.auth == SshAuth::Password && ssh_secret.is_none() {
         return Err(AppError::Validation("Enter the SSH password.".into()));
     }
+    if settings
+        .jump
+        .as_ref()
+        .is_some_and(|j| j.auth == SshAuth::Password)
+        && jump_secret.is_none()
+    {
+        return Err(AppError::Validation(
+            "Enter the jump host's password.".into(),
+        ));
+    }
     let setup = SshSetup {
         known_hosts: state.known_hosts().to_path_buf(),
+        jump_secret,
         ..SshSetup::new(ssh_secret)
     };
     let report = ssh::test(settings, &setup, &config.host, config.port)
@@ -133,6 +153,20 @@ pub async fn test_ssh(
         reaches_database: report.reaches_database,
         database_problem: report.database_problem,
     })
+}
+
+/// What `~/.ssh/config` says about a host name (an alias, or a name with settings of its own),
+/// to fill the SSH section from. `None` when the file doesn't mention it.
+#[tauri::command]
+#[specta::specta]
+pub async fn resolve_ssh_alias(host: String) -> AppResult<Option<SshAlias>> {
+    let host = host.trim().to_owned();
+    if host.is_empty() {
+        return Ok(None);
+    }
+    tokio::task::spawn_blocking(move || crate::db::ssh_config::lookup_in_home(&host))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))
 }
 
 /// Trust the SSH host key that the last attempt stopped at (identified by its fingerprint):
@@ -167,6 +201,7 @@ pub async fn connect_connection(
     let extras = Extras {
         ssh: Some(SshSetup {
             known_hosts: state.known_hosts().to_path_buf(),
+            jump_secret: state.connections().ssh_jump_secret(&id).await?,
             ..SshSetup::new(state.connections().ssh_secret(&id).await?)
         }),
         ssl_key_passphrase: state.connections().ssl_key_secret(&id).await?,

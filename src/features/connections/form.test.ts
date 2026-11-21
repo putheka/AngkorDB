@@ -8,6 +8,8 @@ import {
   emptyForm,
   formFromConnection,
   formToConfig,
+  applySshAlias,
+  formToJumpSecretChange,
   formToSshSecretChange,
   formToSslKeySecretChange,
   secondsText,
@@ -78,6 +80,7 @@ test("the tunnel settings round-trip through the form", () => {
       user: "deploy",
       auth: { kind: "privateKey", path: "~/.ssh/id_ed25519" },
       hasSecret: true,
+      jump: null,
     },
   };
   const form = formFromConnection(withKey);
@@ -184,4 +187,120 @@ test("a client certificate and its key come together; only some modes look at th
     ),
     [false, false, false, true, true],
   );
+});
+
+const viaBastion: ConnectionConfig = {
+  ...direct,
+  ssh: {
+    host: "10.0.0.5",
+    port: 22,
+    user: "admin",
+    auth: { kind: "password" },
+    hasSecret: true,
+    jump: {
+      host: "gateway.example.com",
+      port: 2200,
+      user: "hop",
+      auth: { kind: "privateKey", path: "~/.ssh/gateway" },
+      hasSecret: true,
+    },
+  },
+};
+
+test("the jump host round-trips through the form, and no tunnel or no jump sends none", () => {
+  const form = formFromConnection(viaBastion);
+  assert.equal(form.useJump, true);
+  assert.equal(form.jumpAuth, "privateKey");
+  assert.equal(form.jumpKeyPath, "~/.ssh/gateway");
+  assert.equal(form.hasJumpSecret, true);
+  assert.deepEqual(formToConfig(form).ssh, viaBastion.ssh);
+  assert.equal(formToConfig({ ...form, useJump: false }).ssh?.jump, null);
+  assert.equal(formToConfig({ ...form, useSsh: false }).ssh, null);
+  assert.equal(formToConfig(formFromConnection(direct)).ssh, null);
+  assert.equal(
+    describeConnection(viaBastion),
+    "app@db.internal:5432/shop · via hop@gateway.example.com → admin@10.0.0.5",
+  );
+});
+
+test("the jump host's secret is kept, replaced or removed on its own", () => {
+  const base = {
+    ...emptyForm,
+    useSsh: true,
+    useJump: true,
+    jumpAuth: "password" as const,
+    hasJumpSecret: true,
+  };
+  assert.deepEqual(formToJumpSecretChange(base), { kind: "keep" });
+  assert.deepEqual(formToJumpSecretChange({ ...base, jumpSecret: "j" }), {
+    kind: "set",
+    value: "j",
+  });
+  assert.deepEqual(formToJumpSecretChange({ ...base, removeJumpSecret: true }), {
+    kind: "clear",
+  });
+  // The ssh password of the server behind it does not leak into it.
+  assert.deepEqual(formToJumpSecretChange({ ...base, sshSecret: "other" }), { kind: "keep" });
+  assert.deepEqual(formToJumpSecretChange({ ...base, jumpAuth: "agent", jumpSecret: "j" }), {
+    kind: "keep",
+  });
+  assert.deepEqual(formToJumpSecretChange({ ...base, useJump: false, jumpSecret: "j" }), {
+    kind: "keep",
+  });
+});
+
+test("the jump host's fields are checked only when there is a jump host", () => {
+  const filled = {
+    ...emptyForm,
+    user: "u",
+    database: "d",
+    useSsh: true,
+    sshHost: "h",
+    sshUser: "u",
+    sshKeyPath: "k",
+  };
+  assert.deepEqual(validateForm(filled), {});
+  const on = { ...filled, useJump: true };
+  assert.deepEqual(Object.keys(validateForm(on)).sort(), ["jumpHost", "jumpKeyPath", "jumpUser"]);
+  const good = { ...on, jumpHost: "b", jumpUser: "u", jumpKeyPath: "~/.ssh/id" };
+  assert.deepEqual(validateForm(good), {});
+  assert.deepEqual(Object.keys(validateForm({ ...good, jumpPort: "0" })), ["jumpPort"]);
+  assert.deepEqual(validateForm({ ...good, jumpAuth: "agent", jumpKeyPath: "" }), {});
+  // Without a tunnel the jump host is not looked at.
+  assert.deepEqual(validateForm({ ...on, useSsh: false }), {});
+});
+
+test("an entry of ~/.ssh/config fills the SSH section and keeps what it doesn't say", () => {
+  const typed = {
+    ...emptyForm,
+    useSsh: true,
+    sshHost: "db-prod",
+    sshUser: "me",
+    sshAuth: "agent" as const,
+  };
+  const filled = applySshAlias(typed, {
+    host: "db-prod.internal",
+    port: 2200,
+    user: null,
+    identityFile: "~/.ssh/work",
+    jump: { host: "bastion.example.com", port: 22, user: "deploy", identityFile: null },
+  });
+  assert.equal(filled.sshHost, "db-prod.internal");
+  assert.equal(filled.sshPort, "2200");
+  assert.equal(filled.sshUser, "me");
+  assert.equal(filled.sshAuth, "privateKey");
+  assert.equal(filled.sshKeyPath, "~/.ssh/work");
+  assert.equal(filled.useJump, true);
+  assert.equal(filled.jumpHost, "bastion.example.com");
+  assert.equal(filled.jumpUser, "deploy");
+  assert.equal(filled.jumpAuth, typed.jumpAuth);
+  const plain = applySshAlias(typed, {
+    host: "h",
+    port: 22,
+    user: "u",
+    identityFile: null,
+    jump: null,
+  });
+  assert.equal(plain.sshAuth, "agent");
+  assert.equal(plain.useJump, false);
 });

@@ -367,6 +367,7 @@ fn with_ssh(name: &str, auth: SshAuth) -> ConnectionConfig {
             user: " deploy ".into(),
             auth,
             has_secret: true, // ignored: the backend decides
+            jump: None,
         }),
         ..config(name)
     }

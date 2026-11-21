@@ -40,6 +40,17 @@ services:
     volumes:
       - ./dev/sshd/authorized:/authorized:ro
 
+  # A second SSH server with no published port: only `sshd` (the bastion) can reach it, as
+  # `sshd-inner:22`. Tests the jump host chain (ANG-49): you -> sshd -> sshd-inner -> postgres.
+  sshd-inner:
+    build: ./dev/sshd
+    container_name: angkordb-sshd-inner
+    restart: unless-stopped
+    depends_on:
+      - postgres
+    volumes:
+      - ./dev/sshd/authorized:/authorized:ro
+
   # A Postgres that only accepts TLS, to test the SSL modes and certificate files against
   # (ANG-44): localhost:54330, user angkor / angkor, or `certuser` with the client certificate.
   # The certificates are made on first start into dev/tls/certs/.

@@ -64,6 +64,25 @@ pub struct SshConfig {
     /// Maintained by the backend, ignored on input.
     #[serde(default)]
     pub has_secret: bool,
+    /// A server to go through to reach this one (a bastion). Missing in files saved before
+    /// ANG-49.
+    #[serde(default)]
+    pub jump: Option<SshJump>,
+}
+
+/// The server in front of the SSH server: connected to first, then the SSH server is reached
+/// through it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SshJump {
+    pub host: String,
+    pub port: u16,
+    pub user: String,
+    pub auth: SshAuth,
+    /// True when the jump host's SSH password, or its key's passphrase, is saved in the Keychain.
+    /// Maintained by the backend, ignored on input.
+    #[serde(default)]
+    pub has_secret: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, specta::Type)]
@@ -189,4 +208,27 @@ impl fmt::Debug for ParsedConnectionUrl {
             .field("ssl_mode", &self.ssl_mode)
             .finish()
     }
+}
+
+/// What `~/.ssh/config` says about a host name: the fields of the SSH section to fill in.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SshAlias {
+    /// `HostName`, or the name that was asked about when there is none.
+    pub host: String,
+    pub port: u16,
+    pub user: Option<String>,
+    /// The first `IdentityFile`.
+    pub identity_file: Option<String>,
+    /// The first hop of `ProxyJump`, looked up in the file the same way.
+    pub jump: Option<SshAliasJump>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SshAliasJump {
+    pub host: String,
+    pub port: u16,
+    pub user: Option<String>,
+    pub identity_file: Option<String>,
 }

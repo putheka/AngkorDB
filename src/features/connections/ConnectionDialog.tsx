@@ -30,6 +30,8 @@ import {
   formFromConnection,
   formToConfig,
   formToPasswordChange,
+  applySshAlias,
+  formToJumpSecretChange,
   formToSshSecretChange,
   formToSslKeySecretChange,
   SAFE_MODES,
@@ -80,6 +82,7 @@ function ConnectionFormBody({ connection, groups, onClose }: ConnectionDialogPro
   const [showErrors, setShowErrors] = useState(false);
   const [urlText, setUrlText] = useState("");
   const [urlError, setUrlError] = useState<string | null>(null);
+  const [aliasNote, setAliasNote] = useState<string | null>(null);
 
   const save = useSaveConnection();
   const test = useMutation({
@@ -89,11 +92,16 @@ function ConnectionFormBody({ connection, groups, onClose }: ConnectionDialogPro
         formToPasswordChange(values),
         formToSshSecretChange(values),
         formToSslKeySecretChange(values),
+        formToJumpSecretChange(values),
       ),
   });
   const sshTest = useMutation({
     mutationFn: (values: ConnectionForm) =>
-      commands.testSsh(formToConfig(values), formToSshSecretChange(values)),
+      commands.testSsh(
+        formToConfig(values),
+        formToSshSecretChange(values),
+        formToJumpSecretChange(values),
+      ),
   });
   const [trusting, setTrusting] = useState(false);
   const [trustError, setTrustError] = useState<unknown>(null);
@@ -129,6 +137,26 @@ function ConnectionFormBody({ connection, groups, onClose }: ConnectionDialogPro
     if (CONNECTION_URL_PATTERN.test(text)) {
       event.preventDefault();
       void importUrl(text);
+    }
+  }
+
+  /** Fill the SSH section from the entry of `~/.ssh/config` for the host typed in it. */
+  async function fillFromSshConfig() {
+    const name = form.sshHost.trim();
+    if (!name) return setAliasNote("Type the host name or alias first.");
+    try {
+      const alias = await commands.resolveSshAlias(name);
+      if (!alias) return setAliasNote(`No entry for "${name}" in ~/.ssh/config.`);
+      setForm((current) => applySshAlias(current, alias));
+      test.reset();
+      sshTest.reset();
+      setAliasNote(
+        alias.jump
+          ? `Filled from ~/.ssh/config, with its jump host ${alias.jump.host}.`
+          : "Filled from ~/.ssh/config.",
+      );
+    } catch (error) {
+      setAliasNote(errorMessage(error));
     }
   }
 
@@ -169,6 +197,7 @@ function ConnectionFormBody({ connection, groups, onClose }: ConnectionDialogPro
         password: formToPasswordChange(form),
         sshSecret: formToSshSecretChange(form),
         sslKeySecret: formToSslKeySecretChange(form),
+        sshJumpSecret: formToJumpSecretChange(form),
       });
       onClose();
     } catch {
@@ -187,6 +216,13 @@ function ConnectionFormBody({ connection, groups, onClose }: ConnectionDialogPro
     : form.hasSshSecret
       ? "Saved in Keychain. Type to replace"
       : form.sshAuth === "password"
+        ? "Required"
+        : "Only if the key has one";
+  const jumpSecretPlaceholder = form.removeJumpSecret
+    ? "The saved secret will be removed"
+    : form.hasJumpSecret
+      ? "Saved in Keychain. Type to replace"
+      : form.jumpAuth === "password"
         ? "Required"
         : "Only if the key has one";
   const passwordPlaceholder = form.removePassword
@@ -399,6 +435,21 @@ function ConnectionFormBody({ connection, groups, onClose }: ConnectionDialogPro
                 The host and port above are the database as the SSH server sees it:{" "}
                 <span className="font-mono">localhost</span> is the SSH server itself.
               </p>
+              <div className="col-span-6 flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void fillFromSshConfig()}
+                >
+                  Fill from ~/.ssh/config
+                </Button>
+                {aliasNote && (
+                  <span role="status" className="text-xs text-muted-foreground">
+                    {aliasNote}
+                  </span>
+                )}
+              </div>
               <Field
                 label="SSH host"
                 htmlFor="ssh-host"
@@ -518,6 +569,137 @@ function ConnectionFormBody({ connection, groups, onClose }: ConnectionDialogPro
                   with <span className="font-mono">ssh-add</span>.
                 </p>
               )}
+              <div className="col-span-6 flex flex-col gap-3 rounded-md border border-dashed p-3">
+                <label className="flex items-center gap-2 text-sm font-medium">
+                  <input
+                    type="checkbox"
+                    checked={form.useJump}
+                    onChange={(e) => update({ useJump: e.target.checked })}
+                  />
+                  Go through a jump host first
+                </label>
+                {form.useJump && (
+                  <div className="grid grid-cols-6 gap-x-3 gap-y-3">
+                    <p className="col-span-6 text-xs text-muted-foreground">
+                      You connect to the jump host (a bastion), and the SSH server above is reached
+                      from it.
+                    </p>
+                    <Field
+                      label="Jump host"
+                      htmlFor="jump-host"
+                      error={fieldError("jumpHost")}
+                      className="col-span-4"
+                    >
+                      <Input
+                        id="jump-host"
+                        value={form.jumpHost}
+                        onChange={(e) => update({ jumpHost: e.target.value })}
+                        aria-invalid={!!fieldError("jumpHost")}
+                        autoComplete="off"
+                        spellCheck={false}
+                      />
+                    </Field>
+                    <Field
+                      label="Port"
+                      htmlFor="jump-port"
+                      error={fieldError("jumpPort")}
+                      className="col-span-2"
+                    >
+                      <Input
+                        id="jump-port"
+                        value={form.jumpPort}
+                        onChange={(e) => update({ jumpPort: e.target.value })}
+                        inputMode="numeric"
+                        aria-invalid={!!fieldError("jumpPort")}
+                        autoComplete="off"
+                      />
+                    </Field>
+                    <Field
+                      label="User"
+                      htmlFor="jump-user"
+                      error={fieldError("jumpUser")}
+                      className="col-span-3"
+                    >
+                      <Input
+                        id="jump-user"
+                        value={form.jumpUser}
+                        onChange={(e) => update({ jumpUser: e.target.value })}
+                        aria-invalid={!!fieldError("jumpUser")}
+                        autoComplete="off"
+                        spellCheck={false}
+                      />
+                    </Field>
+                    <Field label="Log in with" htmlFor="jump-auth" className="col-span-3">
+                      <Select
+                        value={form.jumpAuth}
+                        onValueChange={(v) =>
+                          update({
+                            jumpAuth: v as SshAuth["kind"],
+                            jumpSecret: "",
+                            removeJumpSecret: form.hasJumpSecret,
+                          })
+                        }
+                      >
+                        <SelectTrigger id="jump-auth" className="w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {SSH_AUTH_METHODS.map((method) => (
+                            <SelectItem key={method.value} value={method.value}>
+                              {method.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </Field>
+                    {form.jumpAuth === "privateKey" && (
+                      <Field
+                        label="Private key file"
+                        htmlFor="jump-key"
+                        error={fieldError("jumpKeyPath")}
+                        className="col-span-6"
+                      >
+                        <Input
+                          id="jump-key"
+                          value={form.jumpKeyPath}
+                          onChange={(e) => update({ jumpKeyPath: e.target.value })}
+                          placeholder="~/.ssh/id_ed25519"
+                          aria-invalid={!!fieldError("jumpKeyPath")}
+                          autoComplete="off"
+                          spellCheck={false}
+                        />
+                      </Field>
+                    )}
+                    {form.jumpAuth !== "agent" && (
+                      <Field
+                        label={sshSecretLabel(form.jumpAuth)}
+                        htmlFor="jump-secret"
+                        className="col-span-6"
+                      >
+                        <Input
+                          id="jump-secret"
+                          type="password"
+                          value={form.jumpSecret}
+                          onChange={(e) => update({ jumpSecret: e.target.value })}
+                          placeholder={jumpSecretPlaceholder}
+                          autoComplete="new-password"
+                        />
+                        {form.hasJumpSecret && !form.jumpSecret && (
+                          <button
+                            type="button"
+                            onClick={() => update({ removeJumpSecret: !form.removeJumpSecret })}
+                            className="self-start text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                          >
+                            {form.removeJumpSecret
+                              ? "Keep the saved secret"
+                              : "Remove saved secret"}
+                          </button>
+                        )}
+                      </Field>
+                    )}
+                  </div>
+                )}
+              </div>
               <div className="col-span-6">
                 <Button
                   type="button"

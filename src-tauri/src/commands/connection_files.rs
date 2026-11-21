@@ -112,28 +112,16 @@ fn free_name(taken: &[ConnectionConfig], name: &str) -> String {
         .expect("an unused name exists")
 }
 
-/// Save the chosen connections of a file as new ones, with the secrets typed for them (kept in
-/// the Keychain). A name that is taken gets a number. Returns the connections that were saved.
+/// Save the given connections (the ones shown from a file) as new ones, with the secrets typed
+/// for them (kept in the Keychain). A name that is taken gets a number. Returns the connections
+/// that were saved. The file is not read again: what was shown is what is saved.
 #[tauri::command]
 #[specta::specta]
 pub async fn import_connections(
     state: State<'_, AppState>,
-    path: String,
     entries: Vec<ImportEntry>,
 ) -> AppResult<Vec<ConnectionConfig>> {
-    let file = read_file(&path)?;
-    // Check every one before saving any.
-    let mut chosen = Vec::new();
-    for entry in &entries {
-        let shared = file.get(entry.index as usize).ok_or_else(|| {
-            invalid(format!(
-                "The file has no connection number {}.",
-                entry.index + 1
-            ))
-        })?;
-        chosen.push((shared.clone(), entry));
-    }
-    if chosen.is_empty() {
+    if entries.is_empty() {
         return Err(invalid("Choose at least one connection to import."));
     }
     let set = |value: &Option<String>| match value.as_deref() {
@@ -143,17 +131,18 @@ pub async fn import_connections(
         _ => PasswordChange::Keep,
     };
     let mut saved = Vec::new();
-    for (shared, entry) in chosen {
-        let mut config = shared.into_config();
+    for entry in entries {
+        let mut config = entry.connection.clone().into_config();
         config.name = free_name(&state.connections().list()?, &config.name);
         let label = config.name.clone();
         let result = state
             .connections()
-            .save_with_secrets(
+            .save_with_all(
                 config,
                 set(&entry.password),
                 set(&entry.ssh_secret),
                 set(&entry.ssl_key_secret),
+                set(&entry.ssh_jump_secret),
             )
             .await
             .map_err(|e| {

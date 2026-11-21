@@ -55,6 +55,7 @@ pub fn specta_builder<R: tauri::Runtime>() -> Builder<R> {
             commands::connections::test_connection,
             commands::connections::test_ssh,
             commands::connections::trust_ssh_host,
+            commands::connections::resolve_ssh_alias,
             commands::connections::parse_connection_url,
             commands::connections::connect_connection,
             commands::connections::disconnect_connection,
