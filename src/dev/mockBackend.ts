@@ -18,6 +18,7 @@ import { createHistoryHandlers } from "@/dev/mockHistory";
 import { createQueryHandlers } from "@/dev/mockQuery";
 import { createRowHandlers } from "@/dev/mockRows";
 import { createSchemaHandlers } from "@/dev/mockSchema";
+import { mockDatabases } from "@/dev/mockSchema";
 import {
   mockDefinition,
   mockObjectApply,
@@ -213,6 +214,19 @@ const handlers: Record<string, Handler> = {
   table_structure: (args) => {
     requireOpen(String(args["connectionId"]));
     return mockTableStructure(String(args["schema"]), String(args["table"]));
+  },
+  database_options: (args) => {
+    requireOpen(String(args["connectionId"]));
+    return {
+      roles: ["angkor", "app", "readonly"],
+      templates: ["template0", "template1", ...mockDatabases()],
+      encodings: ["EUC_JP", "LATIN1", "SQL_ASCII", "UTF8", "WIN1252"],
+      currentRole: "angkor",
+    };
+  },
+  database_connections: (args) => {
+    requireOpen(String(args["connectionId"]));
+    return String(args["name"]) === "postgres" ? 2 : 0;
   },
   object_definition: (args) => {
     requireOpen(String(args["connectionId"]));

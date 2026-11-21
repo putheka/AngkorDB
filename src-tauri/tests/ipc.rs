@@ -392,6 +392,11 @@ fn schema_commands_need_an_open_connection() {
             "cancel_query",
             json!({ "connectionId": "nope", "tabId": "query:1" }),
         ),
+        ("database_options", json!({ "connectionId": "nope" })),
+        (
+            "database_connections",
+            json!({ "connectionId": "nope", "name": "x" }),
+        ),
         (
             "object_definition",
             json!({ "connectionId": "nope", "kind": "function", "schema": "public",
@@ -1677,4 +1682,95 @@ fn definitions_and_sequences_through_ipc() {
         )
         .unwrap_err();
     assert_eq!(bad["code"], "VALIDATION");
+}
+
+#[test]
+fn databases_and_schemas_through_ipc() {
+    if !dev_db_available() {
+        return;
+    }
+    let ipc = setup();
+    let mut form = config("Dev", "localhost", 54329);
+    form["user"] = json!("angkor");
+    form["database"] = json!("angkordb_dev");
+    let saved = ipc
+        .call(
+            "save_connection",
+            json!({ "config": form, "password": { "kind": "set", "value": "angkor" } }),
+        )
+        .unwrap();
+    let id = saved["id"].as_str().unwrap();
+    ipc.call("connect_connection", json!({ "id": id })).unwrap();
+
+    let options = ipc
+        .call("database_options", json!({ "connectionId": id }))
+        .unwrap();
+    assert_eq!(options["currentRole"], "angkor");
+    assert!(
+        options["templates"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("template0"))
+    );
+    assert!(
+        options["encodings"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("UTF8"))
+    );
+    assert!(
+        options["roles"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("angkor"))
+    );
+
+    let name = format!("angkordb_ddl_{}_ipc", std::process::id());
+    let create = json!({ "kind": "createDatabase", "name": name, "owner": "angkor",
+        "template": "template0", "encoding": "UTF8" });
+    let preview = ipc
+        .call(
+            "preview_object_operation",
+            json!({ "connectionId": id, "operation": create }),
+        )
+        .unwrap();
+    assert_eq!(preview["statements"][0]["concurrent"], true);
+    assert_eq!(preview["statements"][0]["destructive"], false);
+    assert!(preview["sql"].as_str().unwrap().contains("ENCODING 'UTF8'"));
+    assert_eq!(
+        ipc.call(
+            "apply_object_operation",
+            json!({ "connectionId": id, "operation": create })
+        )
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        ipc.call(
+            "database_connections",
+            json!({ "connectionId": id, "name": name })
+        )
+        .unwrap(),
+        0
+    );
+    let schema = json!({ "kind": "createSchema", "name": "ipc_s", "owner": null });
+    let _ = schema;
+    let drop = json!({ "kind": "dropDatabase", "name": name, "force": false });
+    assert_eq!(
+        ipc.call(
+            "apply_object_operation",
+            json!({ "connectionId": id, "operation": drop })
+        )
+        .unwrap(),
+        1
+    );
+    // The one you are in is refused with a message.
+    let current = json!({ "kind": "dropDatabase", "name": "angkordb_dev", "force": true });
+    let err = ipc
+        .call(
+            "apply_object_operation",
+            json!({ "connectionId": id, "operation": current }),
+        )
+        .unwrap_err();
+    assert_eq!(err["code"], "VALIDATION");
 }

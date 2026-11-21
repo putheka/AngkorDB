@@ -1,5 +1,5 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { PlusIcon, RefreshCwIcon, SearchIcon, XIcon } from "lucide-react";
+import { DatabaseZapIcon, PlusIcon, RefreshCwIcon, SearchIcon, XIcon } from "lucide-react";
 import { useMemo, useRef, useState, type KeyboardEvent } from "react";
 
 import type { DbObject } from "@/bindings";
@@ -20,6 +20,16 @@ import {
 } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { CreateTableDialog } from "@/features/objects/CreateTableDialog";
+import { DatabaseDialog } from "@/features/objects/DatabaseDialog";
+import { SchemaDialog, type SchemaMode } from "@/features/objects/SchemaDialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { EnumDialog } from "@/features/objects/EnumDialog";
 import { SequenceDialog } from "@/features/objects/SequenceDialog";
 import { openSavedQuery } from "@/features/query/history/openSavedQuery";
@@ -52,6 +62,9 @@ export function ObjectTree({ connectionId }: { connectionId: string }) {
   const [collapsed, setCollapsed] = useState<ReadonlySet<GroupId>>(new Set());
   const [cursorKey, setCursorKey] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [manage, setManage] = useState<
+    { kind: "database"; mode: "create" | "drop" } | { kind: "schema"; mode: SchemaMode } | null
+  >(null);
   const [action, setAction] = useState<{ kind: ObjectAction; object: DbObject } | null>(null);
   const [details, setDetails] = useState<DbObject | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -193,6 +206,44 @@ export function ObjectTree({ connectionId }: { connectionId: string }) {
               ))}
             </SelectContent>
           </Select>
+          <DropdownMenu>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon-sm" aria-label="Databases and schemas">
+                    <DatabaseZapIcon />
+                  </Button>
+                </DropdownMenuTrigger>
+              </TooltipTrigger>
+              <TooltipContent>Databases and schemas</TooltipContent>
+            </Tooltip>
+            <DropdownMenuContent align="end">
+              <DropdownMenuLabel>Database</DropdownMenuLabel>
+              <DropdownMenuItem onSelect={() => setManage({ kind: "database", mode: "create" })}>
+                New database…
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                variant="destructive"
+                onSelect={() => setManage({ kind: "database", mode: "drop" })}
+              >
+                Drop a database…
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel>Schema</DropdownMenuLabel>
+              <DropdownMenuItem onSelect={() => setManage({ kind: "schema", mode: "create" })}>
+                New schema…
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => setManage({ kind: "schema", mode: "rename" })}>
+                Rename a schema…
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                variant="destructive"
+                onSelect={() => setManage({ kind: "schema", mode: "drop" })}
+              >
+                Drop a schema…
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -343,6 +394,21 @@ export function ObjectTree({ connectionId }: { connectionId: string }) {
         </div>
       )}
 
+      {manage?.kind === "database" && (
+        <DatabaseDialog
+          connectionId={connectionId}
+          mode={manage.mode}
+          onClose={() => setManage(null)}
+        />
+      )}
+      {manage?.kind === "schema" && (
+        <SchemaDialog
+          connectionId={connectionId}
+          mode={manage.mode}
+          current={schema}
+          onClose={() => setManage(null)}
+        />
+      )}
       {creating && schema && (
         <CreateTableDialog
           connectionId={connectionId}

@@ -7,7 +7,7 @@ use crate::error::{AppError, AppResult};
 use crate::models::alter::StructurePreview;
 use crate::models::connection::SafeMode;
 use crate::models::definitions::{ObjectDefinition, SequenceInfo};
-use crate::models::objects::ObjectOperation;
+use crate::models::objects::{DatabaseOptions, ObjectOperation};
 use crate::models::schema::ObjectKind;
 use crate::state::AppState;
 
@@ -72,4 +72,29 @@ pub async fn sequence_info(
     let session = state.session(&connection_id).await?;
     let client = session.meta().await?;
     definitions::sequence_info(&client, &schema, &name).await
+}
+
+/// Roles, templates and encodings for the "new database" form.
+#[tauri::command]
+#[specta::specta]
+pub async fn database_options(
+    state: State<'_, AppState>,
+    connection_id: String,
+) -> AppResult<DatabaseOptions> {
+    let session = state.session(&connection_id).await?;
+    let client = session.meta().await?;
+    objects::database_options(&client).await
+}
+
+/// How many other connections are using a database (to warn before dropping it).
+#[tauri::command]
+#[specta::specta]
+pub async fn database_connections(
+    state: State<'_, AppState>,
+    connection_id: String,
+    name: String,
+) -> AppResult<u32> {
+    let session = state.session(&connection_id).await?;
+    let client = session.meta().await?;
+    objects::database_connections(&client, &name).await
 }

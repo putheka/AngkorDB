@@ -2,6 +2,7 @@ import type { ObjectOperation } from "@/bindings";
 import { refreshData } from "@/features/grid/useTableData";
 import { commands } from "@/lib/ipc";
 import { queryClient } from "@/lib/queryClient";
+import { useBrowserStore } from "@/stores/browser";
 import { tableTabId, useTabsStore } from "@/stores/tabs";
 
 /**
@@ -30,6 +31,14 @@ export async function runObjectOperation(
         true,
       );
     }
+  } else if (operation.kind === "renameSchema" || operation.kind === "dropSchema") {
+    // Tabs of what was in it point at names that are gone.
+    for (const tab of tabs.tabs) {
+      if (tab.kind === "table" && tab.schema === operation.name) tabs.close(tab.id);
+    }
+    if (operation.kind === "renameSchema") useBrowserStore.getState().setSchema(operation.newName);
+  } else if (operation.kind === "createSchema") {
+    useBrowserStore.getState().setSchema(operation.name);
   } else if (operation.kind === "createTable") {
     tabs.openTable({ schema: operation.schema, name: operation.name, kind: "table" }, true);
   }

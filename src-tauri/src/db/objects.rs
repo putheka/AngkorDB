@@ -15,8 +15,9 @@ use crate::db::structure::literal;
 use crate::error::{AppError, AppResult};
 use crate::models::alter::{PlannedStatement, StructurePreview};
 use crate::models::objects::{
-    AddEnumValue, CreateTable, DropObject, NewTableColumn, ObjectOperation,
-    RefreshMaterializedView, RenameObject, SetSequence, TruncateTable,
+    AddEnumValue, CreateDatabase, CreateSchema, CreateTable, DatabaseOptions, DropDatabase,
+    DropObject, DropSchema, NewTableColumn, ObjectOperation, RefreshMaterializedView, RenameObject,
+    RenameSchema, SetSequence, TruncateTable,
 };
 use crate::models::schema::{ColumnIdentity, ObjectKind};
 
@@ -282,6 +283,88 @@ fn add_enum_value(a: &AddEnumValue, out: &mut Vec<PlannedStatement>) -> AppResul
     Ok(())
 }
 
+fn required(text: &str, what: &str) -> AppResult<String> {
+    if text.trim().is_empty() {
+        return Err(invalid(format!("Give the {what} a name.")));
+    }
+    Ok(quote_ident(text))
+}
+
+/// `CREATE DATABASE` and `DROP DATABASE` can't be in a transaction: they run on their own.
+fn outside_transaction(mut statement: PlannedStatement) -> PlannedStatement {
+    statement.concurrent = true;
+    statement
+}
+
+fn create_database(c: &CreateDatabase, out: &mut Vec<PlannedStatement>) -> AppResult<()> {
+    let mut sql = format!("CREATE DATABASE {}", required(&c.name, "database")?);
+    if let Some(owner) = c.owner.as_deref().filter(|o| !o.trim().is_empty()) {
+        sql.push_str(&format!(" OWNER {}", quote_ident(owner)));
+    }
+    if let Some(template) = c.template.as_deref().filter(|t| !t.trim().is_empty()) {
+        sql.push_str(&format!(" TEMPLATE {}", quote_ident(template)));
+    }
+    if let Some(encoding) = c.encoding.as_deref().filter(|e| !e.trim().is_empty()) {
+        sql.push_str(&format!(" ENCODING {}", literal(encoding.trim())));
+    }
+    sql.push(';');
+    out.push(outside_transaction(statement(
+        format!("create database {}", c.name),
+        sql,
+        false,
+    )));
+    Ok(())
+}
+
+fn drop_database(d: &DropDatabase, out: &mut Vec<PlannedStatement>) -> AppResult<()> {
+    let force = if d.force { " WITH (FORCE)" } else { "" };
+    out.push(outside_transaction(statement(
+        format!("drop database {}", d.name),
+        format!("DROP DATABASE {}{force};", required(&d.name, "database")?),
+        true,
+    )));
+    Ok(())
+}
+
+fn create_schema(c: &CreateSchema, out: &mut Vec<PlannedStatement>) -> AppResult<()> {
+    let mut sql = format!("CREATE SCHEMA {}", required(&c.name, "schema")?);
+    if let Some(owner) = c.owner.as_deref().filter(|o| !o.trim().is_empty()) {
+        sql.push_str(&format!(" AUTHORIZATION {}", quote_ident(owner)));
+    }
+    sql.push(';');
+    out.push(statement(format!("create schema {}", c.name), sql, false));
+    Ok(())
+}
+
+fn rename_schema(r: &RenameSchema, out: &mut Vec<PlannedStatement>) -> AppResult<()> {
+    if r.new_name.trim().is_empty() {
+        return Err(invalid("Give it a new name."));
+    }
+    if r.new_name == r.name {
+        return Err(invalid("That is the name it has already."));
+    }
+    out.push(statement(
+        format!("rename schema {} to {}", r.name, r.new_name),
+        format!(
+            "ALTER SCHEMA {} RENAME TO {};",
+            required(&r.name, "schema")?,
+            quote_ident(&r.new_name)
+        ),
+        false,
+    ));
+    Ok(())
+}
+
+fn drop_schema(d: &DropSchema, out: &mut Vec<PlannedStatement>) -> AppResult<()> {
+    let cascade = if d.cascade { " CASCADE" } else { "" };
+    out.push(statement(
+        format!("drop schema {}", d.name),
+        format!("DROP SCHEMA {}{cascade};", required(&d.name, "schema")?),
+        true,
+    ));
+    Ok(())
+}
+
 /// The statements for an operation.
 pub fn plan(operation: &ObjectOperation) -> AppResult<Vec<PlannedStatement>> {
     let mut out = Vec::new();
@@ -293,6 +376,11 @@ pub fn plan(operation: &ObjectOperation) -> AppResult<Vec<PlannedStatement>> {
         ObjectOperation::RefreshMaterializedView(r) => refresh(r, &mut out)?,
         ObjectOperation::SetSequence(s) => set_sequence(s, &mut out)?,
         ObjectOperation::AddEnumValue(a) => add_enum_value(a, &mut out)?,
+        ObjectOperation::CreateDatabase(c) => create_database(c, &mut out)?,
+        ObjectOperation::DropDatabase(d) => drop_database(d, &mut out)?,
+        ObjectOperation::CreateSchema(c) => create_schema(c, &mut out)?,
+        ObjectOperation::RenameSchema(r) => rename_schema(r, &mut out)?,
+        ObjectOperation::DropSchema(d) => drop_schema(d, &mut out)?,
     }
     for statement in &out {
         if script::split(&statement.sql).len() != 1 {
@@ -304,8 +392,13 @@ pub fn plan(operation: &ObjectOperation) -> AppResult<Vec<PlannedStatement>> {
 
 pub fn preview(operation: &ObjectOperation) -> AppResult<StructurePreview> {
     let statements = plan(operation)?;
+    let header = if statements.iter().any(|s| s.concurrent) {
+        "-- CREATE DATABASE and DROP DATABASE can't run in a transaction: this runs on its own."
+    } else {
+        "-- In one transaction: all or nothing."
+    };
     let sql = format!(
-        "-- In one transaction: all or nothing.\n{}",
+        "{header}\n{}",
         statements
             .iter()
             .map(|s| s.sql.as_str())
@@ -322,6 +415,26 @@ pub async fn apply(
     lock_timeout_ms: u32,
 ) -> AppResult<u32> {
     let statements = plan(operation)?;
+
+    // A database is created and dropped outside any transaction, and never the one in use.
+    if statements.iter().any(|s| s.concurrent) {
+        if let ObjectOperation::DropDatabase(d) = operation {
+            let current: String = client
+                .query_one("SELECT current_database()::text", &[])
+                .await?
+                .get(0);
+            if current == d.name {
+                return Err(invalid(
+                    "You are connected to this database: switch to another one first.",
+                ));
+            }
+        }
+        for statement in &statements {
+            client.batch_execute(&statement.sql).await?;
+        }
+        return Ok(u32::try_from(statements.len()).unwrap_or(u32::MAX));
+    }
+
     client
         .batch_execute(&format!(
             "BEGIN; SET LOCAL lock_timeout = {lock_timeout_ms}"
@@ -343,6 +456,51 @@ pub async fn apply(
 
 /// What the dialogs use when they run an operation.
 pub const LOCK_TIMEOUT: u32 = LOCK_TIMEOUT_MS;
+
+/// What the "new database" form offers: roles, the databases to copy, and the encodings.
+pub async fn database_options(client: &Client) -> AppResult<DatabaseOptions> {
+    let roles = client
+        .query(
+            "SELECT rolname::text FROM pg_roles WHERE rolname !~ '^pg_' ORDER BY 1",
+            &[],
+        )
+        .await?;
+    let templates = client
+        .query(
+            "SELECT datname::text FROM pg_database ORDER BY datistemplate DESC, datname",
+            &[],
+        )
+        .await?;
+    let encodings = client
+        .query(
+            "SELECT pg_encoding_to_char(i)::text FROM generate_series(0, 60) i
+              WHERE pg_encoding_to_char(i) <> '' ORDER BY 1",
+            &[],
+        )
+        .await?;
+    let current_role: String = client
+        .query_one("SELECT current_user::text", &[])
+        .await?
+        .get(0);
+    Ok(DatabaseOptions {
+        roles: roles.iter().map(|r| r.get(0)).collect(),
+        templates: templates.iter().map(|r| r.get(0)).collect(),
+        encodings: encodings.iter().map(|r| r.get(0)).collect(),
+        current_role,
+    })
+}
+
+/// How many connections other than this one are using a database.
+pub async fn database_connections(client: &Client, name: &str) -> AppResult<u32> {
+    let count: i64 = client
+        .query_one(
+            "SELECT count(*) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()",
+            &[&name],
+        )
+        .await?
+        .get(0);
+    Ok(u32::try_from(count).unwrap_or(u32::MAX))
+}
 
 #[cfg(test)]
 mod tests {
@@ -670,6 +828,113 @@ mod tests {
             "ALTER TYPE \"public\".\"mood\" ADD VALUE IF NOT EXISTS 'new' BEFORE 'old';"
         );
         assert!(add("", None, false).is_err());
+    }
+
+    #[test]
+    fn databases_and_schemas() {
+        use crate::models::objects::{
+            CreateDatabase, CreateSchema, DropDatabase, DropSchema, RenameSchema,
+        };
+        let one = |op: ObjectOperation| plan(&op).unwrap().remove(0);
+        let create = one(ObjectOperation::CreateDatabase(CreateDatabase {
+            name: "shop".into(),
+            owner: Some("app".into()),
+            template: Some("template0".into()),
+            encoding: Some("UTF8".into()),
+        }));
+        assert_eq!(
+            create.sql,
+            "CREATE DATABASE \"shop\" OWNER \"app\" TEMPLATE \"template0\" ENCODING 'UTF8';"
+        );
+        assert!(
+            create.concurrent && !create.destructive,
+            "runs outside a transaction"
+        );
+        let plain = one(ObjectOperation::CreateDatabase(CreateDatabase {
+            name: "Odd \"name\"".into(),
+            owner: None,
+            template: Some(" ".into()),
+            encoding: None,
+        }));
+        assert_eq!(plain.sql, "CREATE DATABASE \"Odd \"\"name\"\"\";");
+
+        let drop = |force| {
+            one(ObjectOperation::DropDatabase(DropDatabase {
+                name: "shop".into(),
+                force,
+            }))
+        };
+        assert_eq!(drop(false).sql, "DROP DATABASE \"shop\";");
+        assert_eq!(drop(true).sql, "DROP DATABASE \"shop\" WITH (FORCE);");
+        assert!(drop(true).concurrent && drop(true).destructive);
+
+        let schema = one(ObjectOperation::CreateSchema(CreateSchema {
+            name: "billing".into(),
+            owner: Some("app".into()),
+        }));
+        assert_eq!(
+            schema.sql,
+            "CREATE SCHEMA \"billing\" AUTHORIZATION \"app\";"
+        );
+        assert!(!schema.concurrent);
+        assert_eq!(
+            one(ObjectOperation::RenameSchema(RenameSchema {
+                name: "a".into(),
+                new_name: "b".into()
+            }))
+            .sql,
+            "ALTER SCHEMA \"a\" RENAME TO \"b\";"
+        );
+        let drop_schema = one(ObjectOperation::DropSchema(DropSchema {
+            name: "a".into(),
+            cascade: true,
+        }));
+        assert_eq!(drop_schema.sql, "DROP SCHEMA \"a\" CASCADE;");
+        assert!(drop_schema.destructive);
+
+        for bad in [
+            ObjectOperation::CreateDatabase(CreateDatabase {
+                name: " ".into(),
+                owner: None,
+                template: None,
+                encoding: None,
+            }),
+            ObjectOperation::DropDatabase(DropDatabase {
+                name: "".into(),
+                force: false,
+            }),
+            ObjectOperation::CreateSchema(CreateSchema {
+                name: "".into(),
+                owner: None,
+            }),
+            ObjectOperation::RenameSchema(RenameSchema {
+                name: "a".into(),
+                new_name: "a".into(),
+            }),
+            ObjectOperation::RenameSchema(RenameSchema {
+                name: "a".into(),
+                new_name: " ".into(),
+            }),
+            ObjectOperation::DropSchema(DropSchema {
+                name: " ".into(),
+                cascade: false,
+            }),
+        ] {
+            assert!(plan(&bad).is_err(), "{bad:?}");
+        }
+        // The preview says why there is no transaction.
+        let preview = preview(&ObjectOperation::DropDatabase(DropDatabase {
+            name: "shop".into(),
+            force: false,
+        }))
+        .unwrap();
+        assert!(
+            preview
+                .sql
+                .starts_with("-- CREATE DATABASE and DROP DATABASE can't run"),
+            "{}",
+            preview.sql
+        );
     }
 
     #[test]

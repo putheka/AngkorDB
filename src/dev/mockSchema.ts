@@ -297,7 +297,7 @@ export function createSchemaHandlers(requireOpen: (id: string) => void): Record<
       const id = String(args["connectionId"]);
       requireOpen(id);
       const current = databaseOf(id);
-      return ["angkordb_dev", "postgres"].map((name): DatabaseInfo => ({
+      return mockDatabases().map((name): DatabaseInfo => ({
         name,
         isCurrent: name === current,
       }));
@@ -461,4 +461,64 @@ export function mockSequence(schema: string, name: string) {
 export function mockSetSequence(schema: string, name: string, value: string, called: boolean) {
   mockSequence(schema, name);
   SEQUENCES[`${schema}.${name}`] = { last: value, called };
+}
+
+// ---- Databases and schemas (ANG-40) -------------------------------------------------------------
+
+/** The databases of the mock server; the current one is the connection's own. */
+const DATABASES = ["angkordb_dev", "postgres"];
+export const mockDatabases = () => [...DATABASES];
+
+export function mockCreateDatabase(name: string): void {
+  if (DATABASES.includes(name)) {
+    throw appError("POSTGRES", `database "${name}" already exists`, { pgCode: "42P04" });
+  }
+  DATABASES.push(name);
+}
+
+export function mockDropDatabase(name: string): void {
+  const at = DATABASES.indexOf(name);
+  if (at === -1) {
+    throw appError("POSTGRES", `database "${name}" does not exist`, { pgCode: "3D000" });
+  }
+  DATABASES.splice(at, 1);
+}
+
+export function mockCreateSchema(name: string): void {
+  if (name in OBJECTS) {
+    throw appError("POSTGRES", `schema "${name}" already exists`, { pgCode: "42P06" });
+  }
+  OBJECTS[name] = [];
+}
+
+export function mockRenameSchema(name: string, newName: string): void {
+  const list = OBJECTS[name];
+  if (!list) throw appError("POSTGRES", `schema "${name}" does not exist`, { pgCode: "3F000" });
+  if (newName in OBJECTS) {
+    throw appError("POSTGRES", `schema "${newName}" already exists`, { pgCode: "42P06" });
+  }
+  OBJECTS[newName] = list.map((o) => ({ ...o, schema: newName }));
+  // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+  delete OBJECTS[name];
+  for (const key of Object.keys(TABLES)) {
+    if (key.startsWith(`${name}.`)) {
+      const spec = TABLES[key];
+      if (spec) TABLES[`${newName}.${key.slice(name.length + 1)}`] = spec;
+      // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+      delete TABLES[key];
+    }
+  }
+}
+
+export function mockDropSchema(name: string, cascade: boolean): void {
+  const list = OBJECTS[name];
+  if (!list) throw appError("POSTGRES", `schema "${name}" does not exist`, { pgCode: "3F000" });
+  if (list.length > 0 && !cascade) {
+    throw appError("POSTGRES", `cannot drop schema ${name} because other objects depend on it`, {
+      pgCode: "2BP01",
+      hint: "Use DROP ... CASCADE to drop the dependent objects too.",
+    });
+  }
+  // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+  delete OBJECTS[name];
 }

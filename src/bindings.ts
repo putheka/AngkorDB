@@ -89,6 +89,10 @@ export const commands = {
 	 *  to edit in a query tab (running it changes the definition). `oid` tells overloads apart.
 	 */
 	objectDefinition: (connectionId: string, kind: ObjectKind, schema: string, name: string, oid: number, options?: InvokeOptions) => __TAURI_INVOKE<ObjectDefinition>("object_definition", { connectionId, kind, schema, name, oid }, options),
+	/**  Roles, templates and encodings for the "new database" form. */
+	databaseOptions: (connectionId: string, options?: InvokeOptions) => __TAURI_INVOKE<DatabaseOptions>("database_options", { connectionId }, options),
+	/**  How many other connections are using a database (to warn before dropping it). */
+	databaseConnections: (connectionId: string, name: string, options?: InvokeOptions) => __TAURI_INVOKE<number>("database_connections", { connectionId, name }, options),
 	/**  The settings and current value of a sequence. */
 	sequenceInfo: (connectionId: string, schema: string, name: string, options?: InvokeOptions) => __TAURI_INVOKE<SequenceInfo>("sequence_info", { connectionId, schema, name }, options),
 	/**  The SQL that `apply_changes` would run, values written in. Nothing is executed. */
@@ -342,6 +346,16 @@ export type ConstraintInfo = {
 
 export type ConstraintKind = "primaryKey" | "foreignKey" | "unique" | "check" | "exclusion";
 
+export type CreateDatabase = {
+	name: string,
+	/**  `None`: the role that is connected. */
+	owner: string | null,
+	/**  `None`: `template1`. */
+	template: string | null,
+	/**  `UTF8`, `LATIN1`, …; `None`: the template's. */
+	encoding: string | null,
+};
+
 export type CreateIndex = {
 	/**  `None`: the server picks one. */
 	name: string | null,
@@ -352,6 +366,11 @@ export type CreateIndex = {
 	whereClause: string | null,
 	/**  Does not lock writes while it builds, but can't run inside the transaction. */
 	concurrently: boolean,
+};
+
+export type CreateSchema = {
+	name: string,
+	owner: string | null,
 };
 
 export type CreateTable = {
@@ -365,6 +384,16 @@ export type DatabaseInfo = {
 	name: string,
 	/**  The database this session is connected to. */
 	isCurrent: boolean,
+};
+
+/**  What the "new database" form offers. */
+export type DatabaseOptions = {
+	roles: string[],
+	/**  Every database, templates included. */
+	templates: string[],
+	encodings: string[],
+	/**  The role that is connected. */
+	currentRole: string,
 };
 
 /**  One entry of the sidebar tree. */
@@ -399,6 +428,12 @@ export type DropConstraint = {
 	cascade: boolean,
 };
 
+export type DropDatabase = {
+	name: string,
+	/**  Disconnect whoever is using it first (`WITH (FORCE)`, PostgreSQL 13 and later). */
+	force: boolean,
+};
+
 export type DropIndex = {
 	name: string,
 	concurrently: boolean,
@@ -409,6 +444,12 @@ export type DropObject = {
 	schema: string,
 	name: string,
 	/**  Also drop what depends on it (views, foreign keys of other tables). */
+	cascade: boolean,
+};
+
+export type DropSchema = {
+	name: string,
+	/**  Also drop everything in it. */
 	cascade: boolean,
 };
 
@@ -592,7 +633,17 @@ export type ObjectOperation = {
 	kind: "setSequence",
 } & SetSequence | {
 	kind: "addEnumValue",
-} & AddEnumValue;
+} & AddEnumValue | {
+	kind: "createDatabase",
+} & CreateDatabase | {
+	kind: "dropDatabase",
+} & DropDatabase | {
+	kind: "createSchema",
+} & CreateSchema | {
+	kind: "renameSchema",
+} & RenameSchema | {
+	kind: "dropSchema",
+} & DropSchema;
 
 /**  Fields extracted from a `postgres://` URL, used to fill the connection form. */
 export type ParsedConnectionUrl = {
@@ -655,6 +706,11 @@ export type RenameObject = {
 	/**  Not `kind`: that is what tells the operations apart. */
 	objectKind: ObjectKind,
 	schema: string,
+	name: string,
+	newName: string,
+};
+
+export type RenameSchema = {
 	name: string,
 	newName: string,
 };

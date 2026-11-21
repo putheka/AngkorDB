@@ -8,7 +8,12 @@ import type {
 } from "@/bindings";
 import {
   mockAddEnumValue,
+  mockCreateDatabase,
+  mockCreateSchema,
   mockCreateTable,
+  mockDropDatabase,
+  mockDropSchema,
+  mockRenameSchema,
   mockDropObject,
   mockEnumValues,
   mockHasObject,
@@ -28,9 +33,12 @@ const WORDS = {
 } as const;
 
 function statements(op: ObjectOperation): PlannedStatement[] {
-  const one = (label: string, sql: string, destructive = false): PlannedStatement[] => [
-    { sql, label, change: 1, concurrent: false, destructive },
-  ];
+  const one = (
+    label: string,
+    sql: string,
+    destructive = false,
+    outside = false,
+  ): PlannedStatement[] => [{ sql, label, change: 1, concurrent: outside, destructive }];
   switch (op.kind) {
     case "createTable": {
       if (op.name.trim() === "") throw appError("VALIDATION", "Give the table a name.");
@@ -91,6 +99,41 @@ function statements(op: ObjectOperation): PlannedStatement[] {
         `add value to ${op.name}`,
         `ALTER TYPE ${q(op.schema)}.${q(op.name)} ADD VALUE ${op.ifNotExists ? "IF NOT EXISTS " : ""}'${op.value.replace(/'/g, "''")}'${op.position ? ` ${op.position.before ? "BEFORE" : "AFTER"} '${op.position.existing}'` : ""};`,
       );
+    case "createDatabase":
+      if (op.name === "") throw appError("VALIDATION", "Give the database a name.");
+      return one(
+        `create database ${op.name}`,
+        `CREATE DATABASE ${q(op.name)}${op.owner ? ` OWNER ${q(op.owner)}` : ""}${op.template ? ` TEMPLATE ${q(op.template)}` : ""}${op.encoding ? ` ENCODING '${op.encoding}'` : ""};`,
+        false,
+        true,
+      );
+    case "dropDatabase":
+      return one(
+        `drop database ${op.name}`,
+        `DROP DATABASE ${q(op.name)}${op.force ? " WITH (FORCE)" : ""};`,
+        true,
+        true,
+      );
+    case "createSchema":
+      if (op.name === "") throw appError("VALIDATION", "Give the schema a name.");
+      return one(
+        `create schema ${op.name}`,
+        `CREATE SCHEMA ${q(op.name)}${op.owner ? ` AUTHORIZATION ${q(op.owner)}` : ""};`,
+      );
+    case "renameSchema":
+      if (op.newName === "" || op.newName === op.name) {
+        throw appError("VALIDATION", "Give it a new name.");
+      }
+      return one(
+        `rename schema ${op.name} to ${op.newName}`,
+        `ALTER SCHEMA ${q(op.name)} RENAME TO ${q(op.newName)};`,
+      );
+    case "dropSchema":
+      return one(
+        `drop schema ${op.name}`,
+        `DROP SCHEMA ${q(op.name)}${op.cascade ? " CASCADE" : ""};`,
+        true,
+      );
     case "drop":
       return one(
         `drop ${op.name}`,
@@ -105,10 +148,10 @@ export function mockObjectPreview(op: ObjectOperation): StructurePreview {
     throw appError("VALIDATION", "Give it a new name.");
   }
   const list = statements(op);
-  return {
-    statements: list,
-    sql: `-- In one transaction: all or nothing.\n${list.map((s) => s.sql).join("\n")}`,
-  };
+  const header = list.some((s) => s.concurrent)
+    ? "-- CREATE DATABASE and DROP DATABASE can't run in a transaction: this runs on its own."
+    : "-- In one transaction: all or nothing.";
+  return { statements: list, sql: `${header}\n${list.map((s) => s.sql).join("\n")}` };
 }
 
 export function mockObjectApply(op: ObjectOperation): number {
@@ -130,6 +173,21 @@ export function mockObjectApply(op: ObjectOperation): number {
       break;
     case "addEnumValue":
       mockAddEnumValue(op.value, op.position, op.ifNotExists);
+      break;
+    case "createDatabase":
+      mockCreateDatabase(op.name);
+      break;
+    case "dropDatabase":
+      mockDropDatabase(op.name);
+      break;
+    case "createSchema":
+      mockCreateSchema(op.name);
+      break;
+    case "renameSchema":
+      mockRenameSchema(op.name, op.newName);
+      break;
+    case "dropSchema":
+      mockDropSchema(op.name, op.cascade);
       break;
     case "truncate":
       if (!mockHasObject(op.schema, op.name)) {

@@ -14,6 +14,11 @@ pub enum ObjectOperation {
     RefreshMaterializedView(RefreshMaterializedView),
     SetSequence(SetSequence),
     AddEnumValue(AddEnumValue),
+    CreateDatabase(CreateDatabase),
+    DropDatabase(DropDatabase),
+    CreateSchema(CreateSchema),
+    RenameSchema(RenameSchema),
+    DropSchema(DropSchema),
 }
 
 #[derive(Debug, Clone, Deserialize, specta::Type)]
@@ -111,4 +116,58 @@ pub struct AddEnumValue {
     /// `None`: at the end.
     pub position: Option<EnumPosition>,
     pub if_not_exists: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateDatabase {
+    pub name: String,
+    /// `None`: the role that is connected.
+    pub owner: Option<String>,
+    /// `None`: `template1`.
+    pub template: Option<String>,
+    /// `UTF8`, `LATIN1`, …; `None`: the template's.
+    pub encoding: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct DropDatabase {
+    pub name: String,
+    /// Disconnect whoever is using it first (`WITH (FORCE)`, PostgreSQL 13 and later).
+    pub force: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateSchema {
+    pub name: String,
+    pub owner: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct RenameSchema {
+    pub name: String,
+    pub new_name: String,
+}
+
+#[derive(Debug, Clone, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct DropSchema {
+    pub name: String,
+    /// Also drop everything in it.
+    pub cascade: bool,
+}
+
+/// What the "new database" form offers.
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct DatabaseOptions {
+    pub roles: Vec<String>,
+    /// Every database, templates included.
+    pub templates: Vec<String>,
+    pub encodings: Vec<String>,
+    /// The role that is connected.
+    pub current_role: String,
 }
