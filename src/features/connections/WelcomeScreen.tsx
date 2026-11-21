@@ -26,6 +26,7 @@ import {
 import { ReopenSetting } from "@/features/workspace/ReopenSetting";
 import { errorMessage } from "@/lib/errors";
 import { useSessionStore } from "@/stores/session";
+import { useWelcome } from "@/stores/welcome";
 
 /** `null` = closed, `"new"` = create, otherwise edit that connection. */
 type DialogState = null | "new" | ConnectionConfig;
@@ -87,6 +88,11 @@ export function WelcomeScreen() {
   const [deleting, setDeleting] = useState<ConnectionConfig | null>(null);
   const [fileDialog, setFileDialog] = useState<"import" | "export" | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  // File ▸ New Connection (also when a connection is open: it was closed first).
+  const newRequested = useWelcome((s) => s.newConnection);
+  const requestDone = useWelcome((s) => s.done);
+  const shownDialog: DialogState = newRequested ? "new" : dialog;
 
   const query = search.trim().toLowerCase();
   const sections = useMemo(
@@ -224,11 +230,14 @@ export function WelcomeScreen() {
         />
       )}
 
-      {dialog !== null && (
+      {shownDialog !== null && (
         <ConnectionDialog
-          connection={dialog === "new" ? null : dialog}
+          connection={shownDialog === "new" ? null : shownDialog}
           groups={groups}
-          onClose={() => setDialog(null)}
+          onClose={() => {
+            setDialog(null);
+            requestDone();
+          }}
         />
       )}
 

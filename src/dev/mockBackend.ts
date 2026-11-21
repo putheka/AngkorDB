@@ -548,6 +548,8 @@ const handlers: Record<string, Handler> = {
     return null;
   },
   set_confirm_on_quit: () => null,
+  // There is no native menu bar in the browser.
+  update_menu: () => null,
   resolve_ssh_alias: (args): SshAlias | null =>
     String(args["host"]).trim() === "prod-db"
       ? {

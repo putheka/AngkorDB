@@ -22,6 +22,18 @@ export const EDITOR_THEMES: Record<EditorTheme, string> = {
   mono: "Monochrome",
 };
 
+/** The sizes of View ▸ Zoom In and Zoom Out; 1 is actual size. */
+export const ZOOM_STEPS = [0.7, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75] as const;
+
+/** The next size up (`1`) or down (`-1`), staying at the end of the list. */
+export function stepZoom(current: number, direction: 1 | -1): number {
+  let at = 0;
+  ZOOM_STEPS.forEach((step, i) => {
+    if (Math.abs(step - current) < Math.abs((ZOOM_STEPS[at] ?? 1) - current)) at = i;
+  });
+  return ZOOM_STEPS[Math.min(Math.max(at + direction, 0), ZOOM_STEPS.length - 1)] ?? 1;
+}
+
 export interface AppearancePrefs {
   mode: AppearanceMode;
   density: Density;
@@ -30,6 +42,8 @@ export interface AppearancePrefs {
   editorTheme: EditorTheme;
   /** The sidebar shows the desktop through it (macOS vibrancy). */
   translucentSidebar: boolean;
+  /** How large everything is drawn: 1 is actual size. */
+  zoom: number;
 }
 
 export const DEFAULT_APPEARANCE: AppearancePrefs = {
@@ -39,6 +53,7 @@ export const DEFAULT_APPEARANCE: AppearancePrefs = {
   gridFontSize: 13,
   editorTheme: "default",
   translucentSidebar: true,
+  zoom: 1,
 };
 
 export interface GridMetrics {
@@ -89,6 +104,7 @@ export function sanitizeAppearance(value: unknown): AppearancePrefs {
   ) {
     prefs.editorTheme = saved["editorTheme"] as EditorTheme;
   }
+  if (isOneOf(ZOOM_STEPS, saved["zoom"])) prefs.zoom = saved["zoom"];
   if (typeof saved["translucentSidebar"] === "boolean") {
     prefs.translucentSidebar = saved["translucentSidebar"];
   }

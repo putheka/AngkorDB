@@ -1020,6 +1020,7 @@ fn unsaved_changes_are_remembered_and_drive_the_window_hooks() {
     let dots = Arc::new(Mutex::new(Vec::new()));
     let quits = Arc::new(AtomicU32::new(0));
     let opens = Arc::new(AtomicU32::new(0));
+    let menus = Arc::new(Mutex::new(Vec::new()));
     state.set_window_hooks(WindowHooks {
         set_edited: {
             let dots = dots.clone();
@@ -1036,6 +1037,10 @@ fn unsaved_changes_are_remembered_and_drive_the_window_hooks() {
             Box::new(move || {
                 opens.fetch_add(1, Ordering::SeqCst);
             })
+        },
+        update_menu: {
+            let menus = menus.clone();
+            Box::new(move |updates| menus.lock().unwrap().push(updates.len()))
         },
     });
     for count in [1, 4, 0] {
@@ -1054,6 +1059,16 @@ fn unsaved_changes_are_remembered_and_drive_the_window_hooks() {
     ipc.call("open_settings", json!({})).unwrap();
     ipc.call("open_settings", json!({})).unwrap();
     assert_eq!(opens.load(Ordering::SeqCst), 2);
+
+    // The page's word on the menu items reaches the hook as it was sent.
+    ipc.call(
+        "update_menu",
+        json!({ "updates": [
+            { "id": "tabs.new", "accelerator": "Cmd+T", "enabled": true },
+            { "id": "query.stop", "accelerator": null, "enabled": false } ] }),
+    )
+    .unwrap();
+    assert_eq!(*menus.lock().unwrap(), [2]);
 }
 
 #[test]

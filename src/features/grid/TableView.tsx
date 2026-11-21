@@ -391,6 +391,8 @@ export function TableView({ connectionId, tab }: { connectionId: string; tab: Ta
 
   // Opens the bar. The sidebar's own search has the same keys when the focus is there.
   useShortcut("table.filter", () => openFilter());
+  useShortcut("table.export", () => setExporting(true));
+  useShortcut("table.detail", () => toggleDetail());
 
   let body;
   if (rows.isPending) {

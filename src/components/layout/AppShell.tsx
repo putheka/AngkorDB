@@ -10,7 +10,14 @@ import { useTabShortcuts } from "@/features/tabs/useTabShortcuts";
 import { QuitConfirmDialog } from "@/features/settings/quitConfirm";
 import { Shortcut } from "@/features/shortcuts/Shortcut";
 import { commands } from "@/lib/ipc";
-import { useShortcut, useShortcutDispatcher } from "@/features/shortcuts/registry";
+import { useAppearance } from "@/stores/appearance";
+import { useBackupDialog } from "@/stores/backupDialog";
+import { useBrowserStore } from "@/stores/browser";
+import { useImportDialog } from "@/stores/importDialog";
+import { useWelcome } from "@/stores/welcome";
+import { useNativeMenu } from "@/features/shortcuts/nativeMenu";
+import { runFirst, useShortcut, useShortcutDispatcher } from "@/features/shortcuts/registry";
+import { stepZoom } from "@/features/appearance/prefs";
 import { useWorkspacePersistence } from "@/features/workspace/useWorkspacePersistence";
 import { refreshData } from "@/features/grid/useTableData";
 import { refreshSchema } from "@/features/sidebar/useSchema";
@@ -68,6 +75,52 @@ export function AppShell() {
     { enabled: connected },
   );
   useShortcut("app.shortcuts", () => useShortcuts.getState().toggleDialog());
+
+  // Find and Export stand for a few commands and ask them in turn: the sidebar when the focus is
+  // there, else the table; the table or the query in front.
+  useShortcut("edit.find", () => runFirst(["sidebar.filter", "table.filter"]), {
+    enabled: connected,
+  });
+  useShortcut("file.export", () => runFirst(["table.export", "query.export"]), {
+    enabled: connected,
+  });
+
+  // File and View.
+  useShortcut("app.newConnection", async () => {
+    // A connection that is open is closed first (the welcome screen is where connections are made).
+    if (
+      useSessionStore.getState().activeConnectionId &&
+      !(await useSessionStore.getState().disconnect())
+    ) {
+      return;
+    }
+    useWelcome.getState().requestNewConnection();
+  });
+  useShortcut(
+    "file.import",
+    () =>
+      useImportDialog
+        .getState()
+        .open({ schema: useBrowserStore.getState().schema ?? "public", table: null }),
+    { enabled: connected },
+  );
+  useShortcut("file.backup", () => useBackupDialog.getState().show("backup"), {
+    enabled: connected,
+  });
+  useShortcut("file.restore", () => useBackupDialog.getState().show("restore"), {
+    enabled: connected,
+  });
+  useShortcut("app.theme.system", () => useAppearance.getState().set({ mode: "system" }));
+  useShortcut("app.theme.light", () => useAppearance.getState().set({ mode: "light" }));
+  useShortcut("app.theme.dark", () => useAppearance.getState().set({ mode: "dark" }));
+  useShortcut("view.zoomIn", () =>
+    useAppearance.getState().set({ zoom: stepZoom(useAppearance.getState().zoom, 1) }),
+  );
+  useShortcut("view.zoomOut", () =>
+    useAppearance.getState().set({ zoom: stepZoom(useAppearance.getState().zoom, -1) }),
+  );
+  useShortcut("view.zoomReset", () => useAppearance.getState().set({ zoom: 1 }));
+  useNativeMenu();
   useShortcut("app.settings", () => void commands.openSettings());
 
   return (

@@ -224,3 +224,30 @@ export function whyNotAllowed(chordText: string): string | null {
   if (typesText) return "Add ⌘, ⌃ or ⌥: a plain key has to stay for typing.";
   return null;
 }
+
+/** Codes the menu spells like the keyboard event does (the rest are letters and digits). */
+const MENU_CODES =
+  /^(Enter|Backspace|Delete|Tab|Escape|Space|Arrow(Up|Down|Left|Right)|Home|End|PageUp|PageDown|F([1-9]|1[0-9]|20)|Period|Comma|Slash|Backslash|BracketLeft|BracketRight|Minus|Equal|Semicolon|Quote|Backquote)$/;
+
+/**
+ * The chord as the native menu spells a key equivalent (`Shift+Cmd+E`, `Cmd+Equal`), or `null`
+ * for a key it can't have (the numeric keypad, a key only some layouts have).
+ */
+export function toMenuAccelerator(chordText: string): string | null {
+  const chord = parseChord(chordText);
+  if (!chord) return null;
+  let key: string;
+  if (/^Key[A-Z]$/.test(chord.code)) key = chord.code.slice(3);
+  else if (/^Digit[0-9]$/.test(chord.code)) key = chord.code;
+  else if (MENU_CODES.test(chord.code)) key = chord.code;
+  else return null;
+  return [
+    chord.ctrl ? "Ctrl" : "",
+    chord.alt ? "Alt" : "",
+    chord.shift ? "Shift" : "",
+    chord.cmd ? "Cmd" : "",
+    key,
+  ]
+    .filter(Boolean)
+    .join("+");
+}

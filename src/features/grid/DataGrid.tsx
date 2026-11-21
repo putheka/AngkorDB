@@ -57,6 +57,7 @@ import {
 } from "@/features/grid/clipboard/formats";
 import { rowsFromText, type PasteColumn } from "@/features/grid/clipboard/parse";
 import { shortcutLabel } from "@/features/shortcuts/labels";
+import { useShortcutGroup } from "@/features/shortcuts/registry";
 import { gridMetrics } from "@/features/appearance/prefs";
 import { errorMessage } from "@/lib/errors";
 import { useAppearance } from "@/stores/appearance";
@@ -619,6 +620,20 @@ export function DataGrid({
       `Pasted ${n === 1 ? "1 new row" : `${n} new rows`}${extras.length > 0 ? ` (${extras.join("; ")})` : ""}. Save with ${shortcutLabel("table.save")}.`,
     );
   };
+
+  // "Copy As" of the menu bar copies the selection in the format it names.
+  useShortcutGroup(
+    COPY_FORMATS.map(({ format }) => `grid.copy.${format}`),
+    (id) => {
+      const format = id.slice(id.lastIndexOf(".") + 1) as CopyFormat;
+      if (format === "insert" || format === "update") {
+        if (!copyTarget || (format === "update" && !copyTarget.keyColumns)) return false;
+      }
+      const shape = shapeOf();
+      if (!shape) return false;
+      copyShape(format, shape);
+    },
+  );
 
   // ⌘C and ⌘V arrive as copy and paste events (the app menu sends them), while the grid has focus.
   // They are caught here, before the grid's own handlers, so what is copied is what is on screen,

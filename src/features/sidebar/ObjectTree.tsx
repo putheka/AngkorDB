@@ -108,7 +108,9 @@ export function ObjectTree({ connectionId }: { connectionId: string }) {
   useShortcut(
     "sidebar.filter",
     (e) => {
-      if (!(e?.target instanceof Node) || !rootRef.current?.contains(e.target)) return false;
+      // From the menu bar there is no key event: the focus is where the person was.
+      const where = e?.target instanceof Node ? e.target : document.activeElement;
+      if (!(where instanceof Node) || !rootRef.current?.contains(where)) return false;
       inputRef.current?.focus();
       inputRef.current?.select();
     },

@@ -48,6 +48,7 @@ pub fn specta_builder<R: tauri::Runtime>() -> Builder<R> {
             commands::app::set_unsaved_changes,
             commands::app::quit_app,
             commands::app::open_settings,
+            commands::app::update_menu,
             commands::app::set_confirm_on_quit,
             commands::connection_files::export_connections,
             commands::connection_files::read_connection_file,
@@ -191,6 +192,7 @@ pub fn run() {
             let window = app.handle().clone();
             let quitter = app.handle().clone();
             let opener = app.handle().clone();
+            let menu_owner = app.handle().clone();
             app.state::<AppState>().set_window_hooks(WindowHooks {
                 set_edited: Box::new(move |edited| {
                     if let Some(main) = window.get_webview_window("main") {
@@ -198,6 +200,15 @@ pub fn run() {
                     }
                 }),
                 quit: Box::new(move || quitter.exit(0)),
+                // The menu is changed on the main thread.
+                update_menu: Box::new(move |updates| {
+                    let app = menu_owner.clone();
+                    let _ = menu_owner.run_on_main_thread(move || {
+                        if let Some(menu) = app.menu() {
+                            menu::apply_updates(&menu, &updates);
+                        }
+                    });
+                }),
                 // Windows are made on the main thread.
                 open_settings: Box::new(move || {
                     let app = opener.clone();

@@ -7,7 +7,7 @@
 import { useEffect, useRef } from "react";
 
 import { commandsByChord } from "@/features/shortcuts/bindings";
-import { COMMANDS } from "@/features/shortcuts/commands";
+import { COMMANDS, MEMBERS } from "@/features/shortcuts/commands";
 import { chordIdOf } from "@/features/shortcuts/keys";
 import { useShortcuts } from "@/stores/shortcuts";
 
@@ -22,19 +22,46 @@ interface Entry {
 }
 
 const entries = new Set<Entry>();
+const listeners = new Set<() => void>();
 let counter = 0;
+
+/** Something opened or closed: what is available has changed. */
+const changed = () => listeners.forEach((listener) => listener());
+
+/** Hear about commands becoming available or not (the menu bar greys its items by it). */
+export function onAvailabilityChange(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => void listeners.delete(listener);
+}
 
 function register(id: string, run: ShortcutHandler, priority: number): () => void {
   const entry: Entry = { id, run, priority, seq: ++counter };
   entries.add(entry);
-  return () => void entries.delete(entry);
+  changed();
+  return () => {
+    entries.delete(entry);
+    changed();
+  };
 }
 
 /** Open handlers, the one that wins first: higher priority, then the one opened last. */
 const byTurn = (a: Entry, b: Entry) => b.priority - a.priority || b.seq - a.seq;
 
-/** Is the command available right now (its screen is open)? */
-export const isAvailable = (id: string): boolean => [...entries].some((e) => e.id === id);
+const hasHandler = (id: string) => [...entries].some((e) => e.id === id);
+
+/**
+ * Is the command available right now (its screen is open)? A command that asks others in turn
+ * (Find, Export) is available when one of them is.
+ */
+export function isAvailable(id: string): boolean {
+  const members = MEMBERS[id];
+  return members ? members.some(hasHandler) : hasHandler(id);
+}
+
+/** Run the first of these commands that is open and takes it; `false` when none does. */
+export function runFirst(ids: readonly string[]): boolean {
+  return ids.some((id) => runCommand(id));
+}
 
 /** Run a command without a key press (the command palette). `false` when it isn't available. */
 export function runCommand(id: string): boolean {
@@ -63,6 +90,27 @@ export function dispatchKey(event: KeyboardEvent): boolean {
     }
   }
   return false;
+}
+
+/** Make several commands available at once, one handler for them all (told which was asked). */
+export function useShortcutGroup(
+  ids: readonly string[],
+  handler: (id: string, event: KeyboardEvent | null) => unknown,
+  options: { enabled?: boolean; priority?: number } = {},
+) {
+  const { enabled = true, priority = 0 } = options;
+  const latest = useRef(handler);
+  useEffect(() => {
+    latest.current = handler;
+  });
+  const key = ids.join("\n");
+  useEffect(() => {
+    if (!enabled) return;
+    const stops = key
+      .split("\n")
+      .map((id) => register(id, (event) => latest.current(id, event), priority));
+    return () => stops.forEach((stop) => stop());
+  }, [key, enabled, priority]);
 }
 
 /** Listen for keys, once, for the whole window. */

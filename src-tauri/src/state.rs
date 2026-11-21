@@ -8,6 +8,7 @@ use tokio::sync::RwLock;
 use crate::db::session::Session;
 use crate::db::ssh::{self, HostKeyProblem};
 use crate::error::{AppError, AppResult};
+use crate::menu::MenuUpdate;
 use crate::storage::ConnectionManager;
 use crate::storage::history::HistoryStore;
 use crate::storage::workspace::WorkspaceStore;
@@ -21,6 +22,8 @@ pub struct WindowHooks {
     pub quit: Box<dyn Fn() + Send + Sync>,
     /// Show the settings window (opening it if needed).
     pub open_settings: Box<dyn Fn() + Send + Sync>,
+    /// Give menu items their keys and enable or grey them (the page says which).
+    pub update_menu: Box<dyn Fn(Vec<MenuUpdate>) + Send + Sync>,
 }
 
 /// Global state shared by all commands (`tauri::State<AppState>`).
@@ -154,6 +157,16 @@ impl AppState {
 
     pub fn confirm_quit(&self) -> bool {
         self.confirm_quit.load(Ordering::SeqCst)
+    }
+
+    /// Pass the page's word on the menu items on to the menu. Without a window (tests) nothing
+    /// happens.
+    pub fn update_menu(&self, updates: Vec<MenuUpdate>) {
+        if let Ok(hooks) = self.hooks.lock()
+            && let Some(hooks) = hooks.as_ref()
+        {
+            (hooks.update_menu)(updates);
+        }
     }
 
     /// Show the settings window. Without a window (tests) nothing happens.

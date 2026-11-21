@@ -225,8 +225,21 @@ export function QueryView({ connectionId, tab }: { connectionId: string; tab: Qu
     });
   }, [update]);
 
-  // Save the query, and stop what is running: wherever the focus is (the editor included).
+  // Save the query, and stop what is running: wherever the focus is (the editor included). Run,
+  // format and explain are also the editor's own keys; here they are for the menu bar (and for
+  // the keys when the focus is elsewhere in the tab).
   useShortcut("query.save", () => saveQuery());
+  useShortcut("editor.run", () => void onRun("current"));
+  useShortcut("editor.runAll", () => void onRun("all"));
+  useShortcut("editor.format", () => editor.current?.format());
+  useShortcut("query.explain", () => void explain(false));
+  useShortcut("query.analyze", () => void explain(true));
+  useShortcut("query.export", async () => {
+    const picked = await pickStatement();
+    if (picked) setExportSql(picked.sql);
+    else
+      update({ runError: "There is no SQL to export: the editor is empty or only has comments." });
+  });
   useShortcut("query.stop", () => stop(), { enabled: view.running });
 
   // Elapsed time while a statement runs.

@@ -32,6 +32,11 @@ export const commands = {
 	/**  Show the settings window (⌘,), opening it if it isn't open. */
 	openSettings: (options?: InvokeOptions) => __TAURI_INVOKE<void>("open_settings", undefined, options),
 	/**
+	 *  The page says which menu items have keys now and which can be chosen (ANG-55). Called when the
+	 *  person changes a shortcut and when a screen opens or closes.
+	 */
+	updateMenu: (updates: MenuUpdate[], options?: InvokeOptions) => __TAURI_INVOKE<void>("update_menu", { updates }, options),
+	/**
 	 *  The page reports the "Confirm on quit" setting: with it on, quitting asks even when nothing
 	 *  is unsaved.
 	 */
@@ -971,6 +976,15 @@ export type LimitedCount = {
 	count: number,
 	/**  There are more rows than `count`. */
 	capped: boolean,
+};
+
+/**  What the page says about one menu item: its keys and whether it can be chosen now. */
+export type MenuUpdate = {
+	/**  The command's id, which is the menu item's id. */
+	id: string,
+	/**  In Tauri's spelling (`Shift+Cmd+E`); `None`: no key. */
+	accelerator: string | null,
+	enabled: boolean,
 };
 
 export type NewColumn = {

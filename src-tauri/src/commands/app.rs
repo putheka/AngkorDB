@@ -1,6 +1,7 @@
 use serde::Serialize;
 use tauri::State;
 
+use crate::menu::MenuUpdate;
 use crate::state::AppState;
 
 #[derive(Debug, Serialize, specta::Type)]
@@ -51,4 +52,12 @@ pub fn open_settings(state: State<'_, AppState>) {
 #[specta::specta]
 pub fn set_confirm_on_quit(state: State<'_, AppState>, confirm: bool) {
     state.set_confirm_quit(confirm);
+}
+
+/// The page says which menu items have keys now and which can be chosen (ANG-55). Called when the
+/// person changes a shortcut and when a screen opens or closes.
+#[tauri::command]
+#[specta::specta]
+pub fn update_menu(state: State<'_, AppState>, updates: Vec<MenuUpdate>) {
+    state.update_menu(updates);
 }

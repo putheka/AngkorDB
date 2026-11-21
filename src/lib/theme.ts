@@ -1,3 +1,4 @@
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { resolveDark } from "@/features/appearance/prefs";
@@ -40,9 +41,27 @@ export function startAppearance(): () => void {
     }
   };
 
+  let zoomed = 1;
+  const applyZoom = () => {
+    const { zoom } = useAppearance.getState();
+    if (zoom === zoomed || !inNativeApp()) return;
+    zoomed = zoom;
+    try {
+      void getCurrentWebview()
+        .setZoom(zoom)
+        .catch(() => undefined);
+    } catch {
+      // No webview to zoom (the browser): the setting is kept for the app.
+    }
+  };
+
   apply();
+  applyZoom();
   media.addEventListener("change", apply);
-  const stop = useAppearance.subscribe(apply);
+  const stop = useAppearance.subscribe(() => {
+    apply();
+    applyZoom();
+  });
   return () => {
     media.removeEventListener("change", apply);
     stop();

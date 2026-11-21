@@ -11,7 +11,7 @@ import {
   resetCommand,
   sanitizeOverrides,
 } from "./bindings.ts";
-import { COMMANDS, commandById } from "./commands.ts";
+import { COMMANDS, MEMBERS, MENU_COMMAND_IDS, commandById } from "./commands.ts";
 import {
   chordIdOf,
   displayChord,
@@ -19,6 +19,7 @@ import {
   normalizeChord,
   parseChord,
   toCodeMirrorKey,
+  toMenuAccelerator,
   whyNotAllowed,
 } from "./keys.ts";
 
@@ -139,19 +140,42 @@ test("every command has a clear identity: unique ids, valid chords, no clash amo
   }
 });
 
-test("⌘F is shared by the sidebar and the table because they never both apply", () => {
-  const table = commandById("table.filter");
-  const sidebar = commandById("sidebar.filter");
-  assert.ok(table && sidebar);
-  assert.ok(
-    bindingsOf(table, {}).includes("Cmd+KeyF") && bindingsOf(sidebar, {}).includes("Cmd+KeyF"),
-  );
-  assert.equal(commandsByChord(COMMANDS, {}).get("Cmd+KeyF")?.length, 2);
+test("⌘F is Find, which asks the sidebar and the table; neither has the key of its own", () => {
+  const find = commandById("edit.find");
+  assert.ok(find);
+  assert.deepEqual(bindingsOf(find, {}), ["Cmd+KeyF"]);
+  for (const id of ["table.filter", "sidebar.filter"]) {
+    const def = commandById(id);
+    assert.ok(def, id);
+    assert.deepEqual(bindingsOf(def, {}), [], id);
+  }
+  assert.deepEqual(MEMBERS["edit.find"], ["sidebar.filter", "table.filter"]);
+  for (const [id, members] of Object.entries(MEMBERS)) {
+    assert.ok(commandById(id), id);
+    for (const member of members) assert.ok(commandById(member), member);
+  }
   // The same key for two app-wide commands would be a conflict.
   assert.deepEqual(
     findConflicts(COMMANDS, {}, "app.reload", "Cmd+KeyT").map((c) => c.id),
     ["tabs.new"],
   );
+});
+
+test("chords become the native menu's key equivalents", () => {
+  assert.equal(toMenuAccelerator("Cmd+KeyT"), "Cmd+T");
+  assert.equal(toMenuAccelerator("Shift+Cmd+KeyE"), "Shift+Cmd+E");
+  assert.equal(toMenuAccelerator("Alt+Cmd+BracketRight"), "Alt+Cmd+BracketRight");
+  assert.equal(toMenuAccelerator("Cmd+Digit0"), "Cmd+Digit0");
+  assert.equal(toMenuAccelerator("Cmd+Enter"), "Cmd+Enter");
+  assert.equal(toMenuAccelerator("Ctrl+Shift+Tab"), "Ctrl+Shift+Tab");
+  assert.equal(toMenuAccelerator("Cmd+Equal"), "Cmd+Equal");
+  assert.equal(toMenuAccelerator("Cmd+Numpad1"), null);
+  assert.equal(toMenuAccelerator("Cmd+IntlBackslash"), null);
+  assert.equal(toMenuAccelerator("nonsense"), null);
+  // Every default key of a command can be a menu key, except where a layout-only key is used.
+  for (const def of COMMANDS) {
+    for (const chord of def.keys) assert.ok(toMenuAccelerator(chord), `${def.id} ${chord}`);
+  }
 });
 
 test("a new key is added, a taken one is refused unless replacing, and replacing takes it away", () => {
@@ -228,4 +252,11 @@ test("stored changes are checked: unknown commands, odd chords and fixed command
   );
   // An empty list means "no key for this command", and is kept.
   assert.deepEqual(sanitizeOverrides(COMMANDS, { "app.reload": [] }), { "app.reload": [] });
+});
+
+test("every item of the menu bar is a command of the registry, listed once", () => {
+  assert.equal(new Set(MENU_COMMAND_IDS).size, MENU_COMMAND_IDS.length);
+  for (const id of MENU_COMMAND_IDS) assert.ok(commandById(id), `${id} is not a command`);
+  // The two keys the menu owns can't be given away.
+  for (const id of ["tabs.close", "app.settings"]) assert.equal(commandById(id)?.fixed, true, id);
 });

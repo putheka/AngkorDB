@@ -29,6 +29,7 @@ export const useAppearance = create<AppearanceState>()(
         gridFontSize: s.gridFontSize,
         editorTheme: s.editorTheme,
         translucentSidebar: s.translucentSidebar,
+        zoom: s.zoom,
       }),
       merge: (saved, current) => ({ ...current, ...sanitizeAppearance(saved) }),
     },

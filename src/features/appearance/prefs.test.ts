@@ -9,6 +9,8 @@ import {
   gridMetrics,
   resolveDark,
   sanitizeAppearance,
+  stepZoom,
+  ZOOM_STEPS,
 } from "./prefs.ts";
 
 test("system follows macOS, and the other two ignore it", () => {
@@ -42,6 +44,7 @@ test("what is stored is checked, and anything odd falls back to the default", ()
       gridFontSize: 15,
       editorTheme: "ocean",
       translucentSidebar: false,
+      zoom: 1.25,
     }),
     {
       mode: "dark",
@@ -50,6 +53,7 @@ test("what is stored is checked, and anything odd falls back to the default", ()
       gridFontSize: 15,
       editorTheme: "ocean",
       translucentSidebar: false,
+      zoom: 1.25,
     },
   );
   assert.deepEqual(
@@ -60,10 +64,24 @@ test("what is stored is checked, and anything odd falls back to the default", ()
       gridFontSize: 99,
       editorTheme: "toString",
       translucentSidebar: "yes",
+      zoom: 3,
     }),
     DEFAULT_APPEARANCE,
   );
   // One bad value does not spoil the others.
   assert.equal(sanitizeAppearance({ mode: "light", density: 3 }).mode, "light");
   assert.equal(sanitizeAppearance({ mode: "light", density: 3 }).density, "normal");
+});
+
+test("zoom goes up and down the list of sizes and stops at its ends", () => {
+  assert.equal(stepZoom(1, 1), 1.1);
+  assert.equal(stepZoom(1, -1), 0.9);
+  assert.equal(stepZoom(1.1, 1), 1.25);
+  assert.equal(stepZoom(1.75, 1), 1.75);
+  assert.equal(stepZoom(0.7, -1), 0.7);
+  // Something between sizes goes to the nearest first.
+  assert.equal(stepZoom(1.04, 1), 1.1);
+  assert.equal(stepZoom(1.2, -1), 1.1);
+  for (const step of ZOOM_STEPS) assert.equal(sanitizeAppearance({ zoom: step }).zoom, step);
+  assert.equal(sanitizeAppearance({ zoom: 1.3 }).zoom, 1);
 });

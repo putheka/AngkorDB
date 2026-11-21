@@ -62,6 +62,8 @@ unsafe_code = "forbid"
 all = { level = "warn", priority = -1 }
 
 [dev-dependencies]
+# The menu's own parser of key equivalents, to check the spellings the page sends.
+muda = "0.20"
 rcgen = "0.14.10"
 tauri = { version = "2", features = ["test"] }
 tempfile = "3.27.0"
