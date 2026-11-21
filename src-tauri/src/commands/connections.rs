@@ -7,7 +7,8 @@ use crate::db::ssh::{self, SshSetup};
 use crate::db::{session, url};
 use crate::error::{AppError, AppResult};
 use crate::models::connection::{
-    ConnectionConfig, ConnectionInfo, ParsedConnectionUrl, PasswordChange, SshAuth, SshTestResult,
+    ConnectionConfig, ConnectionHealth, ConnectionInfo, ParsedConnectionUrl, PasswordChange,
+    SshAuth, SshTestResult,
 };
 use crate::state::AppState;
 
@@ -176,6 +177,25 @@ pub async fn connect_connection(
     let info = session.info().clone();
     state.insert_session(session).await;
     Ok(info)
+}
+
+/// How the open connection is doing. Asking also checks it, if it has been idle a while, and
+/// replaces it when it was lost (the laptop slept, the network changed): so a connection that
+/// is polled this way is already back when the next query is run.
+#[tauri::command]
+#[specta::specta]
+pub async fn connection_health(
+    state: State<'_, AppState>,
+    connection_id: String,
+) -> AppResult<ConnectionHealth> {
+    let session = state.session(&connection_id).await?;
+    // The check and the new connection take as long as they take; not forever.
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(10), session.meta()).await;
+    let health = session.health();
+    Ok(ConnectionHealth {
+        reconnecting: health.reconnecting,
+        reconnects: health.reconnects,
+    })
 }
 
 #[tauri::command]

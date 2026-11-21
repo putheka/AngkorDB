@@ -5,6 +5,7 @@ pub mod alter;
 pub mod app;
 pub mod backup;
 pub mod changes;
+pub mod connection_files;
 pub mod connections;
 pub mod export;
 pub mod history;

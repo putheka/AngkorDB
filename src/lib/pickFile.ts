@@ -44,3 +44,15 @@ export async function pickBackup(title: string, folder: boolean): Promise<string
   const chosen = await open({ title, multiple: false, directory: folder });
   return typeof chosen === "string" ? chosen : null;
 }
+
+/** Ask for a connections file to read. `null` when they cancel. */
+export async function pickConnectionFile(title: string): Promise<string | null> {
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const chosen = await open({
+    title,
+    multiple: false,
+    directory: false,
+    filters: [{ name: "AngkorDB connections", extensions: ["json"] }],
+  });
+  return typeof chosen === "string" ? chosen : null;
+}

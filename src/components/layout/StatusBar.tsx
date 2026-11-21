@@ -36,6 +36,16 @@ export function StatusBar() {
   const queryMs = useStatusStore((s) => s.queryMs);
   const { data: connections = [] } = useConnections();
   const active = connections.find((c) => c.id === activeId);
+  // Asking also checks the connection when it has been idle, and replaces it if it was lost
+  // (the laptop slept, the network changed): it is already back when the next query runs.
+  const health = useQuery({
+    queryKey: ["connection-health", activeId],
+    queryFn: () => commands.connectionHealth(activeId ?? ""),
+    enabled: activeId !== null,
+    refetchInterval: 5000,
+    refetchIntervalInBackground: true,
+    retry: false,
+  });
 
   return (
     <footer className="flex h-6 shrink-0 items-center justify-between gap-4 border-t px-3 text-[11px] text-muted-foreground">
@@ -46,6 +56,25 @@ export function StatusBar() {
             {active.name} · PostgreSQL {serverVersion}
           </span>
           <SafeModeLabel mode={active.safeMode} />
+          {health.data?.reconnecting && (
+            <span
+              role="status"
+              className="flex shrink-0 items-center gap-1 pl-2 font-medium text-amber-600 dark:text-amber-400"
+              title="The connection was lost. A new one is being made."
+            >
+              <span className="size-1.5 animate-pulse rounded-full bg-current" />
+              Reconnecting…
+            </span>
+          )}
+          {!health.data?.reconnecting && (health.data?.reconnects ?? 0) > 0 && (
+            <span
+              className="shrink-0 pl-2 opacity-60"
+              title="The connection was lost and made again without you doing anything."
+            >
+              Reconnected
+              {(health.data?.reconnects ?? 0) > 1 ? ` ×${health.data?.reconnects}` : ""}
+            </span>
+          )}
         </span>
       ) : (
         <span>Not connected</span>

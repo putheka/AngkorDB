@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use deadpool_postgres::{
@@ -20,6 +21,54 @@ use crate::models::query::{MAX_NOTICES, Notice};
 const META_POOL_SIZE: usize = 3;
 const POOL_WAIT_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// A connection idle for this long is checked before it is used again: after the laptop slept or
+/// the Wi-Fi changed it can look open and be dead.
+const IDLE_CHECK: Duration = Duration::from_secs(20);
+/// How long a check may take before the connection counts as lost.
+const PING_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Is the connection answering?
+async fn alive(client: &Client) -> bool {
+    matches!(
+        tokio::time::timeout(PING_TIMEOUT, client.simple_query("SELECT 1")).await,
+        Ok(Ok(_))
+    )
+}
+
+/// What the connection has been through, for the status bar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SessionHealth {
+    /// A lost connection was found and a new one is not there yet.
+    pub reconnecting: bool,
+    /// How many times a lost connection was replaced.
+    pub reconnects: u32,
+}
+
+#[derive(Default)]
+struct Health {
+    reconnecting: AtomicBool,
+    reconnects: AtomicU32,
+    /// 0 checks every connection each time it is used (tests).
+    idle_check_ms: AtomicU64,
+}
+
+impl Health {
+    fn lost(&self) {
+        self.reconnecting.store(true, Ordering::SeqCst);
+    }
+
+    /// A new connection is working again.
+    fn recovered(&self) {
+        if self.reconnecting.swap(false, Ordering::SeqCst) {
+            self.reconnects.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    fn idle_check(&self) -> Duration {
+        Duration::from_millis(self.idle_check_ms.load(Ordering::SeqCst))
+    }
+}
+
 /// One open database connection (ANG-8 D3).
 ///
 /// - `meta_pool`: shared, short-lived work.
@@ -31,7 +80,8 @@ pub struct Session {
     pg_config: Config,
     tls: MakeRustlsConnect,
     meta_pool: Pool,
-    tabs: Mutex<HashMap<String, Arc<Client>>>,
+    tabs: Mutex<HashMap<String, (Arc<Client>, Instant)>>,
+    health: Arc<Health>,
     /// What each tab's server connection has said (`RAISE NOTICE`, …) since it was last read.
     notices: std::sync::Mutex<HashMap<String, Arc<std::sync::Mutex<Vec<Notice>>>>>,
     /// The SSH tunnel the connections go through, if the connection has one. Shared with the
@@ -98,6 +148,12 @@ impl Session {
         tunnel: Option<Arc<SshTunnel>>,
     ) -> AppResult<Self> {
         let started = Instant::now();
+        let health = Arc::new(Health {
+            idle_check_ms: AtomicU64::new(
+                u64::try_from(IDLE_CHECK.as_millis()).unwrap_or(u64::MAX),
+            ),
+            ..Health::default()
+        });
 
         let manager = Manager::from_config(
             pg_config.clone(),
@@ -111,14 +167,36 @@ impl Session {
             .runtime(Runtime::Tokio1)
             .wait_timeout(Some(POOL_WAIT_TIMEOUT))
             .create_timeout(Some(config::CONNECT_TIMEOUT));
-        if let Some(sql) = config::init_sql(&config) {
-            pool = pool.post_create(Hook::async_fn(move |client, _| {
-                let sql = sql.clone();
-                Box::pin(
-                    async move { client.batch_execute(&sql).await.map_err(HookError::Backend) },
-                )
-            }));
-        }
+        // A new connection: set it up, and if it replaces a lost one, say it is back.
+        let init = config::init_sql(&config);
+        let recovered = Arc::clone(&health);
+        pool = pool.post_create(Hook::async_fn(move |client, _| {
+            let (sql, health) = (init.clone(), Arc::clone(&recovered));
+            Box::pin(async move {
+                if let Some(sql) = sql {
+                    client
+                        .batch_execute(&sql)
+                        .await
+                        .map_err(HookError::Backend)?;
+                }
+                health.recovered();
+                Ok(())
+            })
+        }));
+        // A connection that has been idle a while is asked if it is still there before it is used;
+        // if not it is dropped and the pool makes a new one.
+        let watching = Arc::clone(&health);
+        pool = pool.pre_recycle(Hook::async_fn(move |client, metrics| {
+            let health = Arc::clone(&watching);
+            let idle = metrics.last_used();
+            Box::pin(async move {
+                if idle < health.idle_check() || alive(client).await {
+                    return Ok(());
+                }
+                health.lost();
+                Err(HookError::message("the connection was lost"))
+            })
+        }));
         let meta_pool = pool.build().map_err(|e| AppError::Pool(e.to_string()))?;
 
         let server_version = server_version(&*meta_pool.get().await?).await?;
@@ -133,6 +211,7 @@ impl Session {
             pg_config,
             tls,
             meta_pool,
+            health,
             tabs: Mutex::new(HashMap::new()),
             notices: std::sync::Mutex::new(HashMap::new()),
             tunnel: std::sync::Mutex::new(tunnel),
@@ -156,6 +235,23 @@ impl Session {
         &self.info
     }
 
+    /// Whether the connection was lost and found again, for the status bar.
+    pub fn health(&self) -> SessionHealth {
+        SessionHealth {
+            reconnecting: self.health.reconnecting.load(Ordering::SeqCst),
+            reconnects: self.health.reconnects.load(Ordering::SeqCst),
+        }
+    }
+
+    /// Check a connection that has been idle this long before using it again. Zero: every time.
+    #[doc(hidden)]
+    pub fn set_idle_check(&self, after: Duration) {
+        self.health.idle_check_ms.store(
+            u64::try_from(after.as_millis()).unwrap_or(u64::MAX),
+            Ordering::SeqCst,
+        );
+    }
+
     /// A pooled client for short metadata / grid work. Returned to the pool on drop.
     pub async fn meta(&self) -> AppResult<Object> {
         Ok(self.meta_pool.get().await?)
@@ -164,10 +260,24 @@ impl Session {
     /// The dedicated client for a query tab, connected on first use and
     /// reconnected if the server closed it.
     pub async fn tab_client(&self, tab_id: &str) -> AppResult<Arc<Client>> {
-        if let Some(client) = self.tabs.lock().await.get(tab_id)
+        let known = self
+            .tabs
+            .lock()
+            .await
+            .get(tab_id)
+            .map(|(client, used)| (Arc::clone(client), used.elapsed()));
+        if let Some((client, idle)) = known
             && !client.is_closed()
         {
-            return Ok(Arc::clone(client));
+            if idle < self.health.idle_check() || alive(&client).await {
+                if let Some(entry) = self.tabs.lock().await.get_mut(tab_id) {
+                    entry.1 = Instant::now();
+                }
+                return Ok(client);
+            }
+            // Open, and not answering: the laptop slept, or the network changed. A new
+            // connection is made below (what the old one had set up is gone with it).
+            self.health.lost();
         }
 
         // Connect without holding the lock so other tabs aren't blocked.
@@ -203,7 +313,8 @@ impl Session {
         self.tabs
             .lock()
             .await
-            .insert(tab_id.to_owned(), Arc::clone(&client));
+            .insert(tab_id.to_owned(), (Arc::clone(&client), Instant::now()));
+        self.health.recovered();
         Ok(client)
     }
 
@@ -230,7 +341,13 @@ impl Session {
     /// Ask the server to cancel whatever the tab is running. Returns `false` if the tab has
     /// no open connection. The running query then fails with SQLSTATE `57014`.
     pub async fn cancel_tab(&self, tab_id: &str) -> AppResult<bool> {
-        let Some(client) = self.tabs.lock().await.get(tab_id).cloned() else {
+        let Some(client) = self
+            .tabs
+            .lock()
+            .await
+            .get(tab_id)
+            .map(|(client, _)| Arc::clone(client))
+        else {
             return Ok(false);
         };
         client.cancel_token().cancel_query(self.tls.clone()).await?;

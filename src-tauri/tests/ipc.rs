@@ -397,6 +397,7 @@ fn schema_commands_need_an_open_connection() {
         ("database_options", json!({ "connectionId": "nope" })),
         ("list_activity", json!({ "connectionId": "nope" })),
         ("list_roles", json!({ "connectionId": "nope" })),
+        ("connection_health", json!({ "connectionId": "nope" })),
         (
             "start_backup",
             json!({ "connectionId": "nope", "request": { "toolsDir": null, "database": null,
@@ -2626,5 +2627,234 @@ fn a_backup_through_ipc_runs_on_a_read_only_connection_but_a_restore_does_not() 
         ipc.call("tool_status", json!({ "id": "nope" }))
             .unwrap_err()["code"],
         "NOT_FOUND"
+    );
+}
+
+#[test]
+fn the_connection_health_is_asked_for_through_ipc() {
+    if !dev_db_available() {
+        return;
+    }
+    let ipc = setup();
+    let id = dev_connection(&ipc, "off");
+    let health = ipc
+        .call("connection_health", json!({ "connectionId": id }))
+        .unwrap();
+    assert_eq!(health["reconnecting"], json!(false));
+    assert_eq!(health["reconnects"], json!(0));
+}
+
+#[test]
+fn connections_move_between_macs_in_a_file_without_secrets() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("connections.json");
+    let path = file.display().to_string();
+
+    let source = setup();
+    let mut prod = config("Production", "db.example.com", 5432);
+    prod["sslMode"] = json!("verify-full");
+    prod["color"] = json!("red");
+    prod["safeMode"] = json!("read-only");
+    prod["ssh"] = json!({ "host": "bastion", "port": 22, "user": "deploy",
+        "auth": { "kind": "password" }, "hasSecret": false });
+    prod["sslFiles"] = json!({ "rootCert": "/certs/ca.crt", "clientCert": "/certs/c.crt",
+        "clientKey": "/certs/c.key", "hasKeySecret": false });
+    let saved = source
+        .call(
+            "save_connection",
+            json!({ "config": prod, "password": { "kind": "set", "value": "db-pass-123" },
+                    "sshSecret": { "kind": "set", "value": "ssh-pass-456" },
+                    "sslKeySecret": { "kind": "set", "value": "key-pass-789" } }),
+        )
+        .unwrap();
+    let plain = source
+        .call(
+            "save_connection",
+            json!({ "config": config("Plain", "localhost", 5432),
+                    "password": { "kind": "keep" }, "sshSecret": null, "sslKeySecret": null }),
+        )
+        .unwrap();
+    let ids = json!([saved["id"], plain["id"]]);
+
+    // Nothing to export, an unknown connection, a relative path, a folder that isn't there.
+    for (args, code) in [
+        (json!({ "ids": [], "path": path }), "VALIDATION"),
+        (
+            json!({ "ids": ["nope"], "path": path }),
+            "CONNECTION_NOT_FOUND",
+        ),
+        (json!({ "ids": ids, "path": "relative.json" }), "VALIDATION"),
+        (
+            json!({ "ids": ids, "path": "/nonexistent-folder/x.json" }),
+            "VALIDATION",
+        ),
+    ] {
+        assert_eq!(
+            source.call("export_connections", args).unwrap_err()["code"],
+            code
+        );
+    }
+    let count = source
+        .call("export_connections", json!({ "ids": ids, "path": path }))
+        .unwrap();
+    assert_eq!(count, json!(2));
+
+    // The file holds the settings and no secret, and not the connection's id.
+    let text = std::fs::read_to_string(&file).unwrap();
+    for secret in ["db-pass-123", "ssh-pass-456", "key-pass-789"] {
+        assert!(!text.contains(secret), "{secret} is in the file");
+    }
+    assert!(!text.contains(saved["id"].as_str().unwrap()));
+    assert!(
+        text.contains("db.example.com")
+            && text.contains("bastion")
+            && text.contains("/certs/ca.crt")
+    );
+    assert!(!dir.path().join("connections.json.part").exists());
+
+    // Another Mac: read it, then import with the secrets typed there.
+    let target = setup();
+    let shown = target
+        .call("read_connection_file", json!({ "path": path }))
+        .unwrap();
+    assert_eq!(shown[0]["name"], "Production");
+    assert_eq!(
+        (
+            shown[0]["needsPassword"].clone(),
+            shown[0]["needsSshSecret"].clone(),
+            shown[0]["needsSslKeySecret"].clone()
+        ),
+        (json!(true), json!(true), json!(true))
+    );
+    assert_eq!(shown[1]["needsPassword"], json!(false));
+    assert_eq!(shown[0]["ssh"]["hasSecret"], json!(false));
+    assert_eq!(shown[0]["color"], "red");
+
+    let imported = target
+        .call(
+            "import_connections",
+            json!({ "path": path, "entries": [
+                { "index": 0, "password": "new-db-pass", "sshSecret": "new-ssh", "sslKeySecret": "new-key" },
+                { "index": 1, "password": null, "sshSecret": null, "sslKeySecret": null } ] }),
+        )
+        .unwrap();
+    let imported = imported.as_array().unwrap();
+    assert_eq!(imported.len(), 2);
+    let id = imported[0]["id"].as_str().unwrap();
+    assert_ne!(
+        imported[0]["id"], saved["id"],
+        "an import makes new connections"
+    );
+    assert_eq!(imported[0]["hasPassword"], json!(true));
+    assert_eq!(imported[0]["ssh"]["hasSecret"], json!(true));
+    assert_eq!(imported[0]["sslFiles"]["hasKeySecret"], json!(true));
+    assert_eq!(imported[1]["hasPassword"], json!(false));
+    assert_eq!(
+        target.secrets.get(id).unwrap().as_deref(),
+        Some("new-db-pass")
+    );
+    assert_eq!(
+        target.secrets.get(&format!("{id}:ssh")).unwrap().as_deref(),
+        Some("new-ssh")
+    );
+    assert_eq!(
+        target
+            .secrets
+            .get(&format!("{id}:sslkey"))
+            .unwrap()
+            .as_deref(),
+        Some("new-key")
+    );
+    assert_eq!(imported[0]["safeMode"], "read-only");
+
+    // Again: the names are taken, so they get numbers; and only the chosen one is imported.
+    let again = target
+        .call(
+            "import_connections",
+            json!({ "path": path, "entries": [{ "index": 1, "password": null, "sshSecret": null, "sslKeySecret": null }] }),
+        )
+        .unwrap();
+    assert_eq!(again[0]["name"], "Plain (2)");
+    let listed = target.call("list_connections", json!({})).unwrap();
+    assert_eq!(listed.as_array().unwrap().len(), 3);
+
+    // Files that aren't what they should be, and choices that make no sense.
+    let bad = |content: &str| {
+        let f = dir.path().join("bad.json");
+        std::fs::write(&f, content).unwrap();
+        target
+            .call(
+                "read_connection_file",
+                json!({ "path": f.display().to_string() }),
+            )
+            .unwrap_err()
+    };
+    assert!(
+        bad("not json")["message"]
+            .as_str()
+            .unwrap()
+            .contains("not a file of AngkorDB")
+    );
+    assert!(
+        bad(r#"{"kind":"other","version":1,"connections":[]}"#)["message"]
+            .as_str()
+            .unwrap()
+            .contains("not a file of AngkorDB")
+    );
+    assert!(
+        bad(r#"{"kind":"angkordb-connections","version":99,"connections":[]}"#)["message"]
+            .as_str()
+            .unwrap()
+            .contains("newer version")
+    );
+    assert!(
+        target
+            .call(
+                "read_connection_file",
+                json!({ "path": "/nonexistent/x.json" })
+            )
+            .unwrap_err()["message"]
+            .as_str()
+            .unwrap()
+            .contains("There is no file")
+    );
+    for entries in [
+        json!([]),
+        json!([{ "index": 9, "password": null, "sshSecret": null, "sslKeySecret": null }]),
+    ] {
+        assert_eq!(
+            target
+                .call(
+                    "import_connections",
+                    json!({ "path": path, "entries": entries })
+                )
+                .unwrap_err()["code"],
+            "VALIDATION"
+        );
+    }
+    // A connection with nothing to connect to is refused, by name, and the rest still stands.
+    let broken = dir.path().join("broken.json");
+    std::fs::write(
+        &broken,
+        r#"{"kind":"angkordb-connections","version":1,"connections":[
+          {"name":"Good","host":"h","port":5432,"user":"u","database":"d","sslMode":"prefer","color":"none","group":null,"safeMode":"off"},
+          {"name":"No host","host":"","port":5432,"user":"u","database":"d","sslMode":"prefer","color":"none","group":null,"safeMode":"off"}]}"#,
+    )
+    .unwrap();
+    let err = target
+        .call(
+            "import_connections",
+            json!({ "path": broken.display().to_string(), "entries": [
+                { "index": 0, "password": null, "sshSecret": null, "sslKeySecret": null },
+                { "index": 1, "password": null, "sshSecret": null, "sslKeySecret": null }] }),
+        )
+        .unwrap_err();
+    assert!(
+        err["message"].as_str().unwrap().contains("\"No host\"")
+            && err["message"]
+                .as_str()
+                .unwrap()
+                .contains("Host is required"),
+        "{err}"
     );
 }

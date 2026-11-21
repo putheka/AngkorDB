@@ -1,4 +1,4 @@
-import { DatabaseIcon, PlusIcon, SearchIcon, XIcon } from "lucide-react";
+import { DatabaseIcon, DownloadIcon, PlusIcon, SearchIcon, UploadIcon, XIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import type { ConnectionConfig } from "@/bindings";
@@ -15,6 +15,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ConnectionDialog } from "@/features/connections/ConnectionDialog";
+import { ConnectionFileDialog } from "@/features/connections/ConnectionFileDialog";
 import { HostKeyDialog } from "@/features/connections/HostKeyDialog";
 import { ConnectionRow } from "@/features/connections/ConnectionRow";
 import {
@@ -83,6 +84,7 @@ export function WelcomeScreen() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [dialog, setDialog] = useState<DialogState>(null);
   const [deleting, setDeleting] = useState<ConnectionConfig | null>(null);
+  const [fileDialog, setFileDialog] = useState<"import" | "export" | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
   const query = search.trim().toLowerCase();
@@ -122,9 +124,21 @@ export function WelcomeScreen() {
           <h1 className="text-xl font-semibold">Connections</h1>
           <p className="text-sm text-muted-foreground">Double-click a connection to open it.</p>
         </div>
-        <Button onClick={() => setDialog("new")}>
-          <PlusIcon /> New connection
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="ghost" onClick={() => setFileDialog("import")}>
+            <UploadIcon /> Import…
+          </Button>
+          <Button
+            variant="ghost"
+            disabled={connections.length === 0}
+            onClick={() => setFileDialog("export")}
+          >
+            <DownloadIcon /> Export…
+          </Button>
+          <Button onClick={() => setDialog("new")}>
+            <PlusIcon /> New connection
+          </Button>
+        </div>
       </header>
 
       {connections.length > 0 && (
@@ -198,6 +212,14 @@ export function WelcomeScreen() {
       </div>
 
       <HostKeyDialog />
+
+      {fileDialog && (
+        <ConnectionFileDialog
+          mode={fileDialog}
+          connections={connections}
+          onClose={() => setFileDialog(null)}
+        />
+      )}
 
       {dialog !== null && (
         <ConnectionDialog

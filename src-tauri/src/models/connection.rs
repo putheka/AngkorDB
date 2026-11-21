@@ -108,6 +108,16 @@ pub enum SafeMode {
     ReadOnly,
 }
 
+/// How the open connection is doing, for the status bar (ANG-48).
+#[derive(Debug, Clone, Copy, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionHealth {
+    /// A lost connection was found and the new one is not there yet.
+    pub reconnecting: bool,
+    /// How many times a lost connection has been replaced since connecting.
+    pub reconnects: u32,
+}
+
 /// What "Test SSH" found out.
 #[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]

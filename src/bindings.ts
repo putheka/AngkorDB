@@ -29,6 +29,18 @@ export const commands = {
 	setUnsavedChanges: (count: number, options?: InvokeOptions) => __TAURI_INVOKE<void>("set_unsaved_changes", { count }, options),
 	/**  Quit the app. Called by the page once the person has decided about their unsaved edits. */
 	quitApp: (options?: InvokeOptions) => __TAURI_INVOKE<void>("quit_app", undefined, options),
+	/**
+	 *  Write the chosen connections to a file: their settings, never a password, an SSH secret or a
+	 *  key passphrase. Returns how many were written.
+	 */
+	exportConnections: (ids: string[], path: string, options?: InvokeOptions) => __TAURI_INVOKE<number>("export_connections", { ids, path }, options),
+	/**  What is in a connections file, to show before importing. Nothing is saved. */
+	readConnectionFile: (path: string, options?: InvokeOptions) => __TAURI_INVOKE<SharedConnection[]>("read_connection_file", { path }, options),
+	/**
+	 *  Save the chosen connections of a file as new ones, with the secrets typed for them (kept in
+	 *  the Keychain). A name that is taken gets a number. Returns the connections that were saved.
+	 */
+	importConnections: (path: string, entries: ImportEntry[], options?: InvokeOptions) => __TAURI_INVOKE<ConnectionConfig[]>("import_connections", { path, entries }, options),
 	listConnections: (options?: InvokeOptions) => __TAURI_INVOKE<ConnectionConfig[]>("list_connections", undefined, options),
 	/**  Create (empty `config.id`) or update a connection. Returns the saved connection. */
 	saveConnection: (config: ConnectionConfig, password: PasswordChange, sshSecret: PasswordChange | null, sslKeySecret: PasswordChange | null, options?: InvokeOptions) => __TAURI_INVOKE<ConnectionConfig>("save_connection", { config, password, sshSecret, sslKeySecret }, options),
@@ -52,6 +64,12 @@ export const commands = {
 	/**  Open a saved connection (replaces an already open session of the same connection). */
 	connectConnection: (id: string, options?: InvokeOptions) => __TAURI_INVOKE<ConnectionInfo>("connect_connection", { id }, options),
 	disconnectConnection: (id: string, options?: InvokeOptions) => __TAURI_INVOKE<null>("disconnect_connection", { id }, options),
+	/**
+	 *  How the open connection is doing. Asking also checks it, if it has been idle a while, and
+	 *  replaces it when it was lost (the laptop slept, the network changed): so a connection that
+	 *  is polled this way is already back when the next query is run.
+	 */
+	connectionHealth: (connectionId: string, options?: InvokeOptions) => __TAURI_INVOKE<ConnectionHealth>("connection_health", { connectionId }, options),
 	listDatabases: (connectionId: string, options?: InvokeOptions) => __TAURI_INVOKE<DatabaseInfo[]>("list_databases", { connectionId }, options),
 	/**
 	 *  Switch the open connection to another database on the same server. Returns the new
@@ -487,6 +505,14 @@ export type ConnectionConfig = {
 	sslFiles?: SslFiles | null,
 };
 
+/**  How the open connection is doing, for the status bar (ANG-48). */
+export type ConnectionHealth = {
+	/**  A lost connection was found and the new one is not there yet. */
+	reconnecting: boolean,
+	/**  How many times a lost connection has been replaced since connecting. */
+	reconnects: number,
+};
+
 /**  Result of a successful connect or connection test. */
 export type ConnectionInfo = {
 	/**  e.g. `16.4` */
@@ -788,6 +814,15 @@ export type HistoryEntry = {
 	durationMs: number,
 	/**  The statement succeeded. */
 	ok: boolean,
+};
+
+/**  One connection of the file to import, with the secrets the person typed for it. */
+export type ImportEntry = {
+	/**  Its place in the file (0-based). */
+	index: number,
+	password: string | null,
+	sshSecret: string | null,
+	sslKeySecret: string | null,
 };
 
 export type ImportFormat = { kind: "csv"; 
@@ -1317,6 +1352,26 @@ export type SetSequence = {
 	 *  next value is `value` itself.
 	 */
 	isCalled: boolean,
+};
+
+/**  A connection as it is written in the file and shown before it is imported. */
+export type SharedConnection = {
+	name: string,
+	host: string,
+	port: number,
+	user: string,
+	database: string,
+	sslMode: SslMode,
+	color: ColorTag,
+	group: string | null,
+	safeMode: SafeMode,
+	statementTimeoutMs?: number | null,
+	ssh?: SshConfig | null,
+	sslFiles?: SslFiles | null,
+	/**  The connection had a password saved: the importer is asked for one. */
+	needsPassword?: boolean,
+	needsSshSecret?: boolean,
+	needsSslKeySecret?: boolean,
 };
 
 export type SortDir = "asc" | "desc";

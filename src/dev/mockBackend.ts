@@ -4,6 +4,7 @@
  * built and checked without the native app. State lives in memory and resets on reload.
  */
 import type {
+  SharedConnection,
   BackupRequest,
   RestoreRequest,
   ImportRequest,
@@ -237,6 +238,46 @@ function requireWritable(id: string) {
   }
 }
 
+/** What the pretend connections file holds. */
+const mockConnectionFile: SharedConnection[] = [
+  {
+    name: "Production",
+    host: "db.prod.example.com",
+    port: 5432,
+    user: "app",
+    database: "shop",
+    sslMode: "verify-full",
+    color: "red",
+    group: "Work",
+    safeMode: "read-only",
+    ssh: {
+      host: "bastion.example.com",
+      port: 22,
+      user: "deploy",
+      auth: { kind: "password" },
+      hasSecret: false,
+    },
+    sslFiles: null,
+    needsPassword: true,
+    needsSshSecret: true,
+    needsSslKeySecret: false,
+  },
+  {
+    name: "Local scratch",
+    host: "localhost",
+    port: 5433,
+    user: "postgres",
+    database: "postgres",
+    sslMode: "prefer",
+    color: "none",
+    group: null,
+    safeMode: "off",
+    needsPassword: false,
+    needsSshSecret: false,
+    needsSslKeySecret: false,
+  },
+];
+
 const handlers: Record<string, Handler> = {
   app_info: () => ({ name: "AngkorDB", version: "0.1.0 (browser mock)" }),
 
@@ -428,6 +469,41 @@ const handlers: Record<string, Handler> = {
     }
     openConnections.add(String(args["id"]));
     return { serverVersion: "16.4", latencyMs: 8 };
+  },
+
+  export_connections: (args) => {
+    const ids = args["ids"] as string[];
+    if (ids.length === 0) throw appError("VALIDATION", "Choose at least one connection.");
+    return ids.length;
+  },
+  read_connection_file: (): SharedConnection[] => structuredClone(mockConnectionFile),
+  import_connections: (args) => {
+    const entries = args["entries"] as { index: number; password: string | null }[];
+    const incoming = structuredClone(mockConnectionFile);
+    const added = entries.flatMap((entry) => {
+      const shared = incoming[entry.index];
+      if (!shared) return [];
+      const name = connections.some((c) => c.name === shared.name)
+        ? `${shared.name} (2)`
+        : shared.name;
+      const config: ConnectionConfig = {
+        ...base,
+        ...shared,
+        id: crypto.randomUUID(),
+        name,
+        group: shared.group,
+        hasPassword: !!entry.password,
+        ssh: shared.ssh ? { ...shared.ssh, hasSecret: false } : null,
+        sslFiles: null,
+      };
+      return [config];
+    });
+    connections = [...connections, ...added];
+    return added;
+  },
+  connection_health: (args) => {
+    requireOpen(String(args["connectionId"]));
+    return { reconnecting: false, reconnects: 0 };
   },
 
   disconnect_connection: (args) => {

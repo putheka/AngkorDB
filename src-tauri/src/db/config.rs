@@ -8,6 +8,9 @@ use crate::models::connection::{ConnectionConfig, SafeMode, SslMode};
 pub const APPLICATION_NAME: &str = "AngkorDB";
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const KEEPALIVE_IDLE: Duration = Duration::from_secs(60);
+const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(10);
+const KEEPALIVE_RETRIES: u32 = 3;
+const TCP_USER_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Build a driver config from saved settings. The password comes from the Keychain, never disk.
 pub fn pg_config(conn: &ConnectionConfig, password: Option<&str>) -> Config {
@@ -31,6 +34,10 @@ pub fn pg_config_via(
         .connect_timeout(CONNECT_TIMEOUT)
         .keepalives(true)
         .keepalives_idle(KEEPALIVE_IDLE)
+        .keepalives_interval(KEEPALIVE_INTERVAL)
+        .keepalives_retries(KEEPALIVE_RETRIES)
+        // Unacknowledged data for this long ends the connection: a dead network is noticed.
+        .tcp_user_timeout(TCP_USER_TIMEOUT)
         .ssl_mode(pg_ssl_mode(conn.ssl_mode));
     if tunnel_port.is_some() {
         cfg.hostaddr(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
