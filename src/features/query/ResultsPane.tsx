@@ -12,6 +12,7 @@ import { sortRows } from "@/features/query/sortRows";
 import { summarize } from "@/features/query/summarize";
 import { formatDuration } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { Shortcut } from "@/features/shortcuts/Shortcut";
 
 const number = new Intl.NumberFormat("en-US");
 
@@ -74,8 +75,14 @@ export function ResultsPane(props: ResultsPaneProps) {
         <p>{running ? "Running…" : "Results appear here."}</p>
         {!running && (
           <p className="text-xs">
-            <kbd className="font-sans">⌘↵</kbd> runs the selection or the statement at the cursor,{" "}
-            <kbd className="font-sans">⌘⇧↵</kbd> runs everything.
+            <kbd className="font-sans">
+              <Shortcut id="editor.run" />
+            </kbd>{" "}
+            runs the selection or the statement at the cursor,{" "}
+            <kbd className="font-sans">
+              <Shortcut id="editor.runAll" />
+            </kbd>{" "}
+            runs everything.
           </p>
         )}
       </div>

@@ -56,6 +56,7 @@ import {
   type RowKey,
 } from "@/features/grid/clipboard/formats";
 import { rowsFromText, type PasteColumn } from "@/features/grid/clipboard/parse";
+import { shortcutLabel } from "@/features/shortcuts/labels";
 import { gridMetrics } from "@/features/appearance/prefs";
 import { errorMessage } from "@/lib/errors";
 import { useAppearance } from "@/stores/appearance";
@@ -604,7 +605,7 @@ export function DataGrid({
       result.ignoredFields > 0 ? `${result.ignoredFields} extra fields left out` : null,
     ].filter((x): x is string => x !== null);
     setNotice(
-      `Pasted ${n === 1 ? "1 new row" : `${n} new rows`}${extras.length > 0 ? ` (${extras.join("; ")})` : ""}. Save with ⌘S.`,
+      `Pasted ${n === 1 ? "1 new row" : `${n} new rows`}${extras.length > 0 ? ` (${extras.join("; ")})` : ""}. Save with ${shortcutLabel("table.save")}.`,
     );
   };
 

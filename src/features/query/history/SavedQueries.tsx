@@ -15,6 +15,7 @@ import { openSavedQuery } from "@/features/query/history/openSavedQuery";
 import { groupByFolder, oneLine } from "@/features/query/history/historyText";
 import { useDeleteSavedQuery, useSavedQueries } from "@/features/query/history/useHistory";
 import { cn } from "@/lib/utils";
+import { Shortcut } from "@/features/shortcuts/Shortcut";
 
 /** The saved queries of the open connection, in folders. */
 export function SavedQueries({
@@ -62,7 +63,7 @@ export function SavedQueries({
         <div className="min-h-0 flex-1 overflow-y-auto pb-1">
           {queries.length === 0 && (
             <p className="px-3 py-2 text-xs text-muted-foreground">
-              Press ⌘⇧S in a query tab to save what you wrote.
+              Press <Shortcut id="query.save" /> in a query tab to save what you wrote.
             </p>
           )}
           {groups.map((group) => {

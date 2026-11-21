@@ -1,33 +1,24 @@
-import { useEffect } from "react";
-
 import { TableView } from "@/features/grid/TableView";
 import { useTableView } from "@/features/grid/tableViews";
 import { StructureView } from "@/features/structure/StructureView";
+import { useShortcut } from "@/features/shortcuts/registry";
 import { otherMode, type TableMode } from "@/features/structure/sections";
 import { cn } from "@/lib/utils";
 import type { TableTab } from "@/stores/tabs";
+import { Shortcut } from "@/features/shortcuts/Shortcut";
 
 const MODES: { id: TableMode; label: string }[] = [
   { id: "data", label: "Data" },
   { id: "structure", label: "Structure" },
 ];
 
-/** A table tab: its rows, or how it is built, with the switch at the bottom (⌘⌥] and ⌘⌥[). */
+/** A table tab: its rows, or how it is built, with the switch at the bottom. */
 export function TableTabView({ connectionId, tab }: { connectionId: string; tab: TableTab }) {
   const { view, update } = useTableView(tab.id);
   const mode = view.mode;
 
-  // ⇧⌘[ and ⇧⌘] cycle the tabs, so these use ⌥ instead of ⇧. `code`: ⌥] types something else.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.defaultPrevented || !e.metaKey || !e.altKey || e.ctrlKey || e.shiftKey) return;
-      if (e.code !== "BracketRight" && e.code !== "BracketLeft") return;
-      e.preventDefault();
-      update({ mode: otherMode(mode) });
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [mode, update]);
+  // Rows or structure. Its keys use ⌥, since ⇧⌘[ and ⇧⌘] cycle the tabs.
+  useShortcut("table.mode", () => update({ mode: otherMode(mode) }));
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -65,7 +56,9 @@ export function TableTabView({ connectionId, tab }: { connectionId: string; tab:
             {label}
           </button>
         ))}
-        <span className="ml-auto text-[11px] text-muted-foreground">⌘⌥] switches</span>
+        <span className="ml-auto text-[11px] text-muted-foreground">
+          <Shortcut id="table.mode" /> switches
+        </span>
       </div>
     </div>
   );

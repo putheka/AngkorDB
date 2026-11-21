@@ -6,6 +6,7 @@ import { TableTabView } from "@/features/structure/TableTabView";
 import { QueryView } from "@/features/query/QueryView";
 import { useSessionStore } from "@/stores/session";
 import { useTabsStore } from "@/stores/tabs";
+import { Shortcut } from "@/features/shortcuts/Shortcut";
 
 /** The main pane: whatever the front tab shows. */
 export function ConnectedView() {
@@ -18,7 +19,11 @@ export function ConnectedView() {
         <TableIcon className="size-8 opacity-40" />
         <p className="text-sm">No tab open</p>
         <p className="text-xs">
-          Pick a table in the sidebar, or press <kbd className="font-sans">⌘T</kbd> for a new query.
+          Pick a table in the sidebar, or press{" "}
+          <kbd className="font-sans">
+            <Shortcut id="tabs.new" />
+          </kbd>{" "}
+          for a new query.
         </p>
       </div>
     );

@@ -27,6 +27,7 @@ import {
   highlightActiveLineGutter,
   keymap,
   lineNumbers,
+  type KeyBinding,
   rectangularSelection,
   type DecorationSet,
 } from "@codemirror/view";
@@ -36,10 +37,46 @@ import type { SchemaIndex } from "@/features/query/completion/suggest";
 import { editorTheme, highlightStyle } from "@/features/query/editorTheme";
 import { FormatError, formatSql } from "@/features/query/format";
 import { FONT_CHOICES } from "@/features/query/prefs";
+import { bindingsOf } from "@/features/shortcuts/bindings";
+import { COMMANDS } from "@/features/shortcuts/commands";
+import { toCodeMirrorKey } from "@/features/shortcuts/keys";
+import { useShortcuts } from "@/stores/shortcuts";
 import { useEditorPrefs } from "@/stores/editorPrefs";
 import { useEffect, useImperativeHandle, useRef, type CSSProperties, type Ref } from "react";
 
 export type RunMode = "current" | "all";
+
+/**
+ * The editor's own commands on the keys the registry says (`commands.ts`), above everything
+ * else, vim included.
+ */
+function appKeymap(
+  runKey: (mode: RunMode) => () => boolean,
+  formatRef: { current: () => void },
+): Extension {
+  const handlers: Record<string, (view: EditorView) => boolean> = {
+    "editor.run": runKey("current"),
+    "editor.runAll": runKey("all"),
+    "editor.format": () => {
+      formatRef.current();
+      return true;
+    },
+    "editor.comment": toggleComment,
+    "editor.duplicateLine": copyLineDown,
+    "editor.selectNext": selectNextOccurrence,
+  };
+  const { overrides } = useShortcuts.getState();
+  const bindings: KeyBinding[] = [];
+  for (const def of COMMANDS) {
+    const run = handlers[def.id];
+    if (!run) continue;
+    for (const chord of bindingsOf(def, overrides)) {
+      const key = toCodeMirrorKey(chord);
+      if (key) bindings.push({ key, run, preventDefault: true });
+    }
+  }
+  return Prec.highest(keymap.of(bindings));
+}
 
 /** What the tab around the editor can ask of it. */
 export interface SqlEditorHandle {
@@ -133,6 +170,7 @@ export function SqlEditor({
     numbers: new Compartment(),
     wrap: new Compartment(),
     tabs: new Compartment(),
+    shortcuts: new Compartment(),
   });
 
   /** Format the selection, or all of the text; the cursor stays about where it was. */
@@ -235,24 +273,8 @@ export function SqlEditor({
         errorMarks,
         editorTheme,
         // The app's own shortcuts come before vim, which would swallow ⌘-keys in normal mode.
-        Prec.highest(
-          keymap.of([
-            { key: "Mod-Enter", run: runKey("current"), preventDefault: true },
-            { key: "Mod-Shift-Enter", run: runKey("all"), preventDefault: true },
-            {
-              key: "Mod-Shift-f",
-              run: () => {
-                formatRef.current();
-                return true;
-              },
-              preventDefault: true,
-            },
-            { key: "Mod-/", run: toggleComment, preventDefault: true },
-            // ⌥⇧↓ copies a line down (default keymap), so does ⌘⇧D.
-            { key: "Mod-Shift-d", run: copyLineDown, preventDefault: true },
-            { key: "Mod-d", run: selectNextOccurrence, preventDefault: true },
-          ]),
-        ),
+        // Their keys are the registry's, so changing one applies to the open editors too.
+        parts.current.shortcuts.of(appKeymap(runKey, formatRef)),
         keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) callbacks.current.onTextChange(update.state.doc.toString());
@@ -272,6 +294,20 @@ export function SqlEditor({
     // Created once per mount. The text and selection it starts with are the saved ones.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Shortcuts the person changes while the editor is open.
+  const overrides = useShortcuts((s) => s.overrides);
+  useEffect(() => {
+    const editor = view.current;
+    if (!editor) return;
+    const runKey = (mode: RunMode) => () => {
+      callbacks.current.onRun(mode);
+      return true;
+    };
+    editor.dispatch({
+      effects: parts.current.shortcuts.reconfigure(appKeymap(runKey, formatRef)),
+    });
+  }, [overrides]);
 
   // Preferences that change while the editor is open.
   useEffect(() => {

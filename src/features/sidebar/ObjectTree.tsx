@@ -33,6 +33,8 @@ import {
 import { EnumDialog } from "@/features/objects/EnumDialog";
 import { SequenceDialog } from "@/features/objects/SequenceDialog";
 import { openSavedQuery } from "@/features/query/history/openSavedQuery";
+import { useShortcutLabel } from "@/features/shortcuts/labels";
+import { useShortcut } from "@/features/shortcuts/registry";
 import { commands } from "@/lib/ipc";
 import { useBackupDialog } from "@/stores/backupDialog";
 import { useImportDialog } from "@/stores/importDialog";
@@ -51,6 +53,7 @@ import {
 } from "@/features/sidebar/useSchema";
 import { errorMessage } from "@/lib/errors";
 import { tableTabId, useTabsStore } from "@/stores/tabs";
+import { Shortcut } from "@/features/shortcuts/Shortcut";
 
 const ROW_HEIGHT = 26;
 
@@ -82,6 +85,18 @@ export function ObjectTree({ connectionId }: { connectionId: string }) {
       .catch((error: unknown) => setProblem(errorMessage(error)));
   };
   const inputRef = useRef<HTMLInputElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const filterKey = useShortcutLabel("sidebar.filter");
+  // While the focus is in the sidebar its search takes the keys that filter the table elsewhere.
+  useShortcut(
+    "sidebar.filter",
+    (e) => {
+      if (!(e?.target instanceof Node) || !rootRef.current?.contains(e.target)) return false;
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    },
+    { priority: 10 },
+  );
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const activeId = useTabsStore((s) => s.activeId);
@@ -168,17 +183,7 @@ export function ObjectTree({ connectionId }: { connectionId: string }) {
   const loadError = objects.error ?? databases.error;
 
   return (
-    <div
-      className="flex min-h-0 flex-1 flex-col"
-      onKeyDown={(e) => {
-        // ⌘F while the sidebar has focus jumps to the filter.
-        if (e.metaKey && e.key === "f") {
-          e.preventDefault();
-          inputRef.current?.focus();
-          inputRef.current?.select();
-        }
-      }}
-    >
+    <div ref={rootRef} className="flex min-h-0 flex-1 flex-col">
       <div className="flex flex-col gap-1.5 border-b border-sidebar-border p-2">
         <Select
           value={currentDatabase ?? ""}
@@ -276,7 +281,9 @@ export function ObjectTree({ connectionId }: { connectionId: string }) {
                 <RefreshCwIcon className={objects.isFetching ? "animate-spin" : undefined} />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Refresh (⌘R)</TooltipContent>
+            <TooltipContent>
+              Refresh (<Shortcut id="app.reload" />)
+            </TooltipContent>
           </Tooltip>
         </div>
 
@@ -289,7 +296,7 @@ export function ObjectTree({ connectionId }: { connectionId: string }) {
             value={query}
             onChange={(e) => changeQuery(e.target.value)}
             onKeyDown={onNavKey}
-            placeholder="Filter (⌘F)"
+            placeholder={`Filter (${filterKey})`}
             aria-label="Filter objects"
             spellCheck={false}
             autoComplete="off"

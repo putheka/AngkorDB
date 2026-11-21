@@ -3,6 +3,7 @@ import { AlertTriangleIcon, XIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { SaveNotice } from "@/features/structure/edit/structureEditStore";
 import { errorDetails, errorMessage } from "@/lib/errors";
+import { Shortcut } from "@/features/shortcuts/Shortcut";
 
 interface Props {
   summary: string;
@@ -34,7 +35,13 @@ export function StructurePendingBar({
             Preview SQL
           </Button>
           <Button size="xs" onClick={onSave} disabled={saving || problems.length > 0}>
-            {saving ? "Saving…" : "Save (⌘S)"}
+            {saving ? (
+              "Saving…"
+            ) : (
+              <>
+                Save (<Shortcut id="structure.save" />)
+              </>
+            )}
           </Button>
           <Button size="xs" variant="ghost" onClick={onDiscard} disabled={saving}>
             Discard

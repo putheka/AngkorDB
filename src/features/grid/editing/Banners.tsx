@@ -3,6 +3,7 @@ import { LockIcon, PencilIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { describePending, type PendingSummary } from "@/features/grid/editing/changes";
 import { errorDetails, errorMessage } from "@/lib/errors";
+import { Shortcut } from "@/features/shortcuts/Shortcut";
 
 /** Why this table can't be edited. */
 export function ReadOnlyBanner({ reason }: { reason: string }) {
@@ -46,15 +47,21 @@ export function PendingBar({
         <div className="ml-auto flex items-center gap-1">
           <Button size="xs" variant="ghost" disabled={committing} onClick={onPreview}>
             Preview SQL
-            <kbd className="ml-1 text-[10px] opacity-60">⇧⌘P</kbd>
+            <kbd className="ml-1 text-[10px] opacity-60">
+              <Shortcut id="table.preview" />
+            </kbd>
           </Button>
           <Button size="xs" variant="ghost" disabled={committing} onClick={onDiscard}>
             Discard
-            <kbd className="ml-1 text-[10px] opacity-60">⇧⌘⌫</kbd>
+            <kbd className="ml-1 text-[10px] opacity-60">
+              <Shortcut id="table.discard" />
+            </kbd>
           </Button>
           <Button size="xs" disabled={committing} onClick={onCommit}>
             {committing ? "Saving…" : "Commit"}
-            <kbd className="ml-1 text-[10px] opacity-70">⌘S</kbd>
+            <kbd className="ml-1 text-[10px] opacity-70">
+              <Shortcut id="table.save" />
+            </kbd>
           </Button>
         </div>
       </div>

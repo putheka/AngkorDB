@@ -30,11 +30,13 @@ import { pickTab } from "@/features/query/resultTabs";
 import { ExportDialog } from "@/features/export/ExportDialog";
 import { ResultsPane } from "@/features/query/ResultsPane";
 import { SqlEditor, type RunMode, type SqlEditorHandle } from "@/features/query/SqlEditor";
+import { useShortcut } from "@/features/shortcuts/registry";
 import { errorMessage } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 import { commands } from "@/lib/ipc";
 import { useStatusStore } from "@/stores/status";
 import type { QueryTab } from "@/stores/tabs";
+import { Shortcut } from "@/features/shortcuts/Shortcut";
 
 const MIN_EDITOR = 96;
 const MIN_RESULTS = 120;
@@ -213,30 +215,9 @@ export function QueryView({ connectionId, tab }: { connectionId: string; tab: Qu
     });
   }, [update]);
 
-  // ⌘⇧S saves the query, wherever the focus is.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.metaKey && e.shiftKey && !e.altKey && !e.ctrlKey && e.code === "KeyS") {
-        e.preventDefault();
-        saveQuery();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [saveQuery]);
-
-  // ⌘. stops what is running, wherever the focus is (the editor included).
-  useEffect(() => {
-    if (!view.running) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.metaKey && !e.shiftKey && !e.altKey && !e.ctrlKey && e.code === "Period") {
-        e.preventDefault();
-        stop();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [view.running, stop]);
+  // Save the query, and stop what is running: wherever the focus is (the editor included).
+  useShortcut("query.save", () => saveQuery());
+  useShortcut("query.stop", () => stop(), { enabled: view.running });
 
   // Elapsed time while a statement runs.
   const [now, setNow] = useState(() => Date.now());
@@ -331,7 +312,9 @@ export function QueryView({ connectionId, tab }: { connectionId: string; tab: Qu
                 <SquareIcon /> Stop
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Stop the running statement (⌘.)</TooltipContent>
+            <TooltipContent>
+              Stop the running statement (<Shortcut id="query.stop" />)
+            </TooltipContent>
           </Tooltip>
         ) : (
           <Tooltip>
@@ -340,7 +323,9 @@ export function QueryView({ connectionId, tab }: { connectionId: string; tab: Qu
                 <PlayIcon /> Run
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Run the selection or the statement at the cursor (⌘↵)</TooltipContent>
+            <TooltipContent>
+              Run the selection or the statement at the cursor (<Shortcut id="editor.run" />)
+            </TooltipContent>
           </Tooltip>
         )}
         <Tooltip>
@@ -354,7 +339,9 @@ export function QueryView({ connectionId, tab }: { connectionId: string; tab: Qu
               Run all
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Run every statement in the editor (⌘⇧↵)</TooltipContent>
+          <TooltipContent>
+            Run every statement in the editor (<Shortcut id="editor.runAll" />)
+          </TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
@@ -401,7 +388,9 @@ export function QueryView({ connectionId, tab }: { connectionId: string; tab: Qu
               <WandSparklesIcon /> Format
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Format the selection, or all of it (⌘⇧F)</TooltipContent>
+          <TooltipContent>
+            Format the selection, or all of it (<Shortcut id="editor.format" />)
+          </TooltipContent>
         </Tooltip>
         <EditorSettingsMenu />
         <Tooltip>
@@ -424,7 +413,9 @@ export function QueryView({ connectionId, tab }: { connectionId: string; tab: Qu
               <BookmarkPlusIcon />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Save the query: the selection, or all of it (⌘⇧S)</TooltipContent>
+          <TooltipContent>
+            Save the query: the selection, or all of it (<Shortcut id="query.save" />)
+          </TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>

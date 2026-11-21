@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 import type { StructureColumn, TableStructure } from "@/bindings";
 import { Button } from "@/components/ui/button";
@@ -45,6 +45,7 @@ import {
 } from "@/features/structure/ObjectTables";
 import { SECTION_LABELS, SECTIONS, type Section } from "@/features/structure/sections";
 import { errorMessage } from "@/lib/errors";
+import { useShortcut } from "@/features/shortcuts/registry";
 import { commands } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
 import type { TableTab } from "@/stores/tabs";
@@ -136,21 +137,17 @@ export function StructureView({ connectionId, tab, section, onSection }: Props) 
     tab,
   ]);
 
-  // ⌘S saves what is staged.
-  useEffect(() => {
-    if (!editable || staged === 0) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.defaultPrevented || !e.metaKey || e.shiftKey || e.altKey || e.ctrlKey) return;
-      if (e.code !== "KeyS") return;
-      e.preventDefault();
+  // Saves what is staged.
+  useShortcut(
+    "structure.save",
+    () => {
       // An open cell editor holds an edit that is not staged yet: closing it stages it.
       const active = document.activeElement;
       if (active instanceof HTMLInputElement) active.blur();
       void save();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [editable, staged, save]);
+    },
+    { enabled: editable && staged > 0 },
+  );
 
   if (structure.isPending) {
     return <p className="p-6 text-center text-sm text-muted-foreground">Loading…</p>;

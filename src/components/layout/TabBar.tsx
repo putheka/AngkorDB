@@ -22,6 +22,7 @@ import {
 import { qualifiedName } from "@/lib/sql";
 import { cn } from "@/lib/utils";
 import { tabTitle, useTabsStore, type Tab } from "@/stores/tabs";
+import { Shortcut } from "@/features/shortcuts/Shortcut";
 
 /** Pointer travel before a press on a tab turns into a drag. */
 const DRAG_THRESHOLD = 5;
@@ -121,7 +122,9 @@ export function TabBar() {
             <PlusIcon />
           </Button>
         </TooltipTrigger>
-        <TooltipContent>New query tab (⌘T)</TooltipContent>
+        <TooltipContent>
+          New query tab (<Shortcut id="tabs.new" />)
+        </TooltipContent>
       </Tooltip>
     </nav>
   );
@@ -199,7 +202,10 @@ function TabItem({ tab, active, dragging, ...handlers }: TabItemProps) {
       <ContextMenuContent>
         {tab.preview && <ContextMenuItem onSelect={() => pin(tab.id)}>Keep open</ContextMenuItem>}
         <ContextMenuItem onSelect={() => void closeTab(tab.id)}>
-          Close <ContextMenuShortcut>⌘W</ContextMenuShortcut>
+          Close{" "}
+          <ContextMenuShortcut>
+            <Shortcut id="tabs.close" />
+          </ContextMenuShortcut>
         </ContextMenuItem>
         <ContextMenuItem disabled={count < 2} onSelect={() => void closeOtherTabs(tab.id)}>
           Close others

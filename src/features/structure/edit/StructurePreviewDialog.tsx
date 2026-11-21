@@ -14,6 +14,7 @@ import {
 import { SqlText } from "@/features/query/SqlText";
 import { errorMessage } from "@/lib/errors";
 import { commands } from "@/lib/ipc";
+import { Shortcut } from "@/features/shortcuts/Shortcut";
 
 interface Props {
   connectionId: string;
@@ -95,7 +96,7 @@ export function StructurePreviewDialog({
             Close
           </Button>
           <Button onClick={onSave} disabled={saving || !preview.data}>
-            Save (⌘S)
+            Save (<Shortcut id="structure.save" />)
           </Button>
         </DialogFooter>
       </DialogContent>

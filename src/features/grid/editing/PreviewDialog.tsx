@@ -13,6 +13,7 @@ import {
 import { SqlText } from "@/features/query/SqlText";
 import { errorMessage } from "@/lib/errors";
 import { commands } from "@/lib/ipc";
+import { Shortcut } from "@/features/shortcuts/Shortcut";
 
 interface PreviewDialogProps {
   open: boolean;
@@ -87,7 +88,9 @@ export function PreviewDialog({
           </Button>
           <Button disabled={!preview.data || committing} onClick={onCommit}>
             {committing ? "Saving…" : "Commit"}
-            <kbd className="ml-1 text-[10px] opacity-70">⌘S</kbd>
+            <kbd className="ml-1 text-[10px] opacity-70">
+              <Shortcut id="table.save" />
+            </kbd>
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -31,6 +31,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { orderedNames, type ColumnLayout } from "@/features/grid/columns";
 import { PAGE_SIZES } from "@/features/grid/tableViews";
 import { formatCompact } from "@/lib/format";
+import { Shortcut } from "@/features/shortcuts/Shortcut";
 
 const number = new Intl.NumberFormat("en-US");
 
@@ -141,7 +142,9 @@ export function GridFooter(props: GridFooterProps) {
                 Row
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Add a row (⌘I)</TooltipContent>
+            <TooltipContent>
+              Add a row (<Shortcut id="table.addRow" />)
+            </TooltipContent>
           </Tooltip>
         )}
         <Tooltip>
@@ -225,7 +228,9 @@ export function GridFooter(props: GridFooterProps) {
               <RefreshCwIcon className={props.fetching ? "animate-spin" : undefined} />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Reload rows (⌘R)</TooltipContent>
+          <TooltipContent>
+            Reload rows (<Shortcut id="app.reload" />)
+          </TooltipContent>
         </Tooltip>
       </div>
     </footer>

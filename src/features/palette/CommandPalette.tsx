@@ -22,19 +22,16 @@ import {
 import { openObject } from "@/features/palette/openObject";
 import { useRecents } from "@/features/palette/recents";
 import { useAllObjects } from "@/features/palette/useAllObjects";
-import { refreshData } from "@/features/grid/useTableData";
 import { Highlighted } from "@/features/sidebar/Highlighted";
 import { OBJECT_ICONS } from "@/features/sidebar/objectIcons";
-import {
-  refreshSchema,
-  useCurrentSchema,
-  useDatabases,
-  useSwitchDatabase,
-} from "@/features/sidebar/useSchema";
+import { useCurrentSchema, useDatabases, useSwitchDatabase } from "@/features/sidebar/useSchema";
 import { errorMessage } from "@/lib/errors";
 import { useBrowserStore } from "@/stores/browser";
-import { useLayoutStore } from "@/stores/layout";
+import { COMMANDS } from "@/features/shortcuts/commands";
+import { shortcutLabel } from "@/features/shortcuts/labels";
+import { isAvailable, runCommand } from "@/features/shortcuts/registry";
 import { usePaletteStore, type PaletteMode } from "@/stores/palette";
+import { useShortcuts } from "@/stores/shortcuts";
 import { useSessionStore } from "@/stores/session";
 import { useBackupDialog } from "@/stores/backupDialog";
 import { useImportDialog } from "@/stores/importDialog";
@@ -109,7 +106,11 @@ function PaletteBody({ mode, connectionId }: { mode: PaletteMode; connectionId: 
         <span>↑↓ move</span>
         <span>↵ {mode === "objects" ? "open" : "run"}</span>
         <span>esc close</span>
-        <span className="ml-auto">{mode === "objects" ? "⌘K commands" : "⌘P objects"}</span>
+        <span className="ml-auto">
+          {mode === "objects"
+            ? `${shortcutLabel("app.commands")} commands`
+            : `${shortcutLabel("app.find")} objects`}
+        </span>
       </div>
     </Command>
   );
@@ -230,16 +231,9 @@ function CommandResults({
   const { schema: currentSchema, schemas } = useCurrentSchema(connectionId);
   const { data: connections = [] } = useConnections();
   const switchDatabase = useSwitchDatabase(connectionId);
-  const sidebarCollapsed = useLayoutStore((s) => s.sidebarCollapsed);
+  const overrides = useShortcuts((s) => s.overrides);
 
   const entries: Entry[] = [
-    {
-      id: "new-query",
-      group: "Commands",
-      label: "New query tab",
-      shortcut: "⌘T",
-      run: () => useTabsStore.getState().newQuery(),
-    },
     {
       id: "activity",
       group: "Commands",
@@ -266,28 +260,20 @@ function CommandResults({
       run: () => useTabsStore.getState().openRoles(),
     },
     {
-      id: "reload",
-      group: "Commands",
-      label: "Reload schema and rows",
-      shortcut: "⌘R",
-      run: () => {
-        void refreshSchema(connectionId);
-        void refreshData(connectionId);
-      },
-    },
-    {
-      id: "sidebar",
-      group: "Commands",
-      label: sidebarCollapsed ? "Show sidebar" : "Hide sidebar",
-      shortcut: "⌘0",
-      run: () => useLayoutStore.getState().toggleSidebar(),
-    },
-    {
       id: "disconnect",
       group: "Commands",
       label: "Disconnect",
       run: () => void useSessionStore.getState().disconnect(),
     },
+    // Every command with a key that is open right now (a table's "Save changes" only while a
+    // table is in front), under the name and keys of the shortcuts window.
+    ...COMMANDS.filter((c) => !c.hidden && isAvailable(c.id)).map((c): Entry => ({
+      id: `command:${c.id}`,
+      group: "Commands",
+      label: c.title,
+      shortcut: shortcutLabel(c.id, overrides),
+      run: () => void runCommand(c.id),
+    })),
     ...(databases.data ?? []).map((d): Entry => ({
       id: `db:${d.name}`,
       group: "Databases",
@@ -339,6 +325,13 @@ function CommandResults({
   // Choosing closes the palette, except a database switch, which closes itself when it is done.
   const choose = (entry: Entry) => {
     onError(null);
+    // A command with keys may open a window of its own (or this palette in another mode): it
+    // runs once this one is closed.
+    if (entry.id.startsWith("command:")) {
+      close();
+      entry.run();
+      return;
+    }
     entry.run();
     if (!entry.id.startsWith("db:") || entry.current) close();
   };

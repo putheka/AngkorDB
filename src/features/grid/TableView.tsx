@@ -55,6 +55,7 @@ import {
   useTableRows,
 } from "@/features/grid/useTableData";
 import { errorDetails, errorMessage } from "@/lib/errors";
+import { useShortcut } from "@/features/shortcuts/registry";
 import { commands } from "@/lib/ipc";
 import { useLayoutStore } from "@/stores/layout";
 import { useStatusStore } from "@/stores/status";
@@ -348,46 +349,29 @@ export function TableView({ connectionId, tab }: { connectionId: string; tab: Ta
     if (!committingRef.current) resetCommit();
   }, [changes, resetCommit]);
 
-  // ⌘S writes, ⇧⌘P shows the SQL, ⇧⌘⌫ throws the edits away.
-  useEffect(() => {
-    const staged = () => summarize(useChangesStore.getState().byTab[tab.id] ?? EMPTY_CHANGES).total;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.defaultPrevented || !e.metaKey || e.altKey || e.ctrlKey) return;
-      const typing =
-        e.target instanceof HTMLElement &&
-        (e.target.isContentEditable || /^(INPUT|TEXTAREA)$/.test(e.target.tagName));
-      if (e.code === "KeyS" && !e.shiftKey) {
-        e.preventDefault();
-        // An open cell editor holds an edit that isn't staged yet: closing it stages it.
-        const active = document.activeElement;
-        if (active instanceof HTMLElement && active.closest("[data-cell-editor]")) active.blur();
-        if (staged() > 0 && !committing) void requestCommit();
-      } else if (e.code === "KeyP" && e.shiftKey) {
-        e.preventDefault();
-        if (staged() > 0) setPreviewOpen(true);
-      } else if (e.code === "Backspace" && e.shiftKey && !typing) {
-        e.preventDefault();
-        useChangesStore.getState().discard(tab.id);
-        setPreviewOpen(false);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [tab.id, committing, requestCommit]);
+  // Save writes, the preview shows the SQL, discard throws the edits away (keys: `commands.ts`).
+  const staged = () => summarize(useChangesStore.getState().byTab[tab.id] ?? EMPTY_CHANGES).total;
+  useShortcut("table.save", () => {
+    // An open cell editor holds an edit that isn't staged yet: closing it stages it.
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && active.closest("[data-cell-editor]")) active.blur();
+    if (staged() > 0 && !committing) void requestCommit();
+  });
+  useShortcut("table.preview", () => {
+    if (staged() > 0) setPreviewOpen(true);
+  });
+  useShortcut("table.discard", (e) => {
+    const typing =
+      e?.target instanceof HTMLElement &&
+      (e.target.isContentEditable || /^(INPUT|TEXTAREA)$/.test(e.target.tagName));
+    if (typing) return false;
+    useChangesStore.getState().discard(tab.id);
+    setPreviewOpen(false);
+  });
 
-  // ⌘I adds a row at the top.
+  // Add a row at the top.
   const addRow = editing?.onAddRow;
-  useEffect(() => {
-    if (!addRow) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.defaultPrevented || !e.metaKey || e.shiftKey || e.altKey || e.ctrlKey) return;
-      if (e.code !== "KeyI") return;
-      e.preventDefault();
-      addRow();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [addRow]);
+  useShortcut("table.addRow", () => addRow?.(), { enabled: Boolean(addRow) });
 
   // The columns come from the catalog, so the bar works even when the rows failed to load.
   const filterColumns = (described.data?.columns ?? page?.columns ?? []).map((c) => ({
@@ -403,17 +387,8 @@ export function TableView({ connectionId, tab }: { connectionId: string; tab: Ta
   const closeFilter = () => update({ filter: { ...filter, open: false } });
   const applyFilter = (next: FilterState) => update({ filter: next, page: 0 });
 
-  // ⌘F opens the bar. The sidebar's own ⌘F (focus in the sidebar) has already claimed the key.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.defaultPrevented || !e.metaKey || e.shiftKey || e.altKey || e.ctrlKey) return;
-      if (e.code !== "KeyF") return;
-      e.preventDefault();
-      openFilter();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [openFilter]);
+  // Opens the bar. The sidebar's own search has the same keys when the focus is there.
+  useShortcut("table.filter", () => openFilter());
 
   let body;
   if (rows.isPending) {

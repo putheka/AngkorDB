@@ -1,5 +1,4 @@
-import { PanelLeftIcon } from "lucide-react";
-import { useEffect } from "react";
+import { KeyboardIcon, PanelLeftIcon } from "lucide-react";
 
 import { Sidebar } from "@/components/layout/Sidebar";
 import { StatusBar } from "@/components/layout/StatusBar";
@@ -8,6 +7,9 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AppearanceMenu } from "@/features/appearance/AppearanceMenu";
 import { useTabShortcuts } from "@/features/tabs/useTabShortcuts";
+import { ShortcutsDialog } from "@/features/shortcuts/ShortcutsDialog";
+import { Shortcut } from "@/features/shortcuts/Shortcut";
+import { useShortcut, useShortcutDispatcher } from "@/features/shortcuts/registry";
 import { useWorkspacePersistence } from "@/features/workspace/useWorkspacePersistence";
 import { refreshData } from "@/features/grid/useTableData";
 import { refreshSchema } from "@/features/sidebar/useSchema";
@@ -20,6 +22,7 @@ import { WriteApprovalDialog } from "@/features/safety/WriteApprovalDialog";
 import { useLayoutStore } from "@/stores/layout";
 import { usePaletteStore } from "@/stores/palette";
 import { useSessionStore } from "@/stores/session";
+import { useShortcuts } from "@/stores/shortcuts";
 
 /** Window layout: title bar · (welcome screen | sidebar + tabs) · status bar. */
 export function AppShell() {
@@ -32,26 +35,25 @@ export function AppShell() {
   useUnsavedSync();
   useWorkspacePersistence();
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (!connected || !e.metaKey) return;
-      // ⌘P finds an object, ⌘K runs a command. `code`, so other keyboard layouts work too.
-      if (!e.shiftKey && !e.altKey && !e.ctrlKey && (e.code === "KeyP" || e.code === "KeyK")) {
-        e.preventDefault();
-        usePaletteStore.getState().toggle(e.code === "KeyP" ? "objects" : "commands");
-      } else if (e.key === "0") {
-        e.preventDefault();
-        toggleSidebar();
-      } else if (e.key === "r" && activeId) {
-        // Also stops the webview from reloading the whole app.
-        e.preventDefault();
-        void refreshSchema(activeId);
-        void refreshData(activeId);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [connected, activeId, toggleSidebar]);
+  useShortcutDispatcher();
+  useShortcut("app.find", () => usePaletteStore.getState().toggle("objects"), {
+    enabled: connected,
+  });
+  useShortcut("app.commands", () => usePaletteStore.getState().toggle("commands"), {
+    enabled: connected,
+  });
+  useShortcut("app.sidebar", () => toggleSidebar(), { enabled: connected });
+  // Also stops the webview from reloading the whole app.
+  useShortcut(
+    "app.reload",
+    () => {
+      if (!activeId) return false;
+      void refreshSchema(activeId);
+      void refreshData(activeId);
+    },
+    { enabled: connected },
+  );
+  useShortcut("app.shortcuts", () => useShortcuts.getState().toggleDialog());
 
   return (
     <div className="flex h-full flex-col">
@@ -73,12 +75,29 @@ export function AppShell() {
                 <PanelLeftIcon />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>{sidebarCollapsed ? "Show" : "Hide"} sidebar (⌘0)</TooltipContent>
+            <TooltipContent>
+              {sidebarCollapsed ? "Show" : "Hide"} sidebar (<Shortcut id="app.sidebar" />)
+            </TooltipContent>
           </Tooltip>
         )}
         {/* Not a click target, so a press on the title still drags the window. */}
         <span className="pointer-events-none">AngkorDB</span>
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-1">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Keyboard shortcuts"
+                onClick={() => useShortcuts.getState().openDialog()}
+              >
+                <KeyboardIcon />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              Keyboard shortcuts (<Shortcut id="app.shortcuts" />)
+            </TooltipContent>
+          </Tooltip>
           <AppearanceMenu />
         </div>
       </header>
@@ -102,6 +121,7 @@ export function AppShell() {
       {activeId && <CommandPalette connectionId={activeId} />}
       <UnsavedChangesDialog />
       <WriteApprovalDialog />
+      <ShortcutsDialog />
       <StatusBar />
     </div>
   );

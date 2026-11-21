@@ -2,6 +2,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useEffect } from "react";
 
+import { useShortcut } from "@/features/shortcuts/registry";
 import { closeTab } from "@/features/tabs/closeTabs";
 import { useTabsStore } from "@/stores/tabs";
 
@@ -30,7 +31,7 @@ export function closeFrontTabOrWindow() {
   }
 }
 
-/** ⌘T new query · ⌘W close · ⌘1–9 jump (⌘9 = last) · ⌃Tab and ⌘⇧[ ⌘⇧] cycle. */
+/** New query, close, jump to a tab (the last one for 9) and cycle: see `commands.ts` for the keys. */
 export function useTabShortcuts(enabled: boolean) {
   useEffect(() => {
     // ⌘W arrives as a menu event in the app (the menu owns that key), as a keydown in a browser.
@@ -45,37 +46,21 @@ export function useTabShortcuts(enabled: boolean) {
     };
   }, []);
 
-  useEffect(() => {
-    if (!enabled) return;
-    const onKey = (e: KeyboardEvent) => {
-      const tabs = useTabsStore.getState();
-
-      if (e.ctrlKey && !e.metaKey && !e.altKey && e.key === "Tab") {
-        e.preventDefault();
-        tabs.cycle(e.shiftKey ? -1 : 1);
-        return;
-      }
-      if (!e.metaKey || e.ctrlKey || e.altKey) return;
-
-      // `code`, not `key`: ⇧[ types "{" on a US keyboard and something else elsewhere.
-      if (e.shiftKey && (e.code === "BracketLeft" || e.code === "BracketRight")) {
-        e.preventDefault();
-        tabs.cycle(e.code === "BracketRight" ? 1 : -1);
-      } else if (e.shiftKey) {
-        return;
-      } else if (e.code === "KeyT") {
-        e.preventDefault();
-        tabs.newQuery();
-      } else if (e.code === "KeyW") {
-        e.preventDefault();
-        closeFrontTabOrWindow();
-      } else if (/^Digit[1-9]$/.test(e.code)) {
-        e.preventDefault();
-        const n = Number(e.code.slice(5));
+  const on = { enabled };
+  useShortcut("tabs.new", () => useTabsStore.getState().newQuery(), on);
+  useShortcut("tabs.close", () => closeFrontTabOrWindow(), on);
+  useShortcut("tabs.next", () => useTabsStore.getState().cycle(1), on);
+  useShortcut("tabs.previous", () => useTabsStore.getState().cycle(-1), on);
+  for (let n = 1; n <= 9; n++) {
+    // The count of commands is fixed, so the hooks always run in the same order.
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    useShortcut(
+      `tabs.goto.${n}`,
+      () => {
+        const tabs = useTabsStore.getState();
         tabs.activateIndex(n === 9 ? tabs.tabs.length - 1 : n - 1);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [enabled]);
+      },
+      on,
+    );
+  }
 }
