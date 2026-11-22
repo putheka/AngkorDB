@@ -43,7 +43,13 @@
       "minimumSystemVersion": "11.0",
       "hardenedRuntime": true,
       "signingIdentity": "-",
-      "entitlements": "Entitlements.plist"
+      "entitlements": "Entitlements.plist",
+      "dmg": {
+        "background": "icons/dmg-background.png",
+        "windowSize": { "width": 660, "height": 400 },
+        "appPosition": { "x": 170, "y": 190 },
+        "applicationFolderPosition": { "x": 490, "y": 190 }
+      }
     }
   }
 }
