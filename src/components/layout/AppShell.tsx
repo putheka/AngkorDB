@@ -19,6 +19,7 @@ import { useImportDialog } from "@/stores/importDialog";
 import { useUpdates } from "@/stores/updates";
 import { useWelcome } from "@/stores/welcome";
 import { useNativeMenu } from "@/features/shortcuts/nativeMenu";
+import { FileDropZone } from "@/features/import/FileDropZone";
 import { useDockOpen } from "@/features/workspace/useDockOpen";
 import { runFirst, useShortcut, useShortcutDispatcher } from "@/features/shortcuts/registry";
 import { stepZoom } from "@/features/appearance/prefs";
@@ -212,6 +213,7 @@ export function AppShell() {
       </Suspense>
       <QuitConfirmDialog />
       <UpdateBanner />
+      <FileDropZone />
       <StatusBar />
     </div>
   );
