@@ -19,6 +19,7 @@ import { useImportDialog } from "@/stores/importDialog";
 import { useUpdates } from "@/stores/updates";
 import { useWelcome } from "@/stores/welcome";
 import { useNativeMenu } from "@/features/shortcuts/nativeMenu";
+import { useDockOpen } from "@/features/workspace/useDockOpen";
 import { runFirst, useShortcut, useShortcutDispatcher } from "@/features/shortcuts/registry";
 import { stepZoom } from "@/features/appearance/prefs";
 import { useWorkspacePersistence } from "@/features/workspace/useWorkspacePersistence";
@@ -127,6 +128,7 @@ export function AppShell() {
   useShortcut("app.checkUpdates", () => void useUpdates.getState().check({ manual: true }));
   useLaunchUpdateCheck();
   useNativeMenu();
+  useDockOpen();
   useShortcut("app.settings", () => void commands.openSettings());
 
   return (

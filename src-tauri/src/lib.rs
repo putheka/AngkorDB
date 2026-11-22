@@ -10,6 +10,7 @@
 pub mod auth;
 pub mod commands;
 pub mod db;
+pub mod dock;
 pub mod error;
 pub mod exit;
 pub mod menu;
@@ -219,6 +220,8 @@ pub fn run() {
                     let _ = opener.run_on_main_thread(move || settings::open(&app));
                 }),
             });
+            // The Dock icon's menu: recent connections (setup runs on the main thread).
+            dock::install(app.handle());
             Ok(())
         })
         .invoke_handler(specta.invoke_handler())

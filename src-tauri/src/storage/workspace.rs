@@ -21,6 +21,8 @@ pub const MAX_WORKSPACE_BYTES: usize = 8 * 1024 * 1024;
 struct StartupFile {
     restore_on_launch: bool,
     last_connection_id: Option<String>,
+    /// Connections that were opened, the latest first (for the Dock menu).
+    recent_connection_ids: Vec<String>,
 }
 
 impl Default for StartupFile {
@@ -28,9 +30,13 @@ impl Default for StartupFile {
         Self {
             restore_on_launch: true,
             last_connection_id: None,
+            recent_connection_ids: Vec::new(),
         }
     }
 }
+
+/// How many recently opened connections are remembered.
+pub const MAX_RECENT_CONNECTIONS: usize = 8;
 
 enum Place {
     Dir(PathBuf),
@@ -200,7 +206,18 @@ impl WorkspaceStore {
         let _guard = self.lock.lock();
         let mut file = self.read_startup();
         file.last_connection_id = connection_id.map(str::to_owned);
+        if let Some(id) = connection_id {
+            file.recent_connection_ids.retain(|recent| recent != id);
+            file.recent_connection_ids.insert(0, id.to_owned());
+            file.recent_connection_ids.truncate(MAX_RECENT_CONNECTIONS);
+        }
         self.write_startup(&file)
+    }
+
+    /// The connections that were opened last, the latest first.
+    pub fn recent_connections(&self) -> Vec<String> {
+        let _guard = self.lock.lock();
+        self.read_startup().recent_connection_ids
     }
 
     /// A connection was deleted: nothing of it is kept, and it is not the one to reopen.
@@ -208,8 +225,13 @@ impl WorkspaceStore {
         self.remove(connection_id)?;
         let _guard = self.lock.lock();
         let mut file = self.read_startup();
-        if file.last_connection_id.as_deref() == Some(connection_id) {
+        let was_recent = file.recent_connection_ids.len();
+        file.recent_connection_ids.retain(|id| id != connection_id);
+        let was_last = file.last_connection_id.as_deref() == Some(connection_id);
+        if was_last {
             file.last_connection_id = None;
+        }
+        if was_last || file.recent_connection_ids.len() != was_recent {
             self.write_startup(&file)?;
         }
         Ok(())
@@ -332,5 +354,46 @@ mod tests {
             store.forget("other").unwrap();
             assert_eq!(store.startup().last_connection_id.as_deref(), Some("kept"));
         }
+    }
+
+    #[test]
+    fn recent_connections_are_latest_first_without_repeats_and_capped() {
+        for (store, _dir) in stores() {
+            assert!(store.recent_connections().is_empty());
+            for id in ["a", "b", "c", "a"] {
+                store.set_last_connection(Some(id)).unwrap();
+            }
+            assert_eq!(store.recent_connections(), ["a", "c", "b"]);
+
+            // A disconnect is not an opening: the list stays as it was.
+            store.set_last_connection(None).unwrap();
+            assert_eq!(store.recent_connections(), ["a", "c", "b"]);
+
+            // A deleted connection leaves the list.
+            store.forget("c").unwrap();
+            assert_eq!(store.recent_connections(), ["a", "b"]);
+
+            for n in 0..20 {
+                store.set_last_connection(Some(&format!("id-{n}"))).unwrap();
+            }
+            let recent = store.recent_connections();
+            assert_eq!(recent.len(), MAX_RECENT_CONNECTIONS);
+            assert_eq!(recent[0], "id-19");
+        }
+    }
+
+    #[test]
+    fn a_launch_file_from_before_recent_connections_still_reads() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("w");
+        let store = WorkspaceStore::open(&folder).unwrap();
+        fs::write(
+            folder.join("startup.json"),
+            r#"{"restoreOnLaunch":false,"lastConnectionId":"x"}"#,
+        )
+        .unwrap();
+        assert!(!store.startup().restore_on_launch);
+        assert_eq!(store.startup().last_connection_id.as_deref(), Some("x"));
+        assert!(store.recent_connections().is_empty());
     }
 }

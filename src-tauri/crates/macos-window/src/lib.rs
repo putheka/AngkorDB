@@ -25,3 +25,6 @@ pub fn set_document_edited<R: Runtime>(window: &WebviewWindow<R>, edited: bool) 
 
 #[cfg(not(target_os = "macos"))]
 pub fn set_document_edited<R: Runtime>(_window: &WebviewWindow<R>, _edited: bool) {}
+
+mod dock;
+pub use dock::{DockChoice, DockEntry, DockHandlers, Row, install_dock_menu, rows};

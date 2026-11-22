@@ -8,7 +8,15 @@ description = "The one place AngkorDB talks to AppKit directly (needs `unsafe`, 
 tauri = { version = "2", features = [] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-objc2-app-kit = { version = "0.3", default-features = false, features = ["NSWindow", "NSResponder"] }
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+  "NSWindow",
+  "NSResponder",
+  "NSApplication",
+  "NSMenu",
+  "NSMenuItem",
+] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["NSString"] }
 
 [lints.rust]
 # Calling into Objective-C is unsafe by nature. Everything unsafe in the project lives here,
