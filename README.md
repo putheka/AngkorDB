@@ -96,6 +96,14 @@ Output:
 
 Unsigned builds: if macOS blocks the app, run `xattr -cr /Applications/AngkorDB.app` once after copying it in.
 
+### Release
+
+Releases are not signed with an Apple Developer ID or notarized; people open them once with **System Settings → Privacy & Security → Open Anyway** ([install steps](.github/release-install.txt), added to every release's notes). Updates do not depend on Apple: they are checked against our own key.
+
+1. Set `version` in `src-tauri/tauri.conf.json` (and `Cargo.toml`, `package.json`), commit, and push a tag with the same number: `git tag v0.1.0 && git push origin v0.1.0`.
+2. The [Release workflow](.github/workflows/release.yml) builds a universal DMG and creates a **draft** release on GitHub. Look it over and publish it.
+3. One-time setup: add the updater key as a repository secret named `TAURI_SIGNING_PRIVATE_KEY` (the contents of `~/.tauri/angkordb-updater.key`), plus `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` if it has a password. Keep a backup of the key: without it, installed apps can't be updated.
+
 ## Project structure
 
 ```

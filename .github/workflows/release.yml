@@ -3,12 +3,13 @@ name: Release
 # Pushing a tag like v0.1.0 builds a universal (Apple Silicon + Intel) AngkorDB.app, wraps it in a
 # DMG and publishes it as a GitHub Release. Nothing happens on branches or pull requests.
 #
-# Signing and notarization run when these repository secrets exist (ANG-57); without them the
-# build is ad-hoc signed, which is fine for personal use (`xattr -cr /Applications/AngkorDB.app`):
+# The release is ad-hoc signed and not notarized (ANG-57 is not done: no Apple Developer account).
+# People download the DMG from the release page and let macOS open it once (the release notes say
+# how). If Developer ID secrets are added later, the same workflow signs and notarizes:
 #   APPLE_CERTIFICATE (base64 of the Developer ID Application .p12), APPLE_CERTIFICATE_PASSWORD,
 #   APPLE_SIGNING_IDENTITY, APPLE_ID, APPLE_PASSWORD (app-specific), APPLE_TEAM_ID
-# Updater files are made when TAURI_SIGNING_PRIVATE_KEY (+ TAURI_SIGNING_PRIVATE_KEY_PASSWORD) exist
-# (ANG-59).
+# Updates do not depend on Apple: they are checked against our own key (ANG-59). Add
+# TAURI_SIGNING_PRIVATE_KEY (and TAURI_SIGNING_PRIVATE_KEY_PASSWORD if the key has one) as secrets.
 
 on:
   push:
@@ -60,20 +61,30 @@ jobs:
 
       - run: npm ci
 
-      - name: Build, sign, notarize and upload
+      # Only the secrets that exist are passed on: an empty APPLE_SIGNING_IDENTITY would be taken
+      # as an identity called "" instead of falling back to the ad-hoc signature in tauri.conf.json.
+      - name: Pass on the signing secrets that exist
+        env:
+          SECRETS: ${{ toJSON(secrets) }}
+        run: |
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY \
+            APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID \
+            TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD; do
+            value=$(printf '%s' "$SECRETS" | jq -r --arg n "$name" '.[$n] // empty')
+            if [ -n "$value" ]; then
+              echo "::add-mask::$value"
+              delimiter="EOF_$(openssl rand -hex 8)"
+              printf '%s<<%s\n%s\n%s\n' "$name" "$delimiter" "$value" "$delimiter" >> "$GITHUB_ENV"
+              echo "$name: set"
+            else
+              echo "$name: not set"
+            fi
+          done
+
+      - name: Build and upload
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Signing and notarization (ANG-57): all empty means an ad-hoc signed build.
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          # Updater signature (ANG-59).
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ env.TAG }}
           releaseName: AngkorDB ${{ env.TAG }}
@@ -81,15 +92,18 @@ jobs:
           prerelease: false
           args: --target universal-apple-darwin
 
-      - name: Changelog from what was merged since the last release
+      - name: "Release notes: what changed, and how to open the app"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          notes=$(gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" -f tag_name="$TAG" --jq .body)
-          gh release edit "$TAG" --notes "$notes"
+          gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" -f tag_name="$TAG" --jq .body > notes.md
+          if [ -z "$APPLE_SIGNING_IDENTITY" ]; then
+            cat .github/release-install.txt >> notes.md
+          fi
+          gh release edit "$TAG" --notes-file notes.md
 
       - name: Say whether it is signed
         run: |
-          if [ -z "${{ secrets.APPLE_SIGNING_IDENTITY }}" ]; then
-            echo "::warning::No Developer ID secrets: this release is ad-hoc signed and not notarized (Gatekeeper will warn)."
+          if [ -z "$APPLE_SIGNING_IDENTITY" ]; then
+            echo "::notice::Ad-hoc signed, not notarized: the release notes explain how to open it."
           fi

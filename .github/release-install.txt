@@ -1,0 +1,11 @@
+## Install
+
+1. Download `AngkorDB_<version>_universal.dmg` below, open it and drag AngkorDB to Applications.
+2. The first time, macOS says it can't verify the app (it is not notarized by Apple). Open **System Settings → Privacy & Security**, scroll down, and click **Open Anyway** next to AngkorDB.
+3. If macOS says the app is "damaged", run this once in Terminal, then open it again:
+
+```bash
+xattr -cr /Applications/AngkorDB.app
+```
+
+After that it opens normally, and later updates install from inside the app (**AngkorDB → Check for Updates…**).
