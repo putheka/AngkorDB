@@ -41,13 +41,13 @@ fn item<R: Runtime>(app: &AppHandle<R>, id: &str, label: &str) -> tauri::Result<
 pub const REPOSITORY: &str = "https://github.com/putheka/AngkorDB";
 
 /// What the About window says: the name, the version and the commit it was built from, who made
-/// it, and where it is. No license has been chosen for the project yet, so none is claimed.
+/// it, where it is, and its license (MIT, see `LICENSE`).
 fn about<R: Runtime>(app: &AppHandle<R>) -> AboutMetadata<'static> {
     AboutMetadata {
         name: Some("AngkorDB".to_owned()),
         version: Some(env!("ANGKORDB_VERSION").to_owned()),
         short_version: Some(env!("ANGKORDB_BUILD").to_owned()),
-        copyright: Some("Copyright © 2026 Bob. All rights reserved.".to_owned()),
+        copyright: Some("Copyright © 2026 Bob. Released under the MIT License.".to_owned()),
         credits: Some(format!(
             "A native PostgreSQL client for the Mac.\n{REPOSITORY}\nBuild {}",
             env!("ANGKORDB_BUILD")
