@@ -2,14 +2,8 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { resolveDark } from "@/features/appearance/prefs";
+import { inNativeApp } from "@/lib/native";
 import { useAppearance } from "@/stores/appearance";
-
-/** The real app has window metadata; the browser mock of `npm run dev` only fakes `invoke`. */
-const inNativeApp = () => {
-  const internals = (window as { __TAURI_INTERNALS__?: { metadata?: unknown } })
-    .__TAURI_INTERNALS__;
-  return Boolean(internals?.metadata);
-};
 
 /**
  * Keep <html> in step with the appearance settings (ANG-51): the `dark` class that the color

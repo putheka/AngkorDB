@@ -145,6 +145,10 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        // Updates are downloaded from the GitHub release and checked against the public key in
+        // tauri.conf.json (ANG-59); the process plugin restarts the app once one is installed.
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         // Size, position and maximized state of the window come back at the next launch (ANG-50).
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .menu(menu::build)

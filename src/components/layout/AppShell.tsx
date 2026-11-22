@@ -9,11 +9,14 @@ import { AppearanceMenu } from "@/features/appearance/AppearanceMenu";
 import { useTabShortcuts } from "@/features/tabs/useTabShortcuts";
 import { QuitConfirmDialog } from "@/features/settings/quitConfirm";
 import { Shortcut } from "@/features/shortcuts/Shortcut";
+import { UpdateBanner } from "@/features/updates/UpdateBanner";
+import { useLaunchUpdateCheck } from "@/features/updates/useLaunchUpdateCheck";
 import { commands } from "@/lib/ipc";
 import { useAppearance } from "@/stores/appearance";
 import { useBackupDialog } from "@/stores/backupDialog";
 import { useBrowserStore } from "@/stores/browser";
 import { useImportDialog } from "@/stores/importDialog";
+import { useUpdates } from "@/stores/updates";
 import { useWelcome } from "@/stores/welcome";
 import { useNativeMenu } from "@/features/shortcuts/nativeMenu";
 import { runFirst, useShortcut, useShortcutDispatcher } from "@/features/shortcuts/registry";
@@ -120,6 +123,9 @@ export function AppShell() {
     useAppearance.getState().set({ zoom: stepZoom(useAppearance.getState().zoom, -1) }),
   );
   useShortcut("view.zoomReset", () => useAppearance.getState().set({ zoom: 1 }));
+  // AngkorDB ▸ Check for Updates, and the check a few seconds after launch.
+  useShortcut("app.checkUpdates", () => void useUpdates.getState().check({ manual: true }));
+  useLaunchUpdateCheck();
   useNativeMenu();
   useShortcut("app.settings", () => void commands.openSettings());
 
@@ -203,6 +209,7 @@ export function AppShell() {
         <ShortcutsDialog />
       </Suspense>
       <QuitConfirmDialog />
+      <UpdateBanner />
       <StatusBar />
     </div>
   );

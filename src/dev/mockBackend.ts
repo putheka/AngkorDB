@@ -548,6 +548,19 @@ const handlers: Record<string, Handler> = {
     return null;
   },
   set_confirm_on_quit: () => null,
+  // The updater: no release exists for the mock, unless `localStorage.mockUpdate` is set (a demo of
+  // the banner). Installing is not mocked.
+  "plugin:updater|check": () =>
+    localStorage.getItem("angkordb.mock.update")
+      ? {
+          rid: 1,
+          currentVersion: "0.1.0",
+          version: "0.1.1",
+          date: null,
+          body: "Faster result grids.\nFixes the SSH jump host dialog.",
+          rawJson: {},
+        }
+      : null,
   // There is no native menu bar in the browser.
   update_menu: () => null,
   resolve_ssh_alias: (args): SshAlias | null =>

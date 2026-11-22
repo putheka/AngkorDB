@@ -191,7 +191,7 @@ function General() {
       </Row>
       <Row
         label="Check for updates"
-        hint="Looks for a new version when the app starts. Updates arrive with the release build."
+        hint="Looks for a new version a few seconds after the app starts. AngkorDB ▸ Check for Updates does it any time."
       >
         <Toggle
           label="Check for updates"
