@@ -40,7 +40,10 @@
     ],
     "category": "DeveloperTool",
     "macOS": {
-      "minimumSystemVersion": "11.0"
+      "minimumSystemVersion": "11.0",
+      "hardenedRuntime": true,
+      "signingIdentity": "-",
+      "entitlements": "Entitlements.plist"
     }
   }
 }
