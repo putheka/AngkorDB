@@ -1,7 +1,7 @@
-//! Several windows, one connection each.
+//! Several windows, each with the connections it has open.
 //!
-//! Every window shows the same page and has its own tabs, edits and connection. This module
-//! knows which window has which connection ([`WindowRegistry`], filled by the pages), who gets
+//! Every window shows the same page and has its own connections (the strip on its left), tabs and
+//! edits. This module knows which window has which connections ([`WindowRegistry`], filled by the pages), who gets
 //! asked when the app is quit, and who gets a Dock click. The plans are plain functions so they
 //! can be tested without a window; [`open`] and the other `AppHandle` functions do the work.
 //!
@@ -9,7 +9,7 @@
 //! connection, so a second window on it would close the first one's. Asking for a connection
 //! that another window has brings that window forward instead.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Mutex;
 
 use crate::menu::MenuUpdate;
@@ -36,8 +36,8 @@ pub fn is_workspace(label: &str) -> bool {
 /// What the page of a window says about it.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct WindowInfo {
-    /// The connection open (or being opened) in the window.
-    pub connection: Option<String>,
+    /// The connections open (or being opened) in the window.
+    pub connections: BTreeSet<String>,
     /// How many of its tabs have staged edits.
     pub unsaved: u32,
 }
@@ -94,18 +94,26 @@ impl WindowRegistry {
             if let Some((other, _)) = i
                 .windows
                 .iter()
-                .find(|(l, w)| l.as_str() != label && w.connection.as_deref() == Some(connection))
+                .find(|(l, w)| l.as_str() != label && w.connections.contains(connection))
             {
                 return Claim::HeldBy(other.clone());
             }
-            i.windows.entry(label.to_owned()).or_default().connection = Some(connection.to_owned());
+            i.windows
+                .entry(label.to_owned())
+                .or_default()
+                .connections
+                .insert(connection.to_owned());
             Claim::Granted
         })
     }
 
-    /// The window no longer has a connection. Returns the one it had.
-    pub fn release(&self, label: &str) -> Option<String> {
-        self.with(|i| i.windows.get_mut(label).and_then(|w| w.connection.take()))
+    /// The window no longer has this connection open.
+    pub fn release(&self, label: &str, connection: &str) {
+        self.with(|i| {
+            if let Some(w) = i.windows.get_mut(label) {
+                w.connections.remove(connection);
+            }
+        });
     }
 
     /// The window that has this connection.
@@ -113,19 +121,22 @@ impl WindowRegistry {
         self.with(|i| {
             i.windows
                 .iter()
-                .find(|(_, w)| w.connection.as_deref() == Some(connection))
+                .find(|(_, w)| w.connections.contains(connection))
                 .map(|(l, _)| l.clone())
         })
     }
 
-    /// The window is gone. Returns the connection it had, which nobody uses now.
-    pub fn forget(&self, label: &str) -> Option<String> {
+    /// The window is gone. Returns the connections it had, which nobody uses now.
+    pub fn forget(&self, label: &str) -> Vec<String> {
         self.with(|i| {
             if i.last_focused.as_deref() == Some(label) {
                 i.last_focused = None;
             }
             i.menus.remove(label);
-            i.windows.remove(label).and_then(|w| w.connection)
+            i.windows
+                .remove(label)
+                .map(|w| w.connections.into_iter().collect())
+                .unwrap_or_default()
         })
     }
 
@@ -199,29 +210,27 @@ fn order(label: &str) -> (u32, u32) {
 pub enum DockOpen {
     /// It is open already: show that window.
     Focus(String),
-    /// A window with nothing open takes it.
+    /// This window adds it to its connections.
     Use(String),
-    /// Every window has something open: make one.
+    /// There is no window: make one.
     New,
 }
 
-/// Where a connection chosen in the Dock menu opens. Never in a window that has another
-/// connection open: that would close it.
+/// Where a connection chosen in the Dock menu opens: in the window it is open in, else in the
+/// window used last (it joins that window's connections; nothing is closed for it).
 pub fn plan_dock_open(
     windows: &[(String, WindowInfo)],
     last_focused: Option<&str>,
     connection: &str,
 ) -> DockOpen {
     let workspace = || windows.iter().filter(|(l, _)| is_workspace(l));
-    if let Some((label, _)) = workspace().find(|(_, w)| w.connection.as_deref() == Some(connection))
-    {
+    if let Some((label, _)) = workspace().find(|(_, w)| w.connections.contains(connection)) {
         return DockOpen::Focus(label.clone());
     }
-    let idle = |label: &str| workspace().any(|(l, w)| l == label && w.connection.is_none());
-    if let Some(label) = last_focused.filter(|l| idle(l)) {
+    if let Some(label) = last_focused.filter(|l| workspace().any(|(w, _)| w == l)) {
         return DockOpen::Use(label.to_owned());
     }
-    match workspace().find(|(_, w)| w.connection.is_none()) {
+    match workspace().next() {
         Some((label, _)) => DockOpen::Use(label.clone()),
         None => DockOpen::New,
     }
@@ -425,11 +434,11 @@ pub fn open<R: Runtime>(app: &AppHandle<R>, registry: &WindowRegistry, start: St
 mod tests {
     use super::*;
 
-    fn win(label: &str, connection: Option<&str>, unsaved: u32) -> (String, WindowInfo) {
+    fn win(label: &str, connections: &[&str], unsaved: u32) -> (String, WindowInfo) {
         (
             label.to_owned(),
             WindowInfo {
-                connection: connection.map(str::to_owned),
+                connections: connections.iter().map(|c| (*c).to_owned()).collect(),
                 unsaved,
             },
         )
@@ -446,32 +455,34 @@ mod tests {
     fn a_connection_is_open_in_one_window_at_a_time() {
         let registry = WindowRegistry::default();
         assert_eq!(registry.claim("main", "a"), Claim::Granted);
-        // The same window may claim again, and another connection.
+        // A window may have several, and claim one again.
         assert_eq!(registry.claim("main", "a"), Claim::Granted);
+        assert_eq!(registry.claim("main", "b"), Claim::Granted);
         assert_eq!(
             registry.claim("window-2", "a"),
             Claim::HeldBy("main".into())
         );
-        assert_eq!(registry.claim("window-2", "b"), Claim::Granted);
-        assert_eq!(registry.holder("b").as_deref(), Some("window-2"));
+        assert_eq!(registry.claim("window-2", "c"), Claim::Granted);
+        assert_eq!(registry.holder("b").as_deref(), Some("main"));
 
-        assert_eq!(registry.release("main").as_deref(), Some("a"));
-        assert_eq!(registry.release("main"), None);
+        registry.release("main", "a");
+        registry.release("main", "nope");
         assert_eq!(registry.claim("window-2", "a"), Claim::Granted);
-        assert_eq!(registry.holder("b"), None);
+        assert_eq!(registry.holder("b").as_deref(), Some("main"));
     }
 
     #[test]
-    fn a_closed_window_gives_back_its_connection() {
+    fn a_closed_window_gives_back_its_connections() {
         let registry = WindowRegistry::default();
         registry.claim("window-2", "a");
+        registry.claim("window-2", "b");
         registry.set_unsaved("window-2", 2);
         registry.note_focus("window-2");
-        assert_eq!(registry.forget("window-2").as_deref(), Some("a"));
+        assert_eq!(registry.forget("window-2"), ["a", "b"]);
         assert_eq!(registry.total_unsaved(), 0);
         assert_eq!(registry.last_focused(), None);
         assert_eq!(registry.claim("main", "a"), Claim::Granted);
-        assert_eq!(registry.forget("gone"), None);
+        assert!(registry.forget("gone").is_empty());
     }
 
     #[test]
@@ -529,33 +540,25 @@ mod tests {
     }
 
     #[test]
-    fn the_dock_never_takes_over_a_window_that_is_busy() {
-        let busy = [win("main", Some("a"), 0), win("window-2", Some("b"), 0)];
+    fn the_dock_adds_a_connection_to_the_window_in_use() {
+        let two = [win("main", &["a"], 0), win("window-2", &["b"], 0)];
+        // Open somewhere: that window comes forward.
         assert_eq!(
-            plan_dock_open(&busy, Some("main"), "b"),
+            plan_dock_open(&two, Some("main"), "b"),
             DockOpen::Focus("window-2".into())
         );
-        assert_eq!(plan_dock_open(&busy, Some("main"), "c"), DockOpen::New);
-
-        let one_free = [win("main", Some("a"), 0), win("window-2", None, 0)];
+        // Not open: it joins the window used last, whatever that has open.
         assert_eq!(
-            plan_dock_open(&one_free, Some("main"), "c"),
-            DockOpen::Use("window-2".into())
-        );
-
-        // The window used last is preferred when it is free.
-        let both_free = [win("main", None, 0), win("window-2", None, 0)];
-        assert_eq!(
-            plan_dock_open(&both_free, Some("window-2"), "c"),
+            plan_dock_open(&two, Some("window-2"), "c"),
             DockOpen::Use("window-2".into())
         );
         assert_eq!(
-            plan_dock_open(&both_free, None, "c"),
+            plan_dock_open(&two, None, "c"),
             DockOpen::Use("main".into())
         );
 
         // The settings window is nobody's workspace.
-        let settings = [win("settings", None, 0)];
+        let settings = [win("settings", &[], 0)];
         assert_eq!(
             plan_dock_open(&settings, Some("settings"), "c"),
             DockOpen::New
@@ -565,7 +568,7 @@ mod tests {
 
     #[test]
     fn quitting_asks_the_windows_with_unsaved_edits_one_by_one() {
-        let clean = [win("main", Some("a"), 0), win("window-2", None, 0)];
+        let clean = [win("main", &["a"], 0), win("window-2", &[], 0)];
         assert_eq!(plan_quit(&clean, Some("main"), false), QuitStep::Exit);
         assert_eq!(
             plan_quit(&clean, Some("window-2"), true),
@@ -573,7 +576,7 @@ mod tests {
         );
         assert_eq!(plan_quit(&clean, None, true), QuitStep::Ask("main".into()));
 
-        let dirty = [win("main", Some("a"), 2), win("window-2", Some("b"), 1)];
+        let dirty = [win("main", &["a"], 2), win("window-2", &["b"], 1)];
         assert_eq!(
             plan_quit(&dirty, Some("window-2"), false),
             QuitStep::Ask("window-2".into())
@@ -583,7 +586,7 @@ mod tests {
             QuitStep::Ask("main".into())
         );
 
-        let one_left = [win("main", Some("a"), 0), win("window-2", Some("b"), 1)];
+        let one_left = [win("main", &["a"], 0), win("window-2", &["b"], 1)];
         assert_eq!(
             plan_quit(&one_left, Some("main"), true),
             QuitStep::Ask("window-2".into())

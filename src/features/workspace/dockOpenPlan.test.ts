@@ -16,7 +16,7 @@ test("a deleted connection is reported, not opened", () => {
   assert.equal(planDockOpen("b", null, false, "a"), "missing");
 });
 
-test("from the welcome screen it is opened; from another connection it is switched to", () => {
+test("it is opened from the welcome screen and from another connection, which stays open", () => {
   assert.equal(planDockOpen(null, null, true, "a"), "connect");
-  assert.equal(planDockOpen("b", null, true, "a"), "switch");
+  assert.equal(planDockOpen("b", null, true, "a"), "connect");
 });

@@ -69,7 +69,7 @@ pub fn open_window(
     state.open_window(start);
 }
 
-/// A window is about to open a connection. `false` when another window has it open (that window
+/// A window is about to open a connection (it can have several open). `false` when another window has it open (that window
 /// is brought forward): a connection is open in one window at a time.
 #[tauri::command]
 #[specta::specta]
@@ -77,11 +77,11 @@ pub fn claim_connection(state: State<'_, AppState>, label: String, connection_id
     state.claim_connection(&label, &connection_id)
 }
 
-/// The window has no connection any more (it disconnected, or the connect failed).
+/// The window does not have this connection open any more (it was closed, or the connect failed).
 #[tauri::command]
 #[specta::specta]
-pub fn release_connection(state: State<'_, AppState>, label: String) {
-    state.release_connection(&label);
+pub fn release_connection(state: State<'_, AppState>, label: String, connection_id: String) {
+    state.release_connection(&label, &connection_id);
 }
 
 /// Show the settings window (⌘,), opening it if it isn't open.

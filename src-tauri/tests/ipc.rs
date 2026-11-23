@@ -1140,9 +1140,15 @@ fn unsaved_changes_are_remembered_and_drive_the_window_hooks() {
     assert_eq!(claim("window-3", "c1"), json!(false));
     assert_eq!(*focused.lock().unwrap(), ["main"]);
     assert_eq!(claim("window-3", "c2"), json!(true));
-    ipc.call("release_connection", json!({ "label": "main" }))
-        .unwrap();
+    // A window can have several; letting one go frees only that one.
+    assert_eq!(claim("main", "c3"), json!(true));
+    ipc.call(
+        "release_connection",
+        json!({ "label": "main", "connectionId": "c1" }),
+    )
+    .unwrap();
     assert_eq!(claim("window-3", "c1"), json!(true));
+    assert_eq!(claim("window-3", "c3"), json!(false));
 
     // New windows: blank, on the connection form, or on a connection.
     for args in [

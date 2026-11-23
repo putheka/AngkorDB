@@ -40,12 +40,12 @@ export const commands = {
 	 */
 	openWindow: (connectionId: string | null, newConnection: boolean, options?: InvokeOptions) => __TAURI_INVOKE<void>("open_window", { connectionId, newConnection }, options),
 	/**
-	 *  A window is about to open a connection. `false` when another window has it open (that window
+	 *  A window is about to open a connection (it can have several open). `false` when another window has it open (that window
 	 *  is brought forward): a connection is open in one window at a time.
 	 */
 	claimConnection: (label: string, connectionId: string, options?: InvokeOptions) => __TAURI_INVOKE<boolean>("claim_connection", { label, connectionId }, options),
-	/**  The window has no connection any more (it disconnected, or the connect failed). */
-	releaseConnection: (label: string, options?: InvokeOptions) => __TAURI_INVOKE<void>("release_connection", { label }, options),
+	/**  The window does not have this connection open any more (it was closed, or the connect failed). */
+	releaseConnection: (label: string, connectionId: string, options?: InvokeOptions) => __TAURI_INVOKE<void>("release_connection", { label, connectionId }, options),
 	/**  Show the settings window (⌘,), opening it if it isn't open. */
 	openSettings: (options?: InvokeOptions) => __TAURI_INVOKE<void>("open_settings", undefined, options),
 	/**

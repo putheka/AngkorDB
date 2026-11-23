@@ -26,6 +26,7 @@ import { stepZoom } from "@/features/appearance/prefs";
 import { useWorkspacePersistence } from "@/features/workspace/useWorkspacePersistence";
 import { refreshData } from "@/features/grid/useTableData";
 import { refreshSchema } from "@/features/sidebar/useSchema";
+import { ConnectionRail } from "@/features/connections/ConnectionRail";
 import { WelcomeScreen } from "@/features/connections/WelcomeScreen";
 import { UnsavedChangesDialog } from "@/features/grid/editing/UnsavedChangesDialog";
 import { useUnsavedSync } from "@/features/grid/editing/useUnsavedSync";
@@ -54,6 +55,7 @@ const ShortcutsDialog = lazy(() =>
 export function AppShell() {
   const activeId = useSessionStore((s) => s.activeConnectionId);
   const connected = activeId !== null;
+  const openCount = useSessionStore((s) => s.openIds.length);
   const sidebarCollapsed = useLayoutStore((s) => s.sidebarCollapsed);
   const toggleSidebar = useLayoutStore((s) => s.toggleSidebar);
 
@@ -96,11 +98,8 @@ export function AppShell() {
   // File and View.
   useShortcut("app.newWindow", () => void commands.openWindow(null, false));
   useShortcut("app.newConnection", async () => {
-    // With a connection open, the form goes to a new window: that connection stays open.
-    if (useSessionStore.getState().activeConnectionId) {
-      void commands.openWindow(null, true);
-      return;
-    }
+    // The form is on the list of connections; what is open stays open in the strip.
+    if (!(await useSessionStore.getState().showConnections())) return;
     useWelcome.getState().requestNewConnection();
   });
   useShortcut(
@@ -182,6 +181,8 @@ export function AppShell() {
       </header>
 
       <div className="flex min-h-0 flex-1">
+        {/* Every connection open in this window; with one open, it is how to open another. */}
+        {openCount > 0 && <ConnectionRail />}
         {connected ? (
           <>
             {!sidebarCollapsed && (

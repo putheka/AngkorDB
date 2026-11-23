@@ -53,10 +53,10 @@ function FrontTab() {
   if (!connectionId) return null;
 
   if (tab.kind === "query") {
-    // Keyed by tab: each query tab has its own editor, and its text is kept while it is hidden.
+    // Keyed by connection and tab: each query tab has its own editor, and its text is kept while it is hidden.
     return (
       <div className="min-h-0 flex-1">
-        <QueryView key={tab.id} connectionId={connectionId} tab={tab} />
+        <QueryView key={`${connectionId}:${tab.id}`} connectionId={connectionId} tab={tab} />
       </div>
     );
   }
@@ -77,10 +77,10 @@ function FrontTab() {
     );
   }
 
-  // Keyed by tab: switching tabs gives each table its own sort, page and columns.
+  // Keyed by connection and tab: switching tabs gives each table its own sort, page and columns.
   return (
     <div className="min-h-0 flex-1">
-      <TableTabView key={tab.id} connectionId={connectionId} tab={tab} />
+      <TableTabView key={`${connectionId}:${tab.id}`} connectionId={connectionId} tab={tab} />
     </div>
   );
 }

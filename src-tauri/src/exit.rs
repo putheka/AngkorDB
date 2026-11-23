@@ -86,15 +86,18 @@ pub fn on_run_event(app: &AppHandle, event: &RunEvent) {
     }
 }
 
-/// A workspace window is gone: its connection is not in use any more, and without workspace
+/// A workspace window is gone: its connections are not in use any more, and without workspace
 /// windows the settings window has nothing to belong to.
 fn window_gone(app: &AppHandle, label: &str) {
     let state = app.state::<AppState>();
-    if let Some(connection) = state.windows().forget(label) {
+    let connections = state.windows().forget(label);
+    if !connections.is_empty() {
         let app = app.clone();
         tauri::async_runtime::spawn(async move {
-            // Closing the server side can't fail in a way anyone can act on.
-            let _ = app.state::<AppState>().remove_session(&connection).await;
+            for connection in connections {
+                // Closing the server side can't fail in a way anyone can act on.
+                let _ = app.state::<AppState>().remove_session(&connection).await;
+            }
         });
     }
     if workspace_labels(app).iter().all(|l| l == label) {

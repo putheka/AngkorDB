@@ -78,14 +78,18 @@ export function Sidebar() {
         </Tooltip>
       </div>
 
-      {activeId && <ObjectTree key={activeId} connectionId={activeId} />}
+      {activeId && <ObjectTree key={`tree:${activeId}`} connectionId={activeId} />}
       {/* Loaded when something asks for them (a menu item, ⌘K, a dropped file). */}
       <Suspense fallback={null}>
         {activeId && importing && <ImportHost connectionId={activeId} />}
         {activeId && backing && <BackupDialog connectionId={activeId} />}
       </Suspense>
       {activeId && (
-        <SavedQueries key={activeId} connectionId={activeId} connectionName={active?.name ?? ""} />
+        <SavedQueries
+          key={`saved:${activeId}`}
+          connectionId={activeId}
+          connectionName={active?.name ?? ""}
+        />
       )}
 
       <SidebarResizer />

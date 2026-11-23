@@ -20,9 +20,7 @@ async function openFromDock(id: string) {
     return;
   }
   if (plan === "ignore" || !found) return;
-  // The person may choose to stay on the open connection because of unsaved edits.
-  if (plan === "switch" && !(await session.disconnect())) return;
-  await useSessionStore.getState().connect(found);
+  await session.connect(found);
 }
 
 /** Open the connection chosen in the Dock menu (the app sends it to a window that has none open). */

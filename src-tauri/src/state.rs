@@ -240,8 +240,8 @@ impl AppState {
         }
     }
 
-    pub fn release_connection(&self, label: &str) {
-        self.windows.release(label);
+    pub fn release_connection(&self, label: &str, connection_id: &str) {
+        self.windows.release(label, connection_id);
     }
 
     /// Open a window. Without hooks (tests) nothing happens.
