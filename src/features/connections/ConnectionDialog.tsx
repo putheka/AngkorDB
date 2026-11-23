@@ -1,5 +1,5 @@
 import { useMutation } from "@tanstack/react-query";
-import { CheckIcon, Loader2Icon, TriangleAlertIcon } from "lucide-react";
+import { CheckIcon, Loader2Icon, MinusIcon, TriangleAlertIcon } from "lucide-react";
 import { useState, type ClipboardEvent, type FormEvent, type ReactNode } from "react";
 
 import type { ColorTag, ConnectionConfig, SafeMode, SshAuth, SslMode } from "@/bindings";
@@ -236,45 +236,38 @@ function ConnectionFormBody({ connection, groups, onClose }: ConnectionDialogPro
 
   return (
     <form onSubmit={handleSave} onPaste={handlePaste} className="flex flex-col gap-4">
-      <DialogHeader>
+      <DialogHeader className="items-center text-center">
         <DialogTitle>{connection ? "Edit connection" : "New connection"}</DialogTitle>
         <DialogDescription>
-          Passwords are stored in the macOS Keychain, never in a file.
+          PostgreSQL. Passwords are stored in the macOS Keychain, never in a file.
         </DialogDescription>
       </DialogHeader>
 
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="conn-url">Connection URL</Label>
-        <div className="flex gap-2">
-          <Input
-            id="conn-url"
-            value={urlText}
-            onChange={(e) => setUrlText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && urlText.trim()) {
-                e.preventDefault();
-                void importUrl(urlText);
-              }
-            }}
-            placeholder="Paste postgres://user:password@host:5432/database to fill the form"
-            autoComplete="off"
-            spellCheck={false}
-          />
-          {urlText.trim() && (
-            <Button type="button" variant="secondary" onClick={() => void importUrl(urlText)}>
-              Fill
-            </Button>
-          )}
-        </div>
-        {urlError && (
-          <p role="alert" className="text-xs text-destructive">
-            {urlError}
-          </p>
-        )}
-      </div>
-
-      <div className="grid grid-cols-6 gap-x-3 gap-y-3">
-        <Field label="Name" htmlFor="conn-name" className="col-span-6">
+      <Panel>
+        <Row label="URL" htmlFor="conn-url" error={urlError ?? undefined}>
+          <div className="flex gap-2">
+            <Input
+              id="conn-url"
+              value={urlText}
+              onChange={(e) => setUrlText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && urlText.trim()) {
+                  e.preventDefault();
+                  void importUrl(urlText);
+                }
+              }}
+              placeholder="Paste postgres://user:password@host:5432/database"
+              autoComplete="off"
+              spellCheck={false}
+            />
+            {urlText.trim() && (
+              <Button type="button" variant="secondary" onClick={() => void importUrl(urlText)}>
+                Fill
+              </Button>
+            )}
+          </div>
+        </Row>
+        <Row label="Name" htmlFor="conn-name">
           <Input
             id="conn-name"
             value={form.name}
@@ -284,478 +277,32 @@ function ConnectionFormBody({ connection, groups, onClose }: ConnectionDialogPro
             }
             autoComplete="off"
           />
-        </Field>
-
-        <Field label="Host" htmlFor="conn-host" error={fieldError("host")} className="col-span-4">
-          <Input
-            id="conn-host"
-            value={form.host}
-            onChange={(e) => update({ host: e.target.value })}
-            aria-invalid={!!fieldError("host")}
-            autoComplete="off"
-            spellCheck={false}
-          />
-        </Field>
-        <Field label="Port" htmlFor="conn-port" error={fieldError("port")} className="col-span-2">
-          <Input
-            id="conn-port"
-            value={form.port}
-            onChange={(e) => update({ port: e.target.value })}
-            inputMode="numeric"
-            aria-invalid={!!fieldError("port")}
-            autoComplete="off"
-          />
-        </Field>
-
-        <Field label="User" htmlFor="conn-user" error={fieldError("user")} className="col-span-3">
-          <Input
-            id="conn-user"
-            value={form.user}
-            onChange={(e) => update({ user: e.target.value })}
-            aria-invalid={!!fieldError("user")}
-            autoComplete="off"
-            spellCheck={false}
-          />
-        </Field>
-        <Field label="Password" htmlFor="conn-password" className="col-span-3">
-          <Input
-            id="conn-password"
-            type="password"
-            value={form.password}
-            onChange={(e) => update({ password: e.target.value })}
-            placeholder={passwordPlaceholder}
-            autoComplete="new-password"
-          />
-          {form.hasPassword && !form.password && (
-            <button
-              type="button"
-              onClick={() => update({ removePassword: !form.removePassword })}
-              className="self-start text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-            >
-              {form.removePassword ? "Keep the saved password" : "Remove saved password"}
-            </button>
-          )}
-        </Field>
-
-        <Field
-          label="Database"
-          htmlFor="conn-database"
-          error={fieldError("database")}
-          className="col-span-3"
-        >
-          <Input
-            id="conn-database"
-            value={form.database}
-            onChange={(e) => update({ database: e.target.value })}
-            aria-invalid={!!fieldError("database")}
-            autoComplete="off"
-            spellCheck={false}
-          />
-        </Field>
-        <Field label="SSL" htmlFor="conn-ssl" className="col-span-3">
-          <Select value={form.sslMode} onValueChange={(v) => update({ sslMode: v as SslMode })}>
-            <SelectTrigger id="conn-ssl" className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {SSL_MODES.map((mode) => (
-                <SelectItem key={mode.value} value={mode.value}>
-                  {mode.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </Field>
-
-        <div className="col-span-6 -mt-1 flex flex-col gap-3">
-          <p className="text-xs text-muted-foreground">{SSL_MODE_HELP[form.sslMode]}</p>
-          {form.sslMode !== "disable" && (
-            <div className="grid grid-cols-6 gap-x-3 gap-y-3 rounded-lg border p-3">
-              {verifiesCertificate(form.sslMode) && (
-                <FileField
-                  id="ssl-root"
-                  label="Root certificate (CA)"
-                  value={form.sslRootCert}
-                  placeholder="The system's trusted roots"
-                  help="When chosen, it is the only authority trusted."
-                  onChange={(sslRootCert) => update({ sslRootCert })}
-                />
-              )}
-              <FileField
-                id="ssl-cert"
-                label="Client certificate"
-                value={form.sslClientCert}
-                placeholder="Only if the server asks for one"
-                error={fieldError("sslClientCert")}
-                onChange={(sslClientCert) => update({ sslClientCert })}
+        </Row>
+        <Row label="Status color">
+          <div className="flex items-center justify-between gap-3">
+            <ColorPicker value={form.color} onChange={(color) => update(colorPatch(form, color))} />
+            <div className="flex items-center gap-2">
+              <Label htmlFor="conn-group" className="font-normal text-muted-foreground">
+                Tag
+              </Label>
+              <Input
+                id="conn-group"
+                value={form.group}
+                onChange={(e) => update({ group: e.target.value })}
+                list="conn-groups"
+                placeholder="Group"
+                autoComplete="off"
+                className="w-36"
               />
-              <FileField
-                id="ssl-key"
-                label="Client key"
-                value={form.sslClientKey}
-                placeholder="The private key of that certificate"
-                onChange={(sslClientKey) => update({ sslClientKey })}
-              />
-              {form.sslClientKey.trim() !== "" && (
-                <Field label="Key passphrase" htmlFor="ssl-passphrase" className="col-span-6">
-                  <Input
-                    id="ssl-passphrase"
-                    type="password"
-                    value={form.sslKeySecret}
-                    onChange={(e) => update({ sslKeySecret: e.target.value })}
-                    placeholder={keyPassphrasePlaceholder}
-                    autoComplete="new-password"
-                  />
-                  {form.hasSslKeySecret && !form.sslKeySecret && (
-                    <button
-                      type="button"
-                      onClick={() => update({ removeSslKeySecret: !form.removeSslKeySecret })}
-                      className="self-start text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-                    >
-                      {form.removeSslKeySecret
-                        ? "Keep the saved passphrase"
-                        : "Remove saved passphrase"}
-                    </button>
-                  )}
-                </Field>
-              )}
+              <datalist id="conn-groups">
+                {groups.map((group) => (
+                  <option key={group} value={group} />
+                ))}
+              </datalist>
             </div>
-          )}
-        </div>
-
-        <div className="col-span-6 flex flex-col gap-3 rounded-lg border p-3">
-          <label className="flex items-center gap-2 text-sm font-medium">
-            <input
-              type="checkbox"
-              checked={form.useSsh}
-              onChange={(e) => update({ useSsh: e.target.checked })}
-            />
-            Connect through an SSH tunnel
-          </label>
-          {form.useSsh && (
-            <div className="grid grid-cols-6 gap-x-3 gap-y-3">
-              <p className="col-span-6 text-xs text-muted-foreground">
-                The host and port above are the database as the SSH server sees it:{" "}
-                <span className="font-mono">localhost</span> is the SSH server itself.
-              </p>
-              <div className="col-span-6 flex items-center gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void fillFromSshConfig()}
-                >
-                  Fill from ~/.ssh/config
-                </Button>
-                {aliasNote && (
-                  <span role="status" className="text-xs text-muted-foreground">
-                    {aliasNote}
-                  </span>
-                )}
-              </div>
-              <Field
-                label="SSH host"
-                htmlFor="ssh-host"
-                error={fieldError("sshHost")}
-                className="col-span-4"
-              >
-                <Input
-                  id="ssh-host"
-                  value={form.sshHost}
-                  onChange={(e) => update({ sshHost: e.target.value })}
-                  aria-invalid={!!fieldError("sshHost")}
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-              </Field>
-              <Field
-                label="SSH port"
-                htmlFor="ssh-port"
-                error={fieldError("sshPort")}
-                className="col-span-2"
-              >
-                <Input
-                  id="ssh-port"
-                  value={form.sshPort}
-                  onChange={(e) => update({ sshPort: e.target.value })}
-                  inputMode="numeric"
-                  aria-invalid={!!fieldError("sshPort")}
-                  autoComplete="off"
-                />
-              </Field>
-              <Field
-                label="SSH user"
-                htmlFor="ssh-user"
-                error={fieldError("sshUser")}
-                className="col-span-3"
-              >
-                <Input
-                  id="ssh-user"
-                  value={form.sshUser}
-                  onChange={(e) => update({ sshUser: e.target.value })}
-                  aria-invalid={!!fieldError("sshUser")}
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-              </Field>
-              <Field label="Log in with" htmlFor="ssh-auth" className="col-span-3">
-                <Select
-                  value={form.sshAuth}
-                  onValueChange={(v) =>
-                    // A saved secret belongs to the way it was saved for.
-                    update({
-                      sshAuth: v as SshAuth["kind"],
-                      sshSecret: "",
-                      removeSshSecret: form.hasSshSecret,
-                    })
-                  }
-                >
-                  <SelectTrigger id="ssh-auth" className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {SSH_AUTH_METHODS.map((method) => (
-                      <SelectItem key={method.value} value={method.value}>
-                        {method.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Field>
-              {form.sshAuth === "privateKey" && (
-                <Field
-                  label="Private key file"
-                  htmlFor="ssh-key"
-                  error={fieldError("sshKeyPath")}
-                  className="col-span-6"
-                >
-                  <Input
-                    id="ssh-key"
-                    value={form.sshKeyPath}
-                    onChange={(e) => update({ sshKeyPath: e.target.value })}
-                    placeholder="~/.ssh/id_ed25519"
-                    aria-invalid={!!fieldError("sshKeyPath")}
-                    autoComplete="off"
-                    spellCheck={false}
-                  />
-                </Field>
-              )}
-              {form.sshAuth !== "agent" && (
-                <Field
-                  label={sshSecretLabel(form.sshAuth)}
-                  htmlFor="ssh-secret"
-                  className="col-span-6"
-                >
-                  <Input
-                    id="ssh-secret"
-                    type="password"
-                    value={form.sshSecret}
-                    onChange={(e) => update({ sshSecret: e.target.value })}
-                    placeholder={sshSecretPlaceholder}
-                    autoComplete="new-password"
-                  />
-                  {form.hasSshSecret && !form.sshSecret && (
-                    <button
-                      type="button"
-                      onClick={() => update({ removeSshSecret: !form.removeSshSecret })}
-                      className="self-start text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-                    >
-                      {form.removeSshSecret ? "Keep the saved secret" : "Remove saved secret"}
-                    </button>
-                  )}
-                </Field>
-              )}
-              {form.sshAuth === "agent" && (
-                <p className="col-span-6 text-xs text-muted-foreground">
-                  The keys of the running ssh-agent (
-                  <span className="font-mono">SSH_AUTH_SOCK</span>) are tried in turn. Add yours
-                  with <span className="font-mono">ssh-add</span>.
-                </p>
-              )}
-              <div className="col-span-6 flex flex-col gap-3 rounded-md border border-dashed p-3">
-                <label className="flex items-center gap-2 text-sm font-medium">
-                  <input
-                    type="checkbox"
-                    checked={form.useJump}
-                    onChange={(e) => update({ useJump: e.target.checked })}
-                  />
-                  Go through a jump host first
-                </label>
-                {form.useJump && (
-                  <div className="grid grid-cols-6 gap-x-3 gap-y-3">
-                    <p className="col-span-6 text-xs text-muted-foreground">
-                      You connect to the jump host (a bastion), and the SSH server above is reached
-                      from it.
-                    </p>
-                    <Field
-                      label="Jump host"
-                      htmlFor="jump-host"
-                      error={fieldError("jumpHost")}
-                      className="col-span-4"
-                    >
-                      <Input
-                        id="jump-host"
-                        value={form.jumpHost}
-                        onChange={(e) => update({ jumpHost: e.target.value })}
-                        aria-invalid={!!fieldError("jumpHost")}
-                        autoComplete="off"
-                        spellCheck={false}
-                      />
-                    </Field>
-                    <Field
-                      label="Port"
-                      htmlFor="jump-port"
-                      error={fieldError("jumpPort")}
-                      className="col-span-2"
-                    >
-                      <Input
-                        id="jump-port"
-                        value={form.jumpPort}
-                        onChange={(e) => update({ jumpPort: e.target.value })}
-                        inputMode="numeric"
-                        aria-invalid={!!fieldError("jumpPort")}
-                        autoComplete="off"
-                      />
-                    </Field>
-                    <Field
-                      label="User"
-                      htmlFor="jump-user"
-                      error={fieldError("jumpUser")}
-                      className="col-span-3"
-                    >
-                      <Input
-                        id="jump-user"
-                        value={form.jumpUser}
-                        onChange={(e) => update({ jumpUser: e.target.value })}
-                        aria-invalid={!!fieldError("jumpUser")}
-                        autoComplete="off"
-                        spellCheck={false}
-                      />
-                    </Field>
-                    <Field label="Log in with" htmlFor="jump-auth" className="col-span-3">
-                      <Select
-                        value={form.jumpAuth}
-                        onValueChange={(v) =>
-                          update({
-                            jumpAuth: v as SshAuth["kind"],
-                            jumpSecret: "",
-                            removeJumpSecret: form.hasJumpSecret,
-                          })
-                        }
-                      >
-                        <SelectTrigger id="jump-auth" className="w-full">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {SSH_AUTH_METHODS.map((method) => (
-                            <SelectItem key={method.value} value={method.value}>
-                              {method.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </Field>
-                    {form.jumpAuth === "privateKey" && (
-                      <Field
-                        label="Private key file"
-                        htmlFor="jump-key"
-                        error={fieldError("jumpKeyPath")}
-                        className="col-span-6"
-                      >
-                        <Input
-                          id="jump-key"
-                          value={form.jumpKeyPath}
-                          onChange={(e) => update({ jumpKeyPath: e.target.value })}
-                          placeholder="~/.ssh/id_ed25519"
-                          aria-invalid={!!fieldError("jumpKeyPath")}
-                          autoComplete="off"
-                          spellCheck={false}
-                        />
-                      </Field>
-                    )}
-                    {form.jumpAuth !== "agent" && (
-                      <Field
-                        label={sshSecretLabel(form.jumpAuth)}
-                        htmlFor="jump-secret"
-                        className="col-span-6"
-                      >
-                        <Input
-                          id="jump-secret"
-                          type="password"
-                          value={form.jumpSecret}
-                          onChange={(e) => update({ jumpSecret: e.target.value })}
-                          placeholder={jumpSecretPlaceholder}
-                          autoComplete="new-password"
-                        />
-                        {form.hasJumpSecret && !form.jumpSecret && (
-                          <button
-                            type="button"
-                            onClick={() => update({ removeJumpSecret: !form.removeJumpSecret })}
-                            className="self-start text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-                          >
-                            {form.removeJumpSecret
-                              ? "Keep the saved secret"
-                              : "Remove saved secret"}
-                          </button>
-                        )}
-                      </Field>
-                    )}
-                  </div>
-                )}
-              </div>
-              <div className="col-span-6">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  onClick={handleTestSsh}
-                  disabled={busy}
-                >
-                  Test SSH
-                </Button>
-              </div>
-            </div>
-          )}
-        </div>
-
-        <Field label="Group" htmlFor="conn-group" className="col-span-3">
-          <Input
-            id="conn-group"
-            value={form.group}
-            onChange={(e) => update({ group: e.target.value })}
-            list="conn-groups"
-            placeholder="Optional"
-            autoComplete="off"
-          />
-          <datalist id="conn-groups">
-            {groups.map((group) => (
-              <option key={group} value={group} />
-            ))}
-          </datalist>
-        </Field>
-        <Field label="Color" className="col-span-3">
-          <ColorPicker value={form.color} onChange={(color) => update(colorPatch(form, color))} />
-        </Field>
-
-        <Field
-          label="Statement timeout (seconds)"
-          htmlFor="conn-timeout"
-          error={fieldError("statementTimeout")}
-          className="col-span-6"
-        >
-          <Input
-            id="conn-timeout"
-            value={form.statementTimeout}
-            onChange={(e) => update({ statementTimeout: e.target.value })}
-            aria-invalid={!!fieldError("statementTimeout")}
-            placeholder="No limit"
-            inputMode="decimal"
-            autoComplete="off"
-            spellCheck={false}
-          />
-        </Field>
-
-        <Field label="Safe mode" htmlFor="conn-safe" className="col-span-6">
+          </div>
+        </Row>
+        <Row label="Safe mode" htmlFor="conn-safe">
           <Select value={form.safeMode} onValueChange={(v) => update({ safeMode: v as SafeMode })}>
             <SelectTrigger id="conn-safe" className="w-full">
               <SelectValue />
@@ -768,7 +315,463 @@ function ConnectionFormBody({ connection, groups, onClose }: ConnectionDialogPro
               ))}
             </SelectContent>
           </Select>
-        </Field>
+        </Row>
+      </Panel>
+
+      <Panel>
+        <Row
+          label="Host/Socket"
+          htmlFor="conn-host"
+          error={fieldError("host") ?? fieldError("port")}
+        >
+          <div className="flex items-center gap-3">
+            <Input
+              id="conn-host"
+              value={form.host}
+              onChange={(e) => update({ host: e.target.value })}
+              aria-invalid={!!fieldError("host")}
+              autoComplete="off"
+              spellCheck={false}
+            />
+            <Label htmlFor="conn-port" className="font-normal text-muted-foreground">
+              Port
+            </Label>
+            <Input
+              id="conn-port"
+              value={form.port}
+              onChange={(e) => update({ port: e.target.value })}
+              inputMode="numeric"
+              aria-invalid={!!fieldError("port")}
+              autoComplete="off"
+              className="w-24 shrink-0"
+            />
+          </div>
+        </Row>
+        <Row label="User" htmlFor="conn-user" error={fieldError("user")}>
+          <Input
+            id="conn-user"
+            value={form.user}
+            onChange={(e) => update({ user: e.target.value })}
+            aria-invalid={!!fieldError("user")}
+            autoComplete="off"
+            spellCheck={false}
+          />
+        </Row>
+        <Row label="Password" htmlFor="conn-password">
+          <Input
+            id="conn-password"
+            type="password"
+            value={form.password}
+            onChange={(e) => update({ password: e.target.value })}
+            placeholder={passwordPlaceholder}
+            autoComplete="new-password"
+          />
+          {form.hasPassword && !form.password && (
+            <LinkButton onClick={() => update({ removePassword: !form.removePassword })}>
+              {form.removePassword ? "Keep the saved password" : "Remove saved password"}
+            </LinkButton>
+          )}
+        </Row>
+        <Row label="Database" htmlFor="conn-database" error={fieldError("database")}>
+          <Input
+            id="conn-database"
+            value={form.database}
+            onChange={(e) => update({ database: e.target.value })}
+            aria-invalid={!!fieldError("database")}
+            autoComplete="off"
+            spellCheck={false}
+          />
+        </Row>
+        <Row
+          label="Statement timeout"
+          htmlFor="conn-timeout"
+          error={fieldError("statementTimeout")}
+        >
+          <Input
+            id="conn-timeout"
+            value={form.statementTimeout}
+            onChange={(e) => update({ statementTimeout: e.target.value })}
+            aria-invalid={!!fieldError("statementTimeout")}
+            placeholder="Seconds. No limit if empty"
+            inputMode="decimal"
+            autoComplete="off"
+            spellCheck={false}
+          />
+        </Row>
+        <Row label="SSL mode" htmlFor="conn-ssl">
+          <Select value={form.sslMode} onValueChange={(v) => update({ sslMode: v as SslMode })}>
+            <SelectTrigger id="conn-ssl" className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {SSL_MODES.map((mode) => (
+                <SelectItem key={mode.value} value={mode.value}>
+                  {mode.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">{SSL_MODE_HELP[form.sslMode]}</p>
+        </Row>
+        {form.sslMode !== "disable" && (
+          <Row label="SSL keys" error={fieldError("sslClientCert")}>
+            <div className="flex gap-2">
+              {verifiesCertificate(form.sslMode) && (
+                <FileButton
+                  label="CA Cert…"
+                  value={form.sslRootCert}
+                  onChange={(sslRootCert) => update({ sslRootCert })}
+                />
+              )}
+              <FileButton
+                label="Cert…"
+                value={form.sslClientCert}
+                onChange={(sslClientCert) => update({ sslClientCert })}
+              />
+              <FileButton
+                label="Key…"
+                value={form.sslClientKey}
+                onChange={(sslClientKey) => update({ sslClientKey })}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                aria-label="Clear the SSL files"
+                title="Clear the SSL files"
+                disabled={!form.sslRootCert && !form.sslClientCert && !form.sslClientKey}
+                onClick={() => update({ sslRootCert: "", sslClientCert: "", sslClientKey: "" })}
+              >
+                <MinusIcon />
+              </Button>
+            </div>
+          </Row>
+        )}
+        {form.sslMode !== "disable" && form.sslClientKey.trim() !== "" && (
+          <Row label="Key passphrase" htmlFor="ssl-passphrase">
+            <Input
+              id="ssl-passphrase"
+              type="password"
+              value={form.sslKeySecret}
+              onChange={(e) => update({ sslKeySecret: e.target.value })}
+              placeholder={keyPassphrasePlaceholder}
+              autoComplete="new-password"
+            />
+            {form.hasSslKeySecret && !form.sslKeySecret && (
+              <LinkButton onClick={() => update({ removeSslKeySecret: !form.removeSslKeySecret })}>
+                {form.removeSslKeySecret ? "Keep the saved passphrase" : "Remove saved passphrase"}
+              </LinkButton>
+            )}
+          </Row>
+        )}
+      </Panel>
+
+      <div className="flex flex-col gap-3">
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            aria-pressed={form.useSsh}
+            onClick={() => update({ useSsh: !form.useSsh })}
+            className={cn(
+              "px-4 font-medium",
+              form.useSsh
+                ? "bg-orange-500 text-white hover:bg-orange-500/90"
+                : "bg-secondary text-secondary-foreground hover:bg-secondary/80",
+            )}
+          >
+            Over SSH
+          </Button>
+          {!form.useSsh && (
+            <span className="text-xs text-muted-foreground">
+              Reach a database through an SSH server
+            </span>
+          )}
+        </div>
+
+        {form.useSsh && (
+          <Panel>
+            <p className="text-xs text-muted-foreground">
+              The host and port above are the database as the SSH server sees it:{" "}
+              <span className="font-mono">localhost</span> is the SSH server itself.
+            </p>
+            <Row
+              label="Server"
+              htmlFor="ssh-host"
+              error={fieldError("sshHost") ?? fieldError("sshPort")}
+            >
+              <div className="flex items-center gap-3">
+                <Input
+                  id="ssh-host"
+                  value={form.sshHost}
+                  onChange={(e) => update({ sshHost: e.target.value })}
+                  aria-invalid={!!fieldError("sshHost")}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <Label htmlFor="ssh-port" className="font-normal text-muted-foreground">
+                  Port
+                </Label>
+                <Input
+                  id="ssh-port"
+                  value={form.sshPort}
+                  onChange={(e) => update({ sshPort: e.target.value })}
+                  inputMode="numeric"
+                  aria-invalid={!!fieldError("sshPort")}
+                  autoComplete="off"
+                  className="w-24 shrink-0"
+                />
+              </div>
+            </Row>
+            <Row label="User" htmlFor="ssh-user" error={fieldError("sshUser")}>
+              <Input
+                id="ssh-user"
+                value={form.sshUser}
+                onChange={(e) => update({ sshUser: e.target.value })}
+                aria-invalid={!!fieldError("sshUser")}
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </Row>
+            {form.sshAuth !== "agent" && (
+              <Row
+                label={form.sshAuth === "password" ? "Password" : "Passphrase"}
+                htmlFor="ssh-secret"
+              >
+                <Input
+                  id="ssh-secret"
+                  type="password"
+                  value={form.sshSecret}
+                  onChange={(e) => update({ sshSecret: e.target.value })}
+                  placeholder={sshSecretPlaceholder}
+                  autoComplete="new-password"
+                />
+                {form.hasSshSecret && !form.sshSecret && (
+                  <LinkButton onClick={() => update({ removeSshSecret: !form.removeSshSecret })}>
+                    {form.removeSshSecret ? "Keep the saved secret" : "Remove saved secret"}
+                  </LinkButton>
+                )}
+              </Row>
+            )}
+            <Row
+              label={
+                <label className="flex cursor-pointer items-center justify-end gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={form.sshAuth === "privateKey"}
+                    onChange={(e) =>
+                      // A saved secret belongs to the way it was saved for.
+                      update({
+                        sshAuth: e.target.checked ? "privateKey" : "password",
+                        sshSecret: "",
+                        removeSshSecret: form.hasSshSecret,
+                      })
+                    }
+                  />
+                  Use SSH key
+                </label>
+              }
+              error={fieldError("sshKeyPath")}
+            >
+              {form.sshAuth === "privateKey" ? (
+                <div className="flex gap-2">
+                  <Input
+                    id="ssh-key"
+                    aria-label="Private key file"
+                    value={form.sshKeyPath}
+                    onChange={(e) => update({ sshKeyPath: e.target.value })}
+                    placeholder="~/.ssh/id_ed25519"
+                    aria-invalid={!!fieldError("sshKeyPath")}
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                  <FileButton
+                    label="Browse…"
+                    value=""
+                    title="Choose the private key file"
+                    className="flex-none"
+                    onChange={(sshKeyPath) => update({ sshKeyPath })}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    aria-label="Clear the key file"
+                    title="Clear the key file"
+                    disabled={!form.sshKeyPath}
+                    onClick={() => update({ sshKeyPath: "" })}
+                  >
+                    <MinusIcon />
+                  </Button>
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  {form.sshAuth === "agent"
+                    ? "The keys of the running ssh-agent (SSH_AUTH_SOCK) are tried in turn. Add yours with ssh-add."
+                    : "Log in with the password above."}
+                </p>
+              )}
+              <LinkButton
+                onClick={() =>
+                  update({
+                    sshAuth: form.sshAuth === "agent" ? "password" : "agent",
+                    sshSecret: "",
+                    removeSshSecret: form.hasSshSecret,
+                  })
+                }
+              >
+                {form.sshAuth === "agent" ? "Use a password or key" : "Use the ssh-agent instead"}
+              </LinkButton>
+            </Row>
+
+            <div className="flex flex-col gap-3 rounded-md border border-dashed p-3">
+              <label className="flex items-center gap-2 text-sm font-medium">
+                <input
+                  type="checkbox"
+                  checked={form.useJump}
+                  onChange={(e) => update({ useJump: e.target.checked })}
+                />
+                Go through a jump host first
+              </label>
+              {form.useJump && (
+                <>
+                  <p className="text-xs text-muted-foreground">
+                    You connect to the jump host (a bastion), and the SSH server above is reached
+                    from it.
+                  </p>
+                  <Row
+                    label="Jump host"
+                    htmlFor="jump-host"
+                    error={fieldError("jumpHost") ?? fieldError("jumpPort")}
+                  >
+                    <div className="flex items-center gap-3">
+                      <Input
+                        id="jump-host"
+                        value={form.jumpHost}
+                        onChange={(e) => update({ jumpHost: e.target.value })}
+                        aria-invalid={!!fieldError("jumpHost")}
+                        autoComplete="off"
+                        spellCheck={false}
+                      />
+                      <Label htmlFor="jump-port" className="font-normal text-muted-foreground">
+                        Port
+                      </Label>
+                      <Input
+                        id="jump-port"
+                        value={form.jumpPort}
+                        onChange={(e) => update({ jumpPort: e.target.value })}
+                        inputMode="numeric"
+                        aria-invalid={!!fieldError("jumpPort")}
+                        autoComplete="off"
+                        className="w-24 shrink-0"
+                      />
+                    </div>
+                  </Row>
+                  <Row label="User" htmlFor="jump-user" error={fieldError("jumpUser")}>
+                    <Input
+                      id="jump-user"
+                      value={form.jumpUser}
+                      onChange={(e) => update({ jumpUser: e.target.value })}
+                      aria-invalid={!!fieldError("jumpUser")}
+                      autoComplete="off"
+                      spellCheck={false}
+                    />
+                  </Row>
+                  <Row label="Log in with" htmlFor="jump-auth">
+                    <Select
+                      value={form.jumpAuth}
+                      onValueChange={(v) =>
+                        update({
+                          jumpAuth: v as SshAuth["kind"],
+                          jumpSecret: "",
+                          removeJumpSecret: form.hasJumpSecret,
+                        })
+                      }
+                    >
+                      <SelectTrigger id="jump-auth" className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {SSH_AUTH_METHODS.map((method) => (
+                          <SelectItem key={method.value} value={method.value}>
+                            {method.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </Row>
+                  {form.jumpAuth === "privateKey" && (
+                    <Row label="Key file" error={fieldError("jumpKeyPath")}>
+                      <div className="flex gap-2">
+                        <Input
+                          id="jump-key"
+                          aria-label="Jump host private key file"
+                          value={form.jumpKeyPath}
+                          onChange={(e) => update({ jumpKeyPath: e.target.value })}
+                          placeholder="~/.ssh/id_ed25519"
+                          aria-invalid={!!fieldError("jumpKeyPath")}
+                          autoComplete="off"
+                          spellCheck={false}
+                        />
+                        <FileButton
+                          label="Browse…"
+                          value=""
+                          title="Choose the private key file"
+                          className="flex-none"
+                          onChange={(jumpKeyPath) => update({ jumpKeyPath })}
+                        />
+                      </div>
+                    </Row>
+                  )}
+                  {form.jumpAuth !== "agent" && (
+                    <Row label={sshSecretLabel(form.jumpAuth)} htmlFor="jump-secret">
+                      <Input
+                        id="jump-secret"
+                        type="password"
+                        value={form.jumpSecret}
+                        onChange={(e) => update({ jumpSecret: e.target.value })}
+                        placeholder={jumpSecretPlaceholder}
+                        autoComplete="new-password"
+                      />
+                      {form.hasJumpSecret && !form.jumpSecret && (
+                        <LinkButton
+                          onClick={() => update({ removeJumpSecret: !form.removeJumpSecret })}
+                        >
+                          {form.removeJumpSecret ? "Keep the saved secret" : "Remove saved secret"}
+                        </LinkButton>
+                      )}
+                    </Row>
+                  )}
+                </>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void fillFromSshConfig()}
+              >
+                Fill from ~/.ssh/config
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={handleTestSsh}
+                disabled={busy}
+              >
+                Test SSH
+              </Button>
+              {aliasNote && (
+                <span role="status" className="text-xs text-muted-foreground">
+                  {aliasNote}
+                </span>
+              )}
+            </div>
+          </Panel>
+        )}
       </div>
 
       <div aria-live="polite" className="min-h-5 text-sm">
@@ -820,38 +823,62 @@ function ConnectionFormBody({ connection, groups, onClose }: ConnectionDialogPro
         {save.isError && <ErrorNote error={save.error} />}
       </div>
 
-      <DialogFooter className="sm:justify-between">
-        <Button type="button" variant="outline" onClick={handleTest} disabled={busy}>
-          Test connection
+      <DialogFooter className="sm:justify-end">
+        <Button type="button" variant="ghost" onClick={onClose} disabled={save.isPending}>
+          Cancel
         </Button>
-        <div className="flex gap-2">
-          <Button type="button" variant="ghost" onClick={onClose} disabled={save.isPending}>
-            Cancel
-          </Button>
-          <Button type="submit" disabled={busy}>
-            {save.isPending ? "Saving…" : "Save"}
-          </Button>
-        </div>
+        <Button type="button" variant="outline" onClick={handleTest} disabled={busy}>
+          Test
+        </Button>
+        <Button type="submit" disabled={busy}>
+          {save.isPending ? "Saving…" : "Save"}
+        </Button>
       </DialogFooter>
     </form>
   );
 }
 
-function Field(props: {
-  label: string;
+/** A group of rows on a slightly raised panel, like the sections of TablePlus's form. */
+function Panel({ children }: { children: ReactNode }) {
+  return <div className="flex flex-col gap-3 rounded-xl border bg-muted/30 p-4">{children}</div>;
+}
+
+/** One line of the form: its name right-aligned on the left, the control on the right. */
+function Row(props: {
+  label: ReactNode;
   htmlFor?: string;
   error?: string | undefined;
-  className?: string;
   children: ReactNode;
 }) {
   return (
-    <div className={cn("flex flex-col gap-1.5", props.className)}>
-      <Label htmlFor={props.htmlFor} className="flex justify-between">
-        {props.label}
-        {props.error && <span className="text-xs font-normal text-destructive">{props.error}</span>}
-      </Label>
-      {props.children}
+    <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] items-start gap-x-3">
+      {typeof props.label === "string" ? (
+        <Label
+          htmlFor={props.htmlFor}
+          className="h-8 justify-end text-right font-normal text-muted-foreground"
+        >
+          {props.label}
+        </Label>
+      ) : (
+        <div className="flex h-8 items-center justify-end text-muted-foreground">{props.label}</div>
+      )}
+      <div className="flex min-w-0 flex-col gap-1">
+        {props.children}
+        {props.error && <span className="text-xs text-destructive">{props.error}</span>}
+      </div>
     </div>
+  );
+}
+
+function LinkButton(props: { onClick: () => void; children: ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={props.onClick}
+      className="self-start text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+    >
+      {props.children}
+    </button>
   );
 }
 
@@ -891,42 +918,33 @@ function ColorPicker({
   );
 }
 
-/** A path to a file: typed, or picked with the system's file dialog. */
-function FileField(props: {
-  id: string;
+/** A button that picks a file with the system's dialog. Once one is chosen it shows its name. */
+function FileButton(props: {
   label: string;
   value: string;
-  placeholder: string;
-  help?: string;
-  error?: string | undefined;
+  title?: string;
+  className?: string;
   onChange: (path: string) => void;
 }) {
   async function browse() {
     try {
-      const chosen = await pickFile(props.label);
+      const chosen = await pickFile(props.title ?? props.label.replace("…", ""));
       if (chosen) props.onChange(chosen);
     } catch {
-      // No file dialog here (a plain browser): the path can still be typed.
+      // No file dialog here (a plain browser).
     }
   }
+  const name = props.value.split("/").filter(Boolean).pop();
   return (
-    <Field label={props.label} htmlFor={props.id} error={props.error} className="col-span-6">
-      <div className="flex gap-2">
-        <Input
-          id={props.id}
-          value={props.value}
-          onChange={(e) => props.onChange(e.target.value)}
-          placeholder={props.placeholder}
-          aria-invalid={!!props.error}
-          autoComplete="off"
-          spellCheck={false}
-        />
-        <Button type="button" variant="outline" onClick={() => void browse()}>
-          Browse…
-        </Button>
-      </div>
-      {props.help && <p className="text-xs text-muted-foreground">{props.help}</p>}
-    </Field>
+    <Button
+      type="button"
+      variant="outline"
+      onClick={() => void browse()}
+      title={props.value || props.title || props.label}
+      className={cn("min-w-0 flex-1", name && "text-foreground", props.className)}
+    >
+      <span className="truncate">{name ?? props.label}</span>
+    </Button>
   );
 }
 
