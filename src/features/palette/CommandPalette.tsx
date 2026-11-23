@@ -22,6 +22,7 @@ import {
 import { openObject } from "@/features/palette/openObject";
 import { useRecents } from "@/features/palette/recents";
 import { useAllObjects } from "@/features/palette/useAllObjects";
+import { DatabaseResults } from "@/features/palette/DatabaseResults";
 import { Highlighted } from "@/features/sidebar/Highlighted";
 import { OBJECT_ICONS } from "@/features/sidebar/objectIcons";
 import { useCurrentSchema, useDatabases, useSwitchDatabase } from "@/features/sidebar/useSchema";
@@ -50,6 +51,22 @@ const KIND_LABEL: Partial<Record<DbObject["kind"], string>> = {
   enumType: "type",
 };
 
+const TITLES: Record<PaletteMode, string> = {
+  objects: "Open",
+  commands: "Commands",
+  databases: "Databases",
+};
+const DESCRIPTIONS: Record<PaletteMode, string> = {
+  objects: "Search for a table, view, function or other object.",
+  commands: "Switch database, schema or connection, or run a command.",
+  databases: "Search for a database of this server and switch to it.",
+};
+const PLACEHOLDERS: Record<PaletteMode, string> = {
+  objects: "Find a table, view, function…",
+  commands: "Type a command, database, schema…",
+  databases: "Find a database…",
+};
+
 /** ⌘P finds an object, ⌘K runs a command or switches database, schema or connection. */
 export function CommandPalette({ connectionId }: { connectionId: string }) {
   const mode = usePaletteStore((s) => s.mode);
@@ -59,12 +76,8 @@ export function CommandPalette({ connectionId }: { connectionId: string }) {
     <CommandDialog
       open={mode !== null}
       onOpenChange={(open) => !open && close()}
-      title={mode === "commands" ? "Commands" : "Open"}
-      description={
-        mode === "commands"
-          ? "Switch database, schema or connection, or run a command."
-          : "Search for a table, view, function or other object."
-      }
+      title={TITLES[mode ?? "objects"]}
+      description={DESCRIPTIONS[mode ?? "objects"]}
       className="sm:max-w-xl"
     >
       {/* Mounted only while open and re-created per mode, so each opening starts with an empty search. */}
@@ -85,14 +98,14 @@ function PaletteBody({ mode, connectionId }: { mode: PaletteMode; connectionId: 
           setQuery(value);
           setError(null);
         }}
-        placeholder={
-          mode === "objects" ? "Find a table, view, function…" : "Type a command, database, schema…"
-        }
+        placeholder={PLACEHOLDERS[mode]}
         autoFocus
       />
       <CommandList className="max-h-96">
         {mode === "objects" ? (
           <ObjectResults connectionId={connectionId} query={query} />
+        ) : mode === "databases" ? (
+          <DatabaseResults connectionId={connectionId} query={query} onError={setError} />
         ) : (
           <CommandResults connectionId={connectionId} query={query} onError={setError} />
         )}
@@ -104,7 +117,7 @@ function PaletteBody({ mode, connectionId }: { mode: PaletteMode; connectionId: 
       )}
       <div className="flex items-center gap-3 border-t px-3 py-1.5 text-[11px] text-muted-foreground">
         <span>↑↓ move</span>
-        <span>↵ {mode === "objects" ? "open" : "run"}</span>
+        <span>↵ {mode === "objects" ? "open" : mode === "databases" ? "switch" : "run"}</span>
         <span>esc close</span>
         <span className="ml-auto">
           {mode === "objects"

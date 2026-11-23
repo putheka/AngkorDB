@@ -55,6 +55,13 @@ export const COMMANDS: readonly CommandDef[] = [
     hidden: true,
   },
   {
+    id: "app.databases",
+    title: "Switch database",
+    group: "General",
+    scope: "app",
+    keys: ["Cmd+KeyO"],
+  },
+  {
     id: "app.reload",
     title: "Reload schema and rows",
     group: "General",

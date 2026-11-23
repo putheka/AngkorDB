@@ -1,5 +1,12 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { DatabaseZapIcon, PlusIcon, RefreshCwIcon, SearchIcon, XIcon } from "lucide-react";
+import {
+  DatabaseIcon,
+  DatabaseZapIcon,
+  PlusIcon,
+  RefreshCwIcon,
+  SearchIcon,
+  XIcon,
+} from "lucide-react";
 import { Suspense, useMemo, useRef, useState, type KeyboardEvent } from "react";
 
 import type { DbObject } from "@/bindings";
@@ -35,6 +42,7 @@ import { useShortcut } from "@/features/shortcuts/registry";
 import { commands } from "@/lib/ipc";
 import { useBackupDialog } from "@/stores/backupDialog";
 import { useImportDialog } from "@/stores/importDialog";
+import { usePaletteStore } from "@/stores/palette";
 import type { ObjectAction } from "@/features/objects/ObjectActionDialog";
 import { useTableViews } from "@/features/grid/tableViews";
 import { ObjectRow } from "@/features/sidebar/ObjectRow";
@@ -45,7 +53,6 @@ import {
   useCurrentSchema,
   useDatabases,
   useObjects,
-  useSwitchDatabase,
 } from "@/features/sidebar/useSchema";
 import { errorMessage } from "@/lib/errors";
 import { tableTabId, useTabsStore } from "@/stores/tabs";
@@ -79,7 +86,6 @@ export function ObjectTree({ connectionId }: { connectionId: string }) {
   const databases = useDatabases(connectionId);
   const { schema, schemas, setSchema } = useCurrentSchema(connectionId);
   const objects = useObjects(connectionId, schema);
-  const switchDatabase = useSwitchDatabase(connectionId);
 
   const [query, setQuery] = useState("");
   const [collapsed, setCollapsed] = useState<ReadonlySet<GroupId>>(new Set());
@@ -104,6 +110,7 @@ export function ObjectTree({ connectionId }: { connectionId: string }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const filterKey = useShortcutLabel("sidebar.filter");
+  const databaseKey = useShortcutLabel("app.databases");
   // While the focus is in the sidebar its search takes the keys that filter the table elsewhere.
   useShortcut(
     "sidebar.filter",
@@ -204,22 +211,19 @@ export function ObjectTree({ connectionId }: { connectionId: string }) {
   return (
     <div ref={rootRef} className="flex min-h-0 flex-1 flex-col">
       <div className="flex flex-col gap-1.5 border-b border-sidebar-border p-2">
-        <Select
-          value={currentDatabase ?? ""}
-          onValueChange={(database) => switchDatabase.mutate(database)}
-          disabled={switchDatabase.isPending || !databases.data}
+        {/* Opens the database picker: a search box over the list, like ⌘K, not a long menu. */}
+        <button
+          type="button"
+          aria-label="Database"
+          title={`Switch database (${databaseKey})`}
+          disabled={!databases.data}
+          onClick={() => usePaletteStore.getState().open("databases")}
+          className="flex h-7 w-full items-center gap-1.5 rounded-[min(var(--radius-md),10px)] border border-input bg-transparent pr-2 pl-2.5 text-sm transition-colors outline-none hover:bg-muted focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-input/30 dark:hover:bg-input/50"
         >
-          <SelectTrigger size="sm" className="w-full" aria-label="Database">
-            <SelectValue placeholder="Database" />
-          </SelectTrigger>
-          <SelectContent>
-            {databases.data?.map((d) => (
-              <SelectItem key={d.name} value={d.name}>
-                {d.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+          <DatabaseIcon className="size-4 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 flex-1 truncate text-left">{currentDatabase ?? "Database"}</span>
+          <kbd className="shrink-0 text-[11px] text-muted-foreground">{databaseKey}</kbd>
+        </button>
 
         <div className="flex items-center gap-1.5">
           <Select value={schema ?? ""} onValueChange={setSchema} disabled={schemas.length === 0}>
@@ -339,11 +343,6 @@ export function ObjectTree({ connectionId }: { connectionId: string }) {
         {problem && (
           <p role="alert" className="text-xs text-destructive">
             {problem}
-          </p>
-        )}
-        {switchDatabase.error && (
-          <p role="alert" className="text-xs text-destructive">
-            {errorMessage(switchDatabase.error)}
           </p>
         )}
       </div>

@@ -2,6 +2,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 
 import { guardUnsaved } from "@/features/grid/editing/unsavedGuard";
 import { dataKey } from "@/features/grid/useTableData";
+import { useDatabaseRecents } from "@/features/palette/databaseRecents";
 import { commands } from "@/lib/ipc";
 import { queryClient } from "@/lib/queryClient";
 import { useBrowserStore } from "@/stores/browser";
@@ -57,8 +58,9 @@ export function useSwitchDatabase(connectionId: string) {
       await commands.switchDatabase(connectionId, database);
       return true;
     },
-    onSuccess: async (switched) => {
+    onSuccess: async (switched, database) => {
       if (!switched) return;
+      useDatabaseRecents.getState().add(connectionId, database);
       useTabsStore.getState().closeAll();
       useStatusStore.getState().clear();
       useBrowserStore.getState().setSchema(null);

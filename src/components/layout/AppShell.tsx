@@ -68,6 +68,9 @@ export function AppShell() {
   useShortcut("app.commands", () => usePaletteStore.getState().toggle("commands"), {
     enabled: connected,
   });
+  useShortcut("app.databases", () => usePaletteStore.getState().toggle("databases"), {
+    enabled: connected,
+  });
   useShortcut("app.sidebar", () => toggleSidebar(), { enabled: connected });
   // Also stops the webview from reloading the whole app.
   useShortcut(

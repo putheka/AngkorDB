@@ -1,7 +1,11 @@
 import { create } from "zustand";
 
-/** `objects` (⌘P): find a table, view or function. `commands` (⌘K): switch database, schema, connection. */
-export type PaletteMode = "objects" | "commands";
+/**
+ * `objects` (⌘P): find a table, view or function. `commands` (⌘K): run a command, or switch
+ * database, schema, connection. `databases` (⌘O, or the database button of the sidebar): switch
+ * database.
+ */
+export type PaletteMode = "objects" | "commands" | "databases";
 
 interface PaletteState {
   mode: PaletteMode | null;
