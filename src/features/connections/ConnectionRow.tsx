@@ -1,4 +1,11 @@
-import { CopyIcon, Loader2Icon, PencilIcon, PlugIcon, Trash2Icon } from "lucide-react";
+import {
+  AppWindowIcon,
+  CopyIcon,
+  Loader2Icon,
+  PencilIcon,
+  PlugIcon,
+  Trash2Icon,
+} from "lucide-react";
 
 import type { ConnectionConfig } from "@/bindings";
 import { Button } from "@/components/ui/button";
@@ -22,6 +29,8 @@ interface ConnectionRowProps {
   disabled: boolean;
   onSelect: () => void;
   onConnect: () => void;
+  /** Open it in a window of its own, so what is open here stays. */
+  onConnectInNewWindow: () => void;
   onEdit: () => void;
   onDuplicate: () => void;
   onDelete: () => void;
@@ -82,6 +91,9 @@ export function ConnectionRow(props: ConnectionRowProps) {
       <ContextMenuContent>
         <ContextMenuItem onSelect={props.onConnect} disabled={disabled}>
           <PlugIcon /> Connect
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={props.onConnectInNewWindow}>
+          <AppWindowIcon /> Open in New Window
         </ContextMenuItem>
         <ContextMenuItem onSelect={props.onEdit}>
           <PencilIcon /> Edit…

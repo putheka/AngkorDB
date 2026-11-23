@@ -25,6 +25,7 @@ import {
 } from "@/features/connections/useConnections";
 import { ReopenSetting } from "@/features/workspace/ReopenSetting";
 import { errorMessage } from "@/lib/errors";
+import { commands } from "@/lib/ipc";
 import { useSessionStore } from "@/stores/session";
 import { useWelcome } from "@/stores/welcome";
 
@@ -206,6 +207,7 @@ export function WelcomeScreen() {
                       disabled={connectingId !== null}
                       onSelect={() => setSelectedId(connection.id)}
                       onConnect={() => void connect(connection)}
+                      onConnectInNewWindow={() => void commands.openWindow(connection.id, false)}
                       onEdit={() => setDialog(connection)}
                       onDuplicate={() => handleDuplicate(connection)}
                       onDelete={() => setDeleting(connection)}

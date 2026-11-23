@@ -94,12 +94,11 @@ export function AppShell() {
   });
 
   // File and View.
+  useShortcut("app.newWindow", () => void commands.openWindow(null, false));
   useShortcut("app.newConnection", async () => {
-    // A connection that is open is closed first (the welcome screen is where connections are made).
-    if (
-      useSessionStore.getState().activeConnectionId &&
-      !(await useSessionStore.getState().disconnect())
-    ) {
+    // With a connection open, the form goes to a new window: that connection stays open.
+    if (useSessionStore.getState().activeConnectionId) {
+      void commands.openWindow(null, true);
       return;
     }
     useWelcome.getState().requestNewConnection();

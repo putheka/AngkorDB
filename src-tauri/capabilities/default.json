@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the main window and the settings window",
-  "windows": ["main", "settings"],
+  "description": "Capability for the main window, the windows opened later, and the settings window",
+  "windows": ["main", "settings", "window-*"],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",

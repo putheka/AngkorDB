@@ -1,9 +1,9 @@
 /**
  * The native menu bar and the registry (ANG-55): choosing a menu item runs the command of the same
  * id, and the page tells the menu which items have keys now (they follow what the person set) and
- * which can be chosen (a query command is grey while no query tab is open).
+ * which can be chosen (a query command is grey while no query tab is open). The menu bar is one
+ * for all windows: each page says what it needs, and the app shows the one of the window in use.
  */
-import { listen } from "@tauri-apps/api/event";
 import { useEffect } from "react";
 
 import type { MenuUpdate } from "@/bindings";
@@ -12,6 +12,7 @@ import { MENU_COMMAND_IDS, commandById } from "@/features/shortcuts/commands";
 import { toMenuAccelerator } from "@/features/shortcuts/keys";
 import { isAvailable, onAvailabilityChange, runCommand } from "@/features/shortcuts/registry";
 import { commands } from "@/lib/ipc";
+import { listenInWindow, windowLabel } from "@/lib/windowEvents";
 import { useShortcuts } from "@/stores/shortcuts";
 
 /** Native → page: a menu item was chosen; the payload is the id of its command. */
@@ -38,8 +39,9 @@ export function useNativeMenu() {
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     let cancelled = false;
-    listen<string>(MENU_COMMAND, (event) => {
-      runCommand(event.payload);
+    // The app sends a chosen item to the window in use only.
+    listenInWindow<string>(MENU_COMMAND, (id) => {
+      runCommand(id);
     })
       .then((stop) => (cancelled ? stop() : (unlisten = stop)))
       .catch(() => undefined); // no native app behind the page (browser dev mode)
@@ -51,7 +53,7 @@ export function useNativeMenu() {
       timer = setTimeout(() => {
         timer = null;
         const updates = menuUpdates(useShortcuts.getState().overrides, isAvailable);
-        commands.updateMenu(updates).catch(() => undefined);
+        commands.updateMenu(windowLabel(), updates).catch(() => undefined);
       }, 30);
     };
     push();

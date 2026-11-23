@@ -321,6 +321,11 @@ const handlers: Record<string, Handler> = {
     return null;
   },
   quit_app: () => null,
+  // Windows only exist in the native app: in a browser the one page holds every connection.
+  close_window: () => null,
+  open_window: () => null,
+  claim_connection: () => true,
+  release_connection: () => null,
 
   list_connections: () => structuredClone(connections),
 

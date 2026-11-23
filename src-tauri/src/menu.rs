@@ -12,7 +12,9 @@
 use serde::Deserialize;
 use tauri::image::Image;
 use tauri::menu::{AboutMetadata, Menu, MenuItem, MenuItemKind, PredefinedMenuItem, Submenu};
-use tauri::{AppHandle, Emitter, Runtime};
+use tauri::{AppHandle, Manager, Runtime};
+
+use crate::state::AppState;
 
 /// Event name carrying the id of the command to run.
 pub const MENU_COMMAND: &str = "menu-command";
@@ -92,6 +94,7 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         "File",
         true,
         &[
+            &item(app, "app.newWindow", "New Window")?,
             &item(app, "app.newConnection", "New Connection…")?,
             &item(app, "tabs.new", "New Query Tab")?,
             &item(app, "app.find", "Open Anything…")?,
@@ -222,8 +225,13 @@ pub fn on_event<R: Runtime>(app: &AppHandle<R>, id: &str) {
     if id == SETTINGS {
         crate::settings::open(app);
     } else if !id.is_empty() {
-        // Only fails if no window is listening, in which case there is nothing to run.
-        let _ = app.emit(MENU_COMMAND, id.to_owned());
+        // To the window in use: the others have their own connections and tabs.
+        let Some(state) = app.try_state::<AppState>() else {
+            return;
+        };
+        if let Some(label) = crate::windows::target(app, state.windows()) {
+            crate::windows::emit_to(app, &label, MENU_COMMAND, id.to_owned());
+        }
     }
 }
 

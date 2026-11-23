@@ -3,6 +3,7 @@ use tauri::State;
 
 use crate::menu::MenuUpdate;
 use crate::state::AppState;
+use crate::windows::Start;
 
 #[derive(Debug, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -28,19 +29,59 @@ pub fn app_info() -> AppInfo {
     }
 }
 
-/// The page says how many tabs have staged edits. While there are any, quitting and closing the
-/// window ask the page first, and the window shows the macOS "edited" dot.
+/// The page of a window says how many of its tabs have staged edits. While any window has some,
+/// quitting asks first, closing that window asks, and the window shows the macOS "edited" dot.
 #[tauri::command]
 #[specta::specta]
-pub fn set_unsaved_changes(state: State<'_, AppState>, count: u32) {
-    state.set_unsaved_changes(count);
+pub fn set_unsaved_changes(state: State<'_, AppState>, label: String, count: u32) {
+    state.set_unsaved_changes(&label, count);
 }
 
-/// Quit the app. Called by the page once the person has decided about their unsaved edits.
+/// Go on quitting. Called by the page of a window once the person has decided about its unsaved
+/// edits; other windows with edits are asked next, then the app exits.
 #[tauri::command]
 #[specta::specta]
-pub fn quit_app(state: State<'_, AppState>) {
-    state.quit();
+pub fn quit_app(state: State<'_, AppState>, label: String) {
+    state.quit(&label);
+}
+
+/// Close a window. Called by its page once the person has decided about its unsaved edits.
+#[tauri::command]
+#[specta::specta]
+pub fn close_window(state: State<'_, AppState>, label: String) {
+    state.close_window(&label);
+}
+
+/// Open another window (⇧⌘N): on the welcome screen, on the form for a new connection, or on
+/// this connection. A connection that another window has open brings that window forward.
+#[tauri::command]
+#[specta::specta]
+pub fn open_window(
+    state: State<'_, AppState>,
+    connection_id: Option<String>,
+    new_connection: bool,
+) {
+    let start = match connection_id {
+        Some(id) => Start::Connection(id),
+        None if new_connection => Start::NewConnection,
+        None => Start::Welcome,
+    };
+    state.open_window(start);
+}
+
+/// A window is about to open a connection. `false` when another window has it open (that window
+/// is brought forward): a connection is open in one window at a time.
+#[tauri::command]
+#[specta::specta]
+pub fn claim_connection(state: State<'_, AppState>, label: String, connection_id: String) -> bool {
+    state.claim_connection(&label, &connection_id)
+}
+
+/// The window has no connection any more (it disconnected, or the connect failed).
+#[tauri::command]
+#[specta::specta]
+pub fn release_connection(state: State<'_, AppState>, label: String) {
+    state.release_connection(&label);
 }
 
 /// Show the settings window (⌘,), opening it if it isn't open.
@@ -62,8 +103,8 @@ pub fn set_confirm_on_quit(state: State<'_, AppState>, confirm: bool) {
 /// person changes a shortcut and when a screen opens or closes.
 #[tauri::command]
 #[specta::specta]
-pub fn update_menu(state: State<'_, AppState>, updates: Vec<MenuUpdate>) {
-    state.update_menu(updates);
+pub fn update_menu(state: State<'_, AppState>, label: String, updates: Vec<MenuUpdate>) {
+    state.update_menu(&label, updates);
 }
 
 #[cfg(test)]

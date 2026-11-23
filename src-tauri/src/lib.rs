@@ -18,6 +18,7 @@ pub mod models;
 pub mod settings;
 pub mod state;
 pub mod storage;
+pub mod windows;
 
 use std::path::Path;
 
@@ -28,6 +29,7 @@ use storage::workspace::WorkspaceStore;
 use storage::{ConnectionManager, secrets::default_secret_store};
 use tauri::Manager;
 use tauri_specta::{Builder, collect_commands};
+use windows::MAIN_LABEL;
 
 /// Where the generated TypeScript bindings live, relative to `src-tauri/`.
 pub const BINDINGS_PATH: &str = "../src/bindings.ts";
@@ -48,6 +50,10 @@ pub fn specta_builder<R: tauri::Runtime>() -> Builder<R> {
             commands::app::app_info,
             commands::app::set_unsaved_changes,
             commands::app::quit_app,
+            commands::app::close_window,
+            commands::app::open_window,
+            commands::app::claim_connection,
+            commands::app::release_connection,
             commands::app::open_settings,
             commands::app::update_menu,
             commands::app::set_confirm_on_quit,
@@ -151,7 +157,13 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         // Size, position and maximized state of the window come back at the next launch (ANG-50).
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        // Only the windows the app makes itself keep their place: the others open next to the one
+        // they were made from.
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_filter(|label| label == MAIN_LABEL || label == settings::SETTINGS_LABEL)
+                .build(),
+        )
         .menu(menu::build)
         .on_menu_event(|app, event| menu::on_event(app, event.id().as_ref()))
         .setup(|app| {
@@ -179,32 +191,50 @@ pub fn run() {
                     .with_workspaces(workspaces),
             );
 
-            // The sidebar of macOS apps lets the desktop show through (ANG-51). The page paints
-            // everything else opaque; the sidebar goes translucent unless the person turned it off.
-            #[cfg(target_os = "macos")]
-            if let Some(main) = app.get_webview_window("main")
-                && let Err(e) = window_vibrancy::apply_vibrancy(
-                    &main,
-                    window_vibrancy::NSVisualEffectMaterial::Sidebar,
-                    None,
-                    None,
-                )
-            {
-                eprintln!("no window vibrancy: {e}");
+            // The sidebar of macOS apps lets the desktop show through (ANG-51); every window
+            // that is made later gets the same.
+            if let Some(main) = app.get_webview_window(MAIN_LABEL) {
+                windows::style(&main);
             }
+            app.state::<AppState>().windows().note_focus(MAIN_LABEL);
 
-            // What commands may not do themselves: touch the window and quit (ANG-29).
-            let window = app.handle().clone();
+            // What commands may not do themselves: touch the windows and quit (ANG-29).
+            let edited = app.handle().clone();
             let quitter = app.handle().clone();
+            let asker = app.handle().clone();
+            let closer = app.handle().clone();
+            let maker = app.handle().clone();
+            let focuser = app.handle().clone();
             let opener = app.handle().clone();
             let menu_owner = app.handle().clone();
             app.state::<AppState>().set_window_hooks(WindowHooks {
-                set_edited: Box::new(move |edited| {
-                    if let Some(main) = window.get_webview_window("main") {
-                        angkordb_macos_window::set_document_edited(&main, edited);
+                set_edited: Box::new(move |label, is_edited| {
+                    if let Some(window) = edited.get_webview_window(label) {
+                        angkordb_macos_window::set_document_edited(&window, is_edited);
                     }
                 }),
                 quit: Box::new(move || quitter.exit(0)),
+                ask_quit: Box::new(move |label| {
+                    windows::focus(&asker, label);
+                    windows::emit_to(&asker, label, windows::QUIT_REQUESTED, ());
+                }),
+                // Windows are made and closed on the main thread.
+                close_window: Box::new(move |label| {
+                    let app = closer.clone();
+                    let label = label.to_owned();
+                    let _ = closer.run_on_main_thread(move || {
+                        if let Some(window) = app.get_webview_window(&label) {
+                            let _ = window.destroy();
+                        }
+                    });
+                }),
+                open_window: Box::new(move |start| {
+                    let app = maker.clone();
+                    let _ = maker.run_on_main_thread(move || {
+                        windows::open(&app, app.state::<AppState>().windows(), start);
+                    });
+                }),
+                focus_window: Box::new(move |label| windows::focus(&focuser, label)),
                 // The menu is changed on the main thread.
                 update_menu: Box::new(move |updates| {
                     let app = menu_owner.clone();
@@ -214,7 +244,6 @@ pub fn run() {
                         }
                     });
                 }),
-                // Windows are made on the main thread.
                 open_settings: Box::new(move || {
                     let app = opener.clone();
                     let _ = opener.run_on_main_thread(move || settings::open(&app));

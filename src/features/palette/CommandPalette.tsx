@@ -33,6 +33,7 @@ import { shortcutLabel } from "@/features/shortcuts/labels";
 import { isAvailable, runCommand } from "@/features/shortcuts/registry";
 import { usePaletteStore, type PaletteMode } from "@/stores/palette";
 import { useShortcuts } from "@/stores/shortcuts";
+import { commands } from "@/lib/ipc";
 import { useSessionStore } from "@/stores/session";
 import { useBackupDialog } from "@/stores/backupDialog";
 import { useImportDialog } from "@/stores/importDialog";
@@ -314,13 +315,9 @@ function CommandResults({
         id: `connection:${c.id}`,
         group: "Connections",
         label: c.name,
-        hint: `${c.user}@${c.host}`,
-        run: () => {
-          const { disconnect, connect } = useSessionStore.getState();
-          void disconnect().then((done) => {
-            if (done) return connect(c);
-          });
-        },
+        hint: `${c.user}@${c.host} · new window`,
+        // In a window of its own: what is open here stays open ("Disconnect" leaves it).
+        run: () => void commands.openWindow(c.id, false),
       })),
   ];
 

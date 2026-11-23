@@ -962,7 +962,7 @@ fn preview_and_apply_changes_through_ipc() {
     );
 
     // A failure arrives as an error naming the change, with the Postgres details kept.
-    let failing = json!({ "updates": [{
+    let failing = json!({ "label": "main", "updates": [{
         "row": { "kind": "key", "columns": ["id"], "values": ["999"] },
         "values": { "name": { "kind": "value", "text": "x" } },
     }], "inserts": [], "deletes": [] });
@@ -1007,34 +1007,66 @@ fn preview_and_apply_changes_through_ipc() {
 #[test]
 fn unsaved_changes_are_remembered_and_drive_the_window_hooks() {
     use angkordb_lib::state::WindowHooks;
+    use angkordb_lib::windows::Start;
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicU32, Ordering};
 
     let ipc = setup();
     let state = ipc._app.state::<AppState>();
 
-    // Without hooks (as in tests) the commands still work and the count is kept.
+    // Without hooks (as in tests) the commands still work and the counts are kept per window.
     assert_eq!(state.unsaved_changes(), 0);
-    ipc.call("set_unsaved_changes", json!({ "count": 3 }))
+    ipc.call(
+        "set_unsaved_changes",
+        json!({ "label": "main", "count": 3 }),
+    )
+    .unwrap();
+    ipc.call(
+        "set_unsaved_changes",
+        json!({ "label": "window-2", "count": 2 }),
+    )
+    .unwrap();
+    assert_eq!(state.unsaved_changes(), 5);
+    ipc.call("quit_app", json!({ "label": "main" })).unwrap();
+    ipc.call("close_window", json!({ "label": "window-2" }))
         .unwrap();
-    assert_eq!(state.unsaved_changes(), 3);
-    ipc.call("quit_app", json!({})).unwrap();
+    assert_eq!(state.unsaved_changes(), 0);
 
-    // With hooks: the edited dot follows "is there anything unsaved", quitting calls the hook.
+    // With hooks: each window's edited dot follows "is there anything unsaved in it".
     let dots = Arc::new(Mutex::new(Vec::new()));
     let quits = Arc::new(AtomicU32::new(0));
+    let asked = Arc::new(Mutex::new(Vec::new()));
+    let closed = Arc::new(Mutex::new(Vec::new()));
+    let opened = Arc::new(Mutex::new(Vec::new()));
+    let focused = Arc::new(Mutex::new(Vec::new()));
     let opens = Arc::new(AtomicU32::new(0));
     let menus = Arc::new(Mutex::new(Vec::new()));
     state.set_window_hooks(WindowHooks {
         set_edited: {
             let dots = dots.clone();
-            Box::new(move |edited| dots.lock().unwrap().push(edited))
+            Box::new(move |label, edited| dots.lock().unwrap().push((label.to_owned(), edited)))
         },
         quit: {
             let quits = quits.clone();
             Box::new(move || {
                 quits.fetch_add(1, Ordering::SeqCst);
             })
+        },
+        ask_quit: {
+            let asked = asked.clone();
+            Box::new(move |label| asked.lock().unwrap().push(label.to_owned()))
+        },
+        close_window: {
+            let closed = closed.clone();
+            Box::new(move |label| closed.lock().unwrap().push(label.to_owned()))
+        },
+        open_window: {
+            let opened = opened.clone();
+            Box::new(move |start| opened.lock().unwrap().push(start))
+        },
+        focus_window: {
+            let focused = focused.clone();
+            Box::new(move |label| focused.lock().unwrap().push(label.to_owned()))
         },
         open_settings: {
             let opens = opens.clone();
@@ -1048,15 +1080,86 @@ fn unsaved_changes_are_remembered_and_drive_the_window_hooks() {
         },
     });
     for count in [1, 4, 0] {
-        ipc.call("set_unsaved_changes", json!({ "count": count }))
-            .unwrap();
+        ipc.call(
+            "set_unsaved_changes",
+            json!({ "label": "main", "count": count }),
+        )
+        .unwrap();
     }
-    assert_eq!(*dots.lock().unwrap(), [true, true, false]);
+    assert_eq!(
+        *dots.lock().unwrap(),
+        [
+            ("main".to_owned(), true),
+            ("main".to_owned(), true),
+            ("main".to_owned(), false)
+        ]
+    );
     assert_eq!(state.unsaved_changes(), 0);
 
+    // Quitting: the window that answers is done; the next one with edits is asked; with none
+    // left the app exits.
+    ipc.call(
+        "set_unsaved_changes",
+        json!({ "label": "window-2", "count": 1 }),
+    )
+    .unwrap();
+    ipc.call(
+        "set_unsaved_changes",
+        json!({ "label": "main", "count": 1 }),
+    )
+    .unwrap();
+    ipc.call("quit_app", json!({ "label": "main" })).unwrap();
+    assert_eq!(*asked.lock().unwrap(), ["window-2"]);
     assert_eq!(quits.load(Ordering::SeqCst), 0);
-    ipc.call("quit_app", json!({})).unwrap();
+    ipc.call("quit_app", json!({ "label": "window-2" }))
+        .unwrap();
     assert_eq!(quits.load(Ordering::SeqCst), 1);
+    assert_eq!(asked.lock().unwrap().len(), 1);
+
+    // Closing a window is its own hook, and its edits stop counting.
+    ipc.call(
+        "set_unsaved_changes",
+        json!({ "label": "window-2", "count": 2 }),
+    )
+    .unwrap();
+    ipc.call("close_window", json!({ "label": "window-2" }))
+        .unwrap();
+    assert_eq!(*closed.lock().unwrap(), ["window-2"]);
+    assert_eq!(state.unsaved_changes(), 0);
+
+    // A connection is open in one window at a time: the second window is told no, and the
+    // first is brought forward. It is free again once its window lets go.
+    let claim = |label: &str, id: &str| {
+        ipc.call(
+            "claim_connection",
+            json!({ "label": label, "connectionId": id }),
+        )
+        .unwrap()
+    };
+    assert_eq!(claim("main", "c1"), json!(true));
+    assert_eq!(claim("window-3", "c1"), json!(false));
+    assert_eq!(*focused.lock().unwrap(), ["main"]);
+    assert_eq!(claim("window-3", "c2"), json!(true));
+    ipc.call("release_connection", json!({ "label": "main" }))
+        .unwrap();
+    assert_eq!(claim("window-3", "c1"), json!(true));
+
+    // New windows: blank, on the connection form, or on a connection.
+    for args in [
+        json!({ "connectionId": null, "newConnection": false }),
+        json!({ "connectionId": null, "newConnection": true }),
+        json!({ "connectionId": "c9", "newConnection": false }),
+    ] {
+        ipc.call("open_window", args).unwrap();
+    }
+    assert_eq!(
+        *opened.lock().unwrap(),
+        [
+            Start::Welcome,
+            Start::NewConnection,
+            Start::Connection("c9".into())
+        ]
+    );
 
     // The settings window is asked for through the hook, once per call.
     assert_eq!(opens.load(Ordering::SeqCst), 0);
@@ -1067,7 +1170,7 @@ fn unsaved_changes_are_remembered_and_drive_the_window_hooks() {
     // The page's word on the menu items reaches the hook as it was sent.
     ipc.call(
         "update_menu",
-        json!({ "updates": [
+        json!({ "label": "main", "updates": [
             { "id": "tabs.new", "accelerator": "Cmd+T", "enabled": true },
             { "id": "query.stop", "accelerator": null, "enabled": false } ] }),
     )

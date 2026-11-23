@@ -1,7 +1,7 @@
-import { listen } from "@tauri-apps/api/event";
 import { useEffect } from "react";
 
 import { commands } from "@/lib/ipc";
+import { listenInWindow } from "@/lib/windowEvents";
 import { useSessionStore } from "@/stores/session";
 import { planDockOpen } from "./dockOpenPlan";
 
@@ -25,12 +25,12 @@ async function openFromDock(id: string) {
   await useSessionStore.getState().connect(found);
 }
 
-/** Open the connection chosen in the Dock menu. */
+/** Open the connection chosen in the Dock menu (the app sends it to a window that has none open). */
 export function useDockOpen() {
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     let cancelled = false;
-    listen<string>(DOCK_OPEN_CONNECTION, (event) => void openFromDock(event.payload))
+    listenInWindow<string>(DOCK_OPEN_CONNECTION, (id) => void openFromDock(id))
       .then((stop) => (cancelled ? stop() : (unlisten = stop)))
       .catch(() => undefined); // no native app behind the page (browser dev mode)
     return () => {

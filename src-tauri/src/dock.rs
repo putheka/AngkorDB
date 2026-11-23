@@ -5,10 +5,11 @@
 //! is the menu bar's command of the same name.
 
 use angkordb_macos_window::{DockChoice, DockEntry, DockHandlers, install_dock_menu};
-use tauri::{AppHandle, Emitter, Manager, Runtime};
+use tauri::{AppHandle, Manager, Runtime};
 
 use crate::menu::MENU_COMMAND;
 use crate::state::AppState;
+use crate::windows::{self, DockOpen, Start, plan_dock_open};
 
 /// Event name the page listens for: the id of the connection to open.
 pub const OPEN_CONNECTION: &str = "dock-open-connection";
@@ -40,32 +41,44 @@ fn entries<R: Runtime>(app: &AppHandle<R>) -> Vec<DockEntry> {
         .collect()
 }
 
-/// Bring the main window forward: a Dock click may come while it is hidden or minimized.
-fn show_main<R: Runtime>(app: &AppHandle<R>) {
-    if let Some(main) = app.get_webview_window("main") {
-        let _ = main.unminimize();
-        let _ = main.show();
-        let _ = main.set_focus();
-    }
-}
-
 /// Give the Dock icon its menu. Call from the main thread once the app is running.
 pub fn install<R: Runtime>(app: &AppHandle<R>) {
     let for_entries = app.clone();
     let for_choice = app.clone();
     let installed = install_dock_menu(DockHandlers {
         entries: Box::new(move || entries(&for_entries)),
-        chosen: Box::new(move |choice| {
-            show_main(&for_choice);
-            // Only fails if no window is listening, in which case there is nothing to run.
-            let _ = match choice {
-                DockChoice::Open(id) => for_choice.emit(OPEN_CONNECTION, id),
-                DockChoice::New => for_choice.emit(MENU_COMMAND, NEW_CONNECTION.to_owned()),
-            };
-        }),
+        chosen: Box::new(move |choice| choose(&for_choice, choice)),
     });
     if !installed {
         eprintln!("the Dock menu is not available");
+    }
+}
+
+/// What a choice in the Dock menu does. A connection opens in a window that has nothing open, or
+/// in a new one: it never takes over a window that is in use.
+fn choose<R: Runtime>(app: &AppHandle<R>, choice: DockChoice) {
+    let state = app.state::<AppState>();
+    let registry = state.windows();
+    match choice {
+        DockChoice::Open(id) => match plan_dock_open(
+            &registry.snapshot(),
+            registry.last_focused().as_deref(),
+            &id,
+        ) {
+            DockOpen::Focus(label) => windows::focus(app, &label),
+            DockOpen::Use(label) => {
+                windows::focus(app, &label);
+                windows::emit_to(app, &label, OPEN_CONNECTION, id);
+            }
+            DockOpen::New => windows::open(app, registry, Start::Connection(id)),
+        },
+        DockChoice::New => {
+            // The form is in the window in use; "File ▸ New Connection…" does the same.
+            if let Some(label) = windows::target(app, registry) {
+                windows::focus(app, &label);
+                windows::emit_to(app, &label, MENU_COMMAND, NEW_CONNECTION.to_owned());
+            }
+        }
     }
 }
 

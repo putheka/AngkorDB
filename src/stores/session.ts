@@ -6,6 +6,7 @@ import { errorMessage } from "@/lib/errors";
 import { guardUnsaved } from "@/features/grid/editing/unsavedGuard";
 import { commands } from "@/lib/ipc";
 import { queryClient } from "@/lib/queryClient";
+import { MAIN_WINDOW, windowLabel } from "@/lib/windowEvents";
 import { useBrowserStore } from "@/stores/browser";
 import { usePaletteStore } from "@/stores/palette";
 import { useStatusStore } from "@/stores/status";
@@ -41,7 +42,17 @@ export const useSessionStore = create<SessionState>()((set, get) => ({
   connect: async (connection) => {
     if (get().connectingId) return;
     set({ connectingId: connection.id, error: null, hostKey: null });
+    const label = windowLabel();
     try {
+      // A connection is open in one window at a time (its session is one for the whole app).
+      // When another window has it, that window is brought forward and this one stays as it is.
+      if (!(await commands.claimConnection(label, connection.id))) {
+        set({
+          connectingId: null,
+          error: `“${connection.name}” is already open in another window. It is in front now.`,
+        });
+        return;
+      }
       const info = await commands.connectConnection(connection.id);
       set({
         activeConnectionId: connection.id,
@@ -52,6 +63,7 @@ export const useSessionStore = create<SessionState>()((set, get) => ({
       void commands.setLastConnection(connection.id).catch(() => undefined);
       await restoreWorkspace(connection.id);
     } catch (error) {
+      void commands.releaseConnection(label).catch(() => undefined);
       const stop = hostKeyStop(error);
       if (stop?.kind === "unknown") {
         // Not a failure yet: the person decides whether this is the server they mean.
@@ -96,8 +108,10 @@ export const useSessionStore = create<SessionState>()((set, get) => ({
       queryClient.removeQueries({ queryKey: ["schema", id] });
       queryClient.removeQueries({ queryKey: ["data", id] });
     }
-    // Leaving on purpose: the next launch starts at the welcome screen.
-    void commands.setLastConnection(null).catch(() => undefined);
+    // Leaving on purpose: the next launch starts at the welcome screen. (Only the first window
+    // decides that; another one leaving says nothing about what to reopen.)
+    if (windowLabel() === MAIN_WINDOW) void commands.setLastConnection(null).catch(() => undefined);
+    void commands.releaseConnection(windowLabel()).catch(() => undefined);
     if (id) await commands.disconnectConnection(id).catch(() => undefined);
     return true;
   },

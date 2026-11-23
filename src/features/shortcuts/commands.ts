@@ -106,6 +106,13 @@ export const COMMANDS: readonly CommandDef[] = [
     scope: "app",
     keys: ["Cmd+KeyN"],
   },
+  {
+    id: "app.newWindow",
+    title: "New window",
+    group: "File",
+    scope: "app",
+    keys: ["Shift+Cmd+KeyN"],
+  },
   { id: "file.import", title: "Import a file", group: "File", scope: "app", keys: [] },
   { id: "file.export", title: "Export", group: "File", scope: "app", keys: ["Shift+Cmd+KeyE"] },
   { id: "file.backup", title: "Back up the database", group: "File", scope: "app", keys: [] },
@@ -329,6 +336,7 @@ export const MEMBERS: Readonly<Record<string, readonly string[]>> = {
  */
 export const MENU_COMMAND_IDS: readonly string[] = [
   "app.checkUpdates",
+  "app.newWindow",
   "app.newConnection",
   "tabs.new",
   "app.find",

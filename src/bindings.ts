@@ -23,19 +23,36 @@ export const commands = {
 	 */
 	appInfo: (options?: InvokeOptions) => __TAURI_INVOKE<AppInfo>("app_info", undefined, options),
 	/**
-	 *  The page says how many tabs have staged edits. While there are any, quitting and closing the
-	 *  window ask the page first, and the window shows the macOS "edited" dot.
+	 *  The page of a window says how many of its tabs have staged edits. While any window has some,
+	 *  quitting asks first, closing that window asks, and the window shows the macOS "edited" dot.
 	 */
-	setUnsavedChanges: (count: number, options?: InvokeOptions) => __TAURI_INVOKE<void>("set_unsaved_changes", { count }, options),
-	/**  Quit the app. Called by the page once the person has decided about their unsaved edits. */
-	quitApp: (options?: InvokeOptions) => __TAURI_INVOKE<void>("quit_app", undefined, options),
+	setUnsavedChanges: (label: string, count: number, options?: InvokeOptions) => __TAURI_INVOKE<void>("set_unsaved_changes", { label, count }, options),
+	/**
+	 *  Go on quitting. Called by the page of a window once the person has decided about its unsaved
+	 *  edits; other windows with edits are asked next, then the app exits.
+	 */
+	quitApp: (label: string, options?: InvokeOptions) => __TAURI_INVOKE<void>("quit_app", { label }, options),
+	/**  Close a window. Called by its page once the person has decided about its unsaved edits. */
+	closeWindow: (label: string, options?: InvokeOptions) => __TAURI_INVOKE<void>("close_window", { label }, options),
+	/**
+	 *  Open another window (⇧⌘N): on the welcome screen, on the form for a new connection, or on
+	 *  this connection. A connection that another window has open brings that window forward.
+	 */
+	openWindow: (connectionId: string | null, newConnection: boolean, options?: InvokeOptions) => __TAURI_INVOKE<void>("open_window", { connectionId, newConnection }, options),
+	/**
+	 *  A window is about to open a connection. `false` when another window has it open (that window
+	 *  is brought forward): a connection is open in one window at a time.
+	 */
+	claimConnection: (label: string, connectionId: string, options?: InvokeOptions) => __TAURI_INVOKE<boolean>("claim_connection", { label, connectionId }, options),
+	/**  The window has no connection any more (it disconnected, or the connect failed). */
+	releaseConnection: (label: string, options?: InvokeOptions) => __TAURI_INVOKE<void>("release_connection", { label }, options),
 	/**  Show the settings window (⌘,), opening it if it isn't open. */
 	openSettings: (options?: InvokeOptions) => __TAURI_INVOKE<void>("open_settings", undefined, options),
 	/**
 	 *  The page says which menu items have keys now and which can be chosen (ANG-55). Called when the
 	 *  person changes a shortcut and when a screen opens or closes.
 	 */
-	updateMenu: (updates: MenuUpdate[], options?: InvokeOptions) => __TAURI_INVOKE<void>("update_menu", { updates }, options),
+	updateMenu: (label: string, updates: MenuUpdate[], options?: InvokeOptions) => __TAURI_INVOKE<void>("update_menu", { label, updates }, options),
 	/**
 	 *  The page reports the "Confirm on quit" setting: with it on, quitting asks even when nothing
 	 *  is unsaved.

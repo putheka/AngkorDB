@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tokio::sync::RwLock;
@@ -12,14 +12,26 @@ use crate::menu::MenuUpdate;
 use crate::storage::ConnectionManager;
 use crate::storage::history::HistoryStore;
 use crate::storage::workspace::WorkspaceStore;
+use crate::windows::{Claim, QuitStep, Start, WindowRegistry, plan_quit};
 
-/// What the app can do to its own window, for commands that must not take a `Window` or
+/// Show or hide the "unsaved changes" dot of the window with this label.
+pub type EditedHook = Box<dyn Fn(&str, bool) + Send + Sync>;
+
+/// What the app can do to its own windows, for commands that must not take a `Window` or
 /// `AppHandle` themselves (see CLAUDE.md). Installed at startup; tests run without it.
 pub struct WindowHooks {
-    /// Show or hide the "unsaved changes" dot of the window.
-    pub set_edited: Box<dyn Fn(bool) + Send + Sync>,
+    /// Show or hide the "unsaved changes" dot of a window.
+    pub set_edited: EditedHook,
     /// Leave the app, without asking again.
     pub quit: Box<dyn Fn() + Send + Sync>,
+    /// Bring a window forward and have its page ask about quitting.
+    pub ask_quit: Box<dyn Fn(&str) + Send + Sync>,
+    /// Close a window, without asking again.
+    pub close_window: Box<dyn Fn(&str) + Send + Sync>,
+    /// Open a window (or bring forward the one that has the connection asked for).
+    pub open_window: Box<dyn Fn(Start) + Send + Sync>,
+    /// Bring a window forward.
+    pub focus_window: Box<dyn Fn(&str) + Send + Sync>,
     /// Show the settings window (opening it if needed).
     pub open_settings: Box<dyn Fn() + Send + Sync>,
     /// Give menu items their keys and enable or grey them (the page says which).
@@ -31,9 +43,9 @@ pub struct AppState {
     connections: ConnectionManager,
     /// Open database sessions, keyed by connection id.
     sessions: RwLock<HashMap<String, Arc<Session>>>,
-    /// How many tabs have staged edits, as the page last said (ANG-29). Quitting asks first
-    /// while this is above zero.
-    unsaved: AtomicU32,
+    /// What each window has open and how many tabs have staged edits, as the pages last said
+    /// (ANG-29). Quitting asks first while any window has some.
+    windows: WindowRegistry,
     /// "Confirm on quit" is on (ANG-53): quitting asks even with nothing unsaved.
     confirm_quit: AtomicBool,
     hooks: Mutex<Option<WindowHooks>>,
@@ -53,7 +65,7 @@ impl AppState {
         Self {
             connections,
             sessions: RwLock::new(HashMap::new()),
-            unsaved: AtomicU32::new(0),
+            windows: WindowRegistry::default(),
             confirm_quit: AtomicBool::new(false),
             hooks: Mutex::new(None),
             // Without a file (tests): history that lasts as long as the app does.
@@ -140,14 +152,20 @@ impl AppState {
         }
     }
 
-    /// The page reports how many tabs have unsaved edits. The window's edited dot follows.
-    pub fn set_unsaved_changes(&self, count: u32) {
-        self.unsaved.store(count, Ordering::SeqCst);
-        if let Ok(hooks) = self.hooks.lock()
-            && let Some(hooks) = hooks.as_ref()
-        {
-            (hooks.set_edited)(count > 0);
-        }
+    fn hooks<T>(&self, f: impl FnOnce(&WindowHooks) -> T) -> Option<T> {
+        let hooks = self.hooks.lock().ok()?;
+        hooks.as_ref().map(f)
+    }
+
+    pub fn windows(&self) -> &WindowRegistry {
+        &self.windows
+    }
+
+    /// The page of a window reports how many of its tabs have unsaved edits. The window's edited
+    /// dot follows.
+    pub fn set_unsaved_changes(&self, label: &str, count: u32) {
+        self.windows.set_unsaved(label, count);
+        self.hooks(|h| (h.set_edited)(label, count > 0));
     }
 
     /// The page reports the "Confirm on quit" setting.
@@ -159,13 +177,18 @@ impl AppState {
         self.confirm_quit.load(Ordering::SeqCst)
     }
 
-    /// Pass the page's word on the menu items on to the menu. Without a window (tests) nothing
-    /// happens.
-    pub fn update_menu(&self, updates: Vec<MenuUpdate>) {
-        if let Ok(hooks) = self.hooks.lock()
-            && let Some(hooks) = hooks.as_ref()
-        {
-            (hooks.update_menu)(updates);
+    /// Pass the word of a window's page on the menu items on to the menu, if that window is the
+    /// one in use. Without a window (tests) nothing happens.
+    pub fn update_menu(&self, label: &str, updates: Vec<MenuUpdate>) {
+        if self.windows.remember_menu(label, updates.clone()) {
+            self.hooks(|h| (h.update_menu)(updates));
+        }
+    }
+
+    /// A window came into use: the menu shows what its page last said.
+    pub fn show_menu_of(&self, label: &str) {
+        if let Some(updates) = self.windows.menu_of(label) {
+            self.hooks(|h| (h.update_menu)(updates));
         }
     }
 
@@ -178,17 +201,52 @@ impl AppState {
         }
     }
 
+    /// Unsaved tabs in all windows.
     pub fn unsaved_changes(&self) -> u32 {
-        self.unsaved.load(Ordering::SeqCst)
+        self.windows.total_unsaved()
     }
 
-    /// Quit now. The page calls this after the person chose what to do with their edits.
-    pub fn quit(&self) {
-        if let Ok(hooks) = self.hooks.lock()
-            && let Some(hooks) = hooks.as_ref()
-        {
-            (hooks.quit)();
+    /// The page of a window answered what to do with its unsaved edits (or the plain question
+    /// of "Confirm on quit"): go on quitting. The next window with edits is asked; when none is
+    /// left the app exits.
+    pub fn quit(&self, label: &str) {
+        self.windows.set_unsaved(label, 0);
+        let step = plan_quit(
+            &self.windows.snapshot(),
+            self.windows.last_focused().as_deref(),
+            false,
+        );
+        self.hooks(|h| match &step {
+            QuitStep::Exit => (h.quit)(),
+            QuitStep::Ask(next) => (h.ask_quit)(next),
+        });
+    }
+
+    /// Close a window whose page has settled its unsaved edits.
+    pub fn close_window(&self, label: &str) {
+        self.windows.set_unsaved(label, 0);
+        self.hooks(|h| (h.close_window)(label));
+    }
+
+    /// The window wants to open this connection. `false` when another window has it: that one
+    /// is brought forward, and this one must not connect.
+    pub fn claim_connection(&self, label: &str, connection_id: &str) -> bool {
+        match self.windows.claim(label, connection_id) {
+            Claim::Granted => true,
+            Claim::HeldBy(other) => {
+                self.hooks(|h| (h.focus_window)(&other));
+                false
+            }
         }
+    }
+
+    pub fn release_connection(&self, label: &str) {
+        self.windows.release(label);
+    }
+
+    /// Open a window. Without hooks (tests) nothing happens.
+    pub fn open_window(&self, start: Start) {
+        self.hooks(|h| (h.open_window)(start));
     }
 
     /// Saved connections and their passwords.
