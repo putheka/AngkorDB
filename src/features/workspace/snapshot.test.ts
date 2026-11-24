@@ -53,6 +53,7 @@ const input = {
   tabs,
   activeId: "query:2",
   nextQueryNumber: 3,
+  database: "shop",
   schema: "sales",
   queryViews: { "query:2": query, "query:9": { ...query, text: "closed tab" } },
   tableViews: { "table:public.users": table },
@@ -64,6 +65,7 @@ test("what is kept comes back the same, through the text it is saved as", () => 
   assert.deepEqual(back, saved);
   assert.equal(back?.activeId, "query:2");
   assert.equal(back?.schema, "sales");
+  assert.equal(back?.database, "shop");
   assert.equal(back?.queries["query:2"]?.text, query.text);
   assert.deepEqual(back?.tables["table:public.users"], table);
 });
@@ -221,4 +223,12 @@ test("a table's sort, filter and layout are checked field by field", () => {
   });
   assert.equal(view?.mode, "data");
   assert.equal(view?.section, "columns");
+});
+
+test("a workspace kept before the database was recorded opens in the connection's own", () => {
+  const older = Object.fromEntries(
+    Object.entries(captureWorkspace(input)).filter(([key]) => key !== "database"),
+  );
+  assert.equal(parseWorkspace(JSON.stringify(older))?.database, null);
+  assert.equal(parseWorkspace(JSON.stringify({ ...older, database: "" }))?.database, null);
 });

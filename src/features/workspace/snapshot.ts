@@ -40,6 +40,8 @@ export interface Workspace {
   tabs: Tab[];
   activeId: string | null;
   nextQueryNumber: number;
+  /** The database the tabs belong to (the connection can be switched to another one). */
+  database: string | null;
   /** The schema chosen in the sidebar. */
   schema: string | null;
   queries: Record<string, SavedQuery>;
@@ -50,6 +52,7 @@ export interface WorkspaceInput {
   tabs: readonly Tab[];
   activeId: string | null;
   nextQueryNumber: number;
+  database: string | null;
   schema: string | null;
   queryViews: Readonly<Record<string, SavedQuery>>;
   tableViews: Readonly<Record<string, SavedTable>>;
@@ -73,6 +76,7 @@ export function captureWorkspace(input: WorkspaceInput): Workspace {
     tabs: input.tabs.map((tab) => ({ ...tab })),
     activeId: input.activeId,
     nextQueryNumber: input.nextQueryNumber,
+    database: input.database,
     schema: input.schema,
     queries,
     tables,
@@ -333,6 +337,9 @@ export function parseWorkspace(text: string): Workspace | null {
     activeId,
     // The next new query must not reuse the number of one that is back.
     nextQueryNumber: Math.max(int(raw["nextQueryNumber"], 1, 1_000_000, 1), highest + 1),
+    // A file from before this was kept has none: its tabs open in the connection's own database.
+    database:
+      typeof raw["database"] === "string" && raw["database"] !== "" ? raw["database"] : null,
     schema: typeof raw["schema"] === "string" && raw["schema"] !== "" ? raw["schema"] : null,
     queries,
     tables,

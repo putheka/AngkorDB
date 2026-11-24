@@ -7,6 +7,7 @@ import { commands } from "@/lib/ipc";
 import { queryClient } from "@/lib/queryClient";
 import { useBrowserStore } from "@/stores/browser";
 import { useStatusStore } from "@/stores/status";
+import { useCurrentDatabase } from "@/stores/currentDatabase";
 import { useTabsStore } from "@/stores/tabs";
 
 /** Prefix of every cached schema query of one connection. */
@@ -61,6 +62,7 @@ export function useSwitchDatabase(connectionId: string) {
     onSuccess: async (switched, database) => {
       if (!switched) return;
       useDatabaseRecents.getState().add(connectionId, database);
+      useCurrentDatabase.getState().set(connectionId, database);
       useTabsStore.getState().closeAll();
       useStatusStore.getState().clear();
       useBrowserStore.getState().setSchema(null);

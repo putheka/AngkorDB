@@ -9,6 +9,7 @@ import { commands } from "@/lib/ipc";
 import { queryClient } from "@/lib/queryClient";
 import { MAIN_WINDOW, windowLabel } from "@/lib/windowEvents";
 import { useBrowserStore } from "@/stores/browser";
+import { useCurrentDatabase } from "@/stores/currentDatabase";
 import { usePaletteStore } from "@/stores/palette";
 import { useStatusStore } from "@/stores/status";
 import { useTabsStore } from "@/stores/tabs";
@@ -106,6 +107,7 @@ export const useSessionStore = create<SessionState>()((set, get) => {
           return;
         }
         const info = await commands.connectConnection(connection.id);
+        useCurrentDatabase.getState().set(connection.id, connection.database);
         set((s) => ({
           openIds: [...s.openIds, connection.id],
           versions: { ...s.versions, [connection.id]: info.serverVersion },
@@ -176,6 +178,7 @@ export const useSessionStore = create<SessionState>()((set, get) => {
       });
       queryClient.removeQueries({ queryKey: ["schema", id] });
       queryClient.removeQueries({ queryKey: ["data", id] });
+      useCurrentDatabase.getState().forget(id);
       // Leaving on purpose: the next launch starts at the welcome screen.
       if (next === null) rememberAsLast(null);
       void commands.releaseConnection(windowLabel(), id).catch(() => undefined);

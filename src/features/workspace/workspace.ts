@@ -12,7 +12,9 @@ import {
   serializeWorkspace,
 } from "@/features/workspace/snapshot";
 import { commands } from "@/lib/ipc";
+import { queryClient } from "@/lib/queryClient";
 import { useBrowserStore } from "@/stores/browser";
+import { useCurrentDatabase } from "@/stores/currentDatabase";
 import { useTabsStore } from "@/stores/tabs";
 
 /** How long after a change the workspace is written: a query is never more than this far from disk. */
@@ -22,13 +24,14 @@ export const SAVE_DELAY_MS = 2000;
 const lastSaved = new Map<string, string>();
 let restoring = false;
 
-function currentText(): string {
+function currentText(connectionId: string): string {
   const tabs = useTabsStore.getState();
   return serializeWorkspace(
     captureWorkspace({
       tabs: tabs.tabs,
       activeId: tabs.activeId,
       nextQueryNumber: tabs.nextQueryNumber,
+      database: useCurrentDatabase.getState().byConnection[connectionId] ?? null,
       schema: useBrowserStore.getState().schema,
       queryViews: useQueryViews.getState().views,
       tableViews: useTableViews.getState().views,
@@ -38,7 +41,7 @@ function currentText(): string {
 
 /** Write the workspace of `connectionId` now, if it changed since the last write. */
 export async function saveWorkspaceNow(connectionId: string): Promise<void> {
-  const text = currentText();
+  const text = currentText(connectionId);
   if (lastSaved.get(connectionId) === text) return;
   try {
     await commands.saveWorkspace(connectionId, text);
@@ -74,6 +77,7 @@ export function startAutosave(openConnectionId: () => string | null): () => void
     useQueryViews.subscribe(schedule),
     useTableViews.subscribe(schedule),
     useBrowserStore.subscribe(schedule),
+    useCurrentDatabase.subscribe(schedule),
   ];
   document.addEventListener("visibilitychange", onHidden);
   window.addEventListener("pagehide", flush);
@@ -97,6 +101,9 @@ export async function restoreWorkspace(connectionId: string): Promise<boolean> {
     const text = await commands.loadWorkspace(connectionId);
     const workspace = text ? parseWorkspace(text) : null;
     if (!workspace) return false;
+    // The tabs belong to the database that was in use, which may not be the one the connection
+    // names: go back to it first, or every table would be "not found".
+    if (!(await returnToDatabase(connectionId, workspace.database))) return false;
     // Tabs first: a view whose tab is not open is cleaned away as soon as it is set.
     useTabsStore.setState({
       tabs: workspace.tabs,
@@ -129,6 +136,25 @@ export async function restoreWorkspace(connectionId: string): Promise<boolean> {
   } finally {
     restoring = false;
   }
+}
+
+/** Switch the session back to `database` if it is on another one. `false` when that fails. */
+async function returnToDatabase(connectionId: string, database: string | null): Promise<boolean> {
+  if (!database || useCurrentDatabase.getState().byConnection[connectionId] === database) {
+    return true;
+  }
+  try {
+    await commands.switchDatabase(connectionId, database);
+  } catch {
+    // Dropped or no longer allowed: the connection's own database, with no tabs, is better than
+    // tabs that point at nothing.
+    return false;
+  }
+  useCurrentDatabase.getState().set(connectionId, database);
+  // What the sidebar loaded for the other database is not valid.
+  await queryClient.resetQueries({ queryKey: ["schema", connectionId] });
+  queryClient.removeQueries({ queryKey: ["data", connectionId] });
+  return true;
 }
 
 /** The connection to reopen at launch, if the person wants that and it still exists. */
