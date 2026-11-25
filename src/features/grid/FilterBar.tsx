@@ -226,9 +226,8 @@ function ConditionRow({
         </SelectTrigger>
         <SelectContent>
           {columns.map((c) => (
-            <SelectItem key={c.name} value={c.name}>
+            <SelectItem key={c.name} value={c.name} title={c.typeName}>
               {c.name}
-              <span className="ml-1 text-muted-foreground">{c.typeName}</span>
             </SelectItem>
           ))}
         </SelectContent>
