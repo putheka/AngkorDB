@@ -56,6 +56,11 @@ jobs:
           --health-timeout 3s
           --health-retries 30
     env:
+      # No debug info and no incremental data in the test binaries: there are about 25 of them,
+      # and with both the runner's disk fills up while linking ("ld terminated with signal 7
+      # [Bus error]"). Nothing here is debugged on the runner.
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_INCREMENTAL: "0"
       # An unreachable database fails the tests instead of skipping them.
       ANGKORDB_REQUIRE_DB: "1"
       # The SSH tunnel tests: the SSH server runs on the host network (below), so the database
@@ -67,6 +72,14 @@ jobs:
       ANGKORDB_TEST_SSH_INNER_PORT: "2223"
     steps:
       - uses: actions/checkout@v7
+
+      # The runner has about 14 GB free; a Tauri build with its test binaries needs more than
+      # that unless the toolchains this project never uses are removed.
+      - name: Free disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
 
       - name: Install Tauri system libraries
         run: |
