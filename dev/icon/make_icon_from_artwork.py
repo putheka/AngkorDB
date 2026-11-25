@@ -1,9 +1,9 @@
-"""Makes the app icon from the pixel-art artwork (1024x1024 PNG, macOS icon shape baked in).
+"""Makes the app icon from the logo artwork (1024x1024 PNG, macOS icon shape baked in).
 
     python3 dev/icon/make_icon_from_artwork.py       # writes dev/icon/icon-1024.png
     npm run tauri icon dev/icon/icon-1024.png        # makes every size and the .icns/.ico
 
-The artwork is a rounded frame on a black backdrop. The frame is cut out of the
+The artwork is a rounded frame on a white backdrop. The frame is cut out of the
 backdrop, shrunk to the size macOS icons have (824 px in a 1024 canvas, 100 px margin) and given a
 soft shadow, so it sits in the Dock like the other apps. Needs Pillow.
 """
@@ -12,13 +12,13 @@ import pathlib
 from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 HERE = pathlib.Path(__file__).parent
-SOURCE = HERE / "angkordb-pixel.webp"
+SOURCE = HERE / "angkordb-logo.webp"
 OUT = HERE / "icon-1024.png"
 
 # The frame inside the artwork (pixels of the 1254 px original), inset a little so that
 # no backdrop shows at the edge.
-FRAME = (85, 88, 1169, 1156)
-CORNER = 0.16  # corner radius, as a share of the frame's width
+FRAME = (50, 49, 1205, 1204)
+CORNER = 0.19  # corner radius, as a share of the frame's width
 SIZE = 1024
 BODY = 824
 SS = 4  # supersampling for the mask
