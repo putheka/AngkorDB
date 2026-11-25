@@ -23,11 +23,26 @@
   <img alt="Built with" src="https://img.shields.io/badge/Tauri%202-Rust%20%2B%20React-orange" />
 </p>
 
+<p align="center">
+  <img src="docs/screenshots/data-grid.png" alt="AngkorDB showing a table with striped rows, the connection rail and the schema sidebar" width="900" />
+</p>
+
 ---
 
 AngkorDB runs entirely on your Mac. There is no account, no server and no telemetry: it talks straight to your database, and your passwords stay in the macOS Keychain. It is a small Tauri app (a Rust backend with a React UI), so it starts fast and stays light on memory, even with a million-row table open.
 
 It is PostgreSQL only, on purpose. That lets every screen use what Postgres actually has: schemas, enums, ranges, `jsonb`, materialized views, roles and privileges, `EXPLAIN`.
+
+## Screenshots
+
+|                                                                                              |                                                                                       |
+| -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| <img src="docs/screenshots/filter.png" alt="Filter bar with a raw WHERE condition" />        | <img src="docs/screenshots/sql-editor.png" alt="SQL editor with a result grid" />     |
+| **Filter** by conditions or a raw `WHERE`                                                    | **SQL editor** with syntax colours and result tabs                                    |
+| <img src="docs/screenshots/structure.png" alt="Table structure: columns, types, defaults" /> | <img src="docs/screenshots/light.png" alt="The same table in the light appearance" /> |
+| **Structure** view: columns, indexes, constraints, triggers, DDL                             | **Light** appearance, for when you want it                                            |
+
+<sub>Screenshots are from the browser development build, with sample data.</sub>
 
 ## Features
 
