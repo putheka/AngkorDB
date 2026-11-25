@@ -45,7 +45,7 @@ import {
 import { CellEditor, type Bounds } from "@/features/grid/editing/CellEditor";
 import type { CellValue, NewRow } from "@/features/grid/editing/changes";
 import { editorKindOf, isEditableColumn } from "@/features/grid/editing/editorKind";
-import { useGridTheme } from "@/features/grid/gridTheme";
+import { useGridStripe, useGridTheme } from "@/features/grid/gridTheme";
 import { nextSort, superscript } from "@/features/grid/sort";
 import {
   COPY_FORMATS,
@@ -195,6 +195,7 @@ export function DataGrid({
   copyTarget,
 }: DataGridProps) {
   const theme = useGridTheme();
+  const stripe = useGridStripe();
   const density = useAppearance((s) => s.density);
   const gridFontSize = useAppearance((s) => s.gridFontSize);
   const { rowHeight, headerHeight } = gridMetrics({ density, gridFontSize });
@@ -318,12 +319,15 @@ export function DataGrid({
   );
 
   // New rows are green, rows to delete red with a line through the text.
+  const stripedRow = useMemo(() => ({ bgCell: stripe }), [stripe]);
   const getRowTheme = useCallback(
     (g: number) => {
       if (g < newCount) return NEW_ROW_THEME;
-      return deleted.has(g - newCount) ? DELETED_ROW_THEME : undefined;
+      if (deleted.has(g - newCount)) return DELETED_ROW_THEME;
+      // Every other row is a shade off the background, so a long row can be followed across.
+      return (g - newCount) % 2 === 1 ? stripedRow : undefined;
     },
-    [newCount, deleted],
+    [newCount, deleted, stripedRow],
   );
   const fkColumns = foreignKeys?.columns;
   const drawCell = useMemo<DrawCellCallback | undefined>(() => {

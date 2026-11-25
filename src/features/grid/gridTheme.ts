@@ -83,6 +83,11 @@ export function buildGridTheme(
   };
 }
 
+/** The color of every other row. */
+export function buildGridStripe(): string {
+  return token("--grid-stripe");
+}
+
 function subscribeToTheme(onChange: () => void) {
   const observer = new MutationObserver(onChange);
   observer.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
@@ -115,4 +120,14 @@ export function useGridTheme(): Partial<Theme> {
     void accentTick;
     return buildGridTheme({ density, gridFont, gridFontSize });
   }, [dark, accentTick, density, gridFont, gridFontSize]);
+}
+
+/** The color of the striped rows; it follows light/dark mode. */
+export function useGridStripe(): string {
+  const dark = useSyncExternalStore(subscribeToTheme, isDark);
+  return useMemo(() => {
+    // Not read, but the token `buildGridStripe` resolves changes with it.
+    void dark;
+    return buildGridStripe();
+  }, [dark]);
 }
