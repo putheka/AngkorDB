@@ -1,7 +1,6 @@
 import {
   ChevronLeftIcon,
   ChevronRightIcon,
-  Columns3Icon,
   DownloadIcon,
   UploadIcon,
   ListFilterIcon,
@@ -13,14 +12,6 @@ import {
 import type { ResultColumn } from "@/bindings";
 import { Button } from "@/components/ui/button";
 import {
-  DropdownMenu,
-  DropdownMenuCheckboxItem,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
   Select,
   SelectContent,
   SelectItem,
@@ -28,7 +19,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { orderedNames, type ColumnLayout } from "@/features/grid/columns";
+import type { ColumnLayout } from "@/features/grid/columns";
+import { ColumnsMenu } from "@/features/grid/ColumnsMenu";
 import { PAGE_SIZES } from "@/features/grid/tableViews";
 import { formatCompact } from "@/lib/format";
 import { Shortcut } from "@/features/shortcuts/Shortcut";
@@ -76,7 +68,6 @@ export function GridFooter(props: GridFooterProps) {
   const totalText = total
     ? `${total.exact ? "" : "~"}${total.exact ? number.format(total.count) : formatCompact(total.count)}`
     : "";
-  const hiddenCount = layout.hidden.length;
 
   return (
     <footer className="flex h-8 shrink-0 items-center justify-between gap-3 border-t px-2 text-xs">
@@ -186,41 +177,7 @@ export function GridFooter(props: GridFooterProps) {
           Filter{props.filterCount > 0 && ` (${props.filterCount})`}
         </Button>
 
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="xs" aria-label="Show or hide columns">
-              <Columns3Icon />
-              Columns{hiddenCount > 0 && ` (${columns.length - hiddenCount}/${columns.length})`}
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="max-h-80 overflow-y-auto">
-            {orderedNames(columns, layout).map((name) => (
-              <DropdownMenuCheckboxItem
-                key={name}
-                checked={!layout.hidden.includes(name)}
-                // Stay open: people tick several columns in one go.
-                onSelect={(e) => e.preventDefault()}
-                onCheckedChange={(show) =>
-                  props.onLayoutChange({
-                    ...layout,
-                    hidden: show
-                      ? layout.hidden.filter((n) => n !== name)
-                      : [...layout.hidden, name],
-                  })
-                }
-              >
-                {name}
-              </DropdownMenuCheckboxItem>
-            ))}
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              disabled={hiddenCount === 0}
-              onSelect={() => props.onLayoutChange({ ...layout, hidden: [] })}
-            >
-              Show all
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <ColumnsMenu columns={columns} layout={layout} onLayoutChange={props.onLayoutChange} />
 
         <Tooltip>
           <TooltipTrigger asChild>

@@ -36,6 +36,26 @@ export function orderedNames(columns: ResultColumn[], layout: ColumnLayout): str
   return visibleColumns(columns, { ...layout, hidden: [] }).map((v) => v.column.name);
 }
 
+/** The columns whose name or type holds every word of `query`; all of them when it is empty. */
+export function matchColumns<T extends { name: string; typeName: string }>(
+  columns: T[],
+  query: string,
+): T[] {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return columns;
+  return columns.filter((column) => {
+    const text = `${column.name} ${column.typeName}`.toLowerCase();
+    return words.every((word) => text.includes(word));
+  });
+}
+
+/** Show or hide `names`, leaving every other column as it was. */
+export function withHidden(layout: ColumnLayout, names: string[], hide: boolean): ColumnLayout {
+  const changing = new Set(names);
+  const rest = layout.hidden.filter((name) => !changing.has(name));
+  return { ...layout, hidden: hide ? [...rest, ...names] : rest };
+}
+
 /** Move `name` to where `target` is. The order of columns that are hidden is kept. */
 export function moveColumn(names: string[], name: string, target: string): string[] {
   const from = names.indexOf(name);
