@@ -1,8 +1,9 @@
-import { XIcon } from "lucide-react";
-import { useRef, type KeyboardEvent, type PointerEvent } from "react";
+import { SearchIcon, XIcon } from "lucide-react";
+import { useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 
 import type { ColumnInfo, IncomingForeignKey } from "@/bindings";
 import { Button } from "@/components/ui/button";
+import { matchColumns } from "@/features/grid/columns";
 import { DetailField } from "@/features/grid/detail/DetailField";
 import { ReferencedBy } from "@/features/grid/detail/ReferencedBy";
 import { groupOf, type ForeignKeyGroup } from "@/features/grid/foreignKeys";
@@ -106,6 +107,10 @@ export function RowDetailPanel({
 }: RowDetailPanelProps) {
   const width = useLayoutStore((s) => s.detailWidth);
   const writable = editable && row !== null && row.status !== "deleted";
+  // Kept while moving between rows, so one column can be watched down the table.
+  const [query, setQuery] = useState("");
+  const searching = query.trim() !== "";
+  const shown = useMemo(() => matchColumns(columns, query), [columns, query]);
 
   return (
     <aside
@@ -140,53 +145,94 @@ export function RowDetailPanel({
       {row === null ? (
         <p className="p-4 text-sm text-muted-foreground">Select a row to see all its columns.</p>
       ) : (
-        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-3">
-          {columns.map((column) => {
-            const group = groupOf(foreignKeys, column.name);
-            const filled = group?.pairs.every((p) => row.valueOf(p.column).kind === "value");
-            return (
-              <DetailField
-                key={column.name}
-                connectionId={connectionId}
-                column={column}
-                value={row.valueOf(column.name)}
-                edited={row.isEdited(column.name)}
-                editable={writable && isEditableColumn(column)}
-                onChange={(value) => onEdit(column.name, value)}
-                onRevert={() => onRevert(column.name)}
-                {...(group
-                  ? {
-                      foreignKey: {
-                        group,
-                        canFollow: filled === true,
-                        onFollow: () => onFollow(group),
-                        onPick: (values: Record<string, string | null>) => {
-                          for (const [name, text] of Object.entries(values)) {
-                            onEdit(
-                              name,
-                              text === null ? { kind: "null" } : { kind: "value", text },
-                            );
-                          }
-                        },
-                      },
-                    }
-                  : {})}
-              />
-            );
-          })}
-          {row.status !== "new" && (
-            <ReferencedBy
-              connectionId={connectionId}
-              schema={schema}
-              incoming={incoming}
-              valueOf={(name) => {
-                const value = row.valueOf(name);
-                return value.kind === "value" ? value.text : null;
+        <>
+          <div className="flex shrink-0 items-center gap-2 border-b px-3 py-1.5">
+            <SearchIcon className="size-3.5 shrink-0 text-muted-foreground" />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape" && query !== "") {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setQuery("");
+                }
               }}
-              onOpen={onOpenReferencing}
+              placeholder="Find a column"
+              aria-label="Find a column"
+              spellCheck={false}
+              autoComplete="off"
+              className="h-5 min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground"
             />
-          )}
-        </div>
+            {searching && (
+              <>
+                <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                  {shown.length} of {columns.length}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label="Clear search"
+                  onClick={() => setQuery("")}
+                >
+                  <XIcon />
+                </Button>
+              </>
+            )}
+          </div>
+          <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-3">
+            {searching && shown.length === 0 && (
+              <p className="text-center text-xs text-muted-foreground">
+                No column matches &ldquo;{query.trim()}&rdquo;.
+              </p>
+            )}
+            {shown.map((column) => {
+              const group = groupOf(foreignKeys, column.name);
+              const filled = group?.pairs.every((p) => row.valueOf(p.column).kind === "value");
+              return (
+                <DetailField
+                  key={column.name}
+                  connectionId={connectionId}
+                  column={column}
+                  value={row.valueOf(column.name)}
+                  edited={row.isEdited(column.name)}
+                  editable={writable && isEditableColumn(column)}
+                  onChange={(value) => onEdit(column.name, value)}
+                  onRevert={() => onRevert(column.name)}
+                  {...(group
+                    ? {
+                        foreignKey: {
+                          group,
+                          canFollow: filled === true,
+                          onFollow: () => onFollow(group),
+                          onPick: (values: Record<string, string | null>) => {
+                            for (const [name, text] of Object.entries(values)) {
+                              onEdit(
+                                name,
+                                text === null ? { kind: "null" } : { kind: "value", text },
+                              );
+                            }
+                          },
+                        },
+                      }
+                    : {})}
+                />
+              );
+            })}
+            {row.status !== "new" && !searching && (
+              <ReferencedBy
+                connectionId={connectionId}
+                schema={schema}
+                incoming={incoming}
+                valueOf={(name) => {
+                  const value = row.valueOf(name);
+                  return value.kind === "value" ? value.text : null;
+                }}
+                onOpen={onOpenReferencing}
+              />
+            )}
+          </div>
+        </>
       )}
     </aside>
   );
